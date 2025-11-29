@@ -1,0 +1,568 @@
+'use client';
+
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  X, Building2, Mail, Phone, MapPin, Tag, Upload, FileText, 
+  UserPlus, Users, Trash2, Copy, Check, Eye, EyeOff, ShieldCheck,
+  Sparkles, ArrowRight, ChevronRight
+} from 'lucide-react';
+import { businessApi, UserCredentials } from '@/lib/api';
+import type { CreateBusinessInput, BusinessUser } from '@/types';
+
+interface NewCreateBusinessModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+const DEFAULT_PASSWORD = '90074007';
+
+const backdropVariants = {
+  hidden: { opacity: 0 },
+  visible: { opacity: 1, transition: { duration: 0.2 } }
+};
+
+const modalVariants = {
+  hidden: { opacity: 0, scale: 0.95, y: 20 },
+  visible: { 
+    opacity: 1, 
+    scale: 1, 
+    y: 0,
+    transition: { type: "spring", damping: 25, stiffness: 300 }
+  },
+  exit: { opacity: 0, scale: 0.95, y: 20 }
+};
+
+export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreateBusinessModalProps) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [certificateFile, setCertificateFile] = useState<File | null>(null);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [createdCredentials, setCreatedCredentials] = useState<UserCredentials[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [step, setStep] = useState(1); // 1: Basic Info, 2: Subscription, 3: Users
+  
+  const [formData, setFormData] = useState<CreateBusinessInput>({
+    name: '',
+    slug: '',
+    email: '',
+    phone: '',
+    address: '',
+    business_type: 'restaurant',
+    certificate_url: '',
+    subscription_tier: 'basic',
+    max_users: 5,
+    max_products: 100,
+    users: [],
+  });
+
+  const [newUser, setNewUser] = useState<Partial<BusinessUser>>({
+    username: '',
+    role: 'employee',
+    first_name: '',
+    last_name: '',
+  });
+
+  const handleAddUser = () => {
+    if (!newUser.username) {
+      setError('Username is required');
+      return;
+    }
+
+    if (formData.users?.some(u => u.username === newUser.username)) {
+      setError('Username already exists');
+      return;
+    }
+
+    if ((formData.users?.length || 0) >= formData.max_users!) {
+      setError(`Maximum ${formData.max_users} users allowed`);
+      return;
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      users: [...(prev.users || []), {
+        username: newUser.username!,
+        role: newUser.role as 'owner' | 'manager' | 'employee' | 'pos',
+        first_name: newUser.first_name,
+        last_name: newUser.last_name,
+        password: DEFAULT_PASSWORD,
+      }],
+    }));
+
+    setNewUser({ username: '', role: 'employee', first_name: '', last_name: '' });
+    setError('');
+  };
+
+  const handleRemoveUser = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      users: prev.users?.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleSubmit = async () => {
+    setError('');
+    setLoading(true);
+
+    try {
+      let certificateUrl = formData.certificate_url;
+      
+      if (certificateFile) {
+        const reader = new FileReader();
+        certificateUrl = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(certificateFile);
+        });
+      }
+
+      const dataToSend = { ...formData, certificate_url: certificateUrl };
+      const response = await businessApi.create(dataToSend);
+      
+      if (response.userCredentials && response.userCredentials.length > 0) {
+        setCreatedCredentials(response.userCredentials);
+        setShowCredentials(true);
+      } else {
+        handleClose();
+        onSuccess();
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to create business');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleClose = () => {
+    setFormData({
+      name: '', slug: '', email: '', phone: '', address: '',
+      business_type: 'restaurant', certificate_url: '',
+      subscription_tier: 'basic', max_users: 5, max_products: 100, users: [],
+    });
+    setCertificateFile(null);
+    setShowCredentials(false);
+    setCreatedCredentials([]);
+    setError('');
+    setStep(1);
+    onClose();
+  };
+
+  const generateSlug = (name: string) => {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  };
+
+  const handleNameChange = (name: string) => {
+    setFormData(prev => ({ ...prev, name, slug: generateSlug(name) }));
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError('File size must be less than 5MB');
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        setError('Only image files are allowed');
+        return;
+      }
+      setCertificateFile(file);
+      setError('');
+    }
+  };
+
+  const copyCredentials = (index: number) => {
+    const cred = createdCredentials[index];
+    const text = `Username: ${cred.username}\nPassword: ${cred.password}\nRole: ${cred.role}`;
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const copyAllCredentials = () => {
+    const text = createdCredentials.map(cred => 
+      `Username: ${cred.username}\nPassword: ${cred.password}\nRole: ${cred.role}`
+    ).join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(-1);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          <motion.div
+            variants={backdropVariants}
+            initial="hidden"
+            animate="visible"
+            exit="hidden"
+            onClick={handleClose}
+            className="fixed inset-0 z-50 bg-zinc-900/60 backdrop-blur-sm"
+          />
+          
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+            <motion.div
+              variants={modalVariants}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              className="w-full max-w-2xl bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden pointer-events-auto flex flex-col max-h-[90vh]"
+            >
+              {showCredentials ? (
+                 // Credentials View
+                 <div className="p-8 flex flex-col h-full">
+                   <div className="text-center mb-8">
+                     <div className="w-16 h-16 bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white rounded-full flex items-center justify-center mx-auto mb-4">
+                       <ShieldCheck className="w-8 h-8" />
+                     </div>
+                     <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Business Created!</h2>
+                     <p className="text-zinc-500 mt-2">Here are the initial login credentials.</p>
+                   </div>
+
+                   <div className="bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-4 mb-6">
+                     <p className="text-sm text-zinc-800 dark:text-zinc-200 font-medium flex items-center gap-2">
+                       <Sparkles className="w-4 h-4" />
+                       Save these now. Passwords cannot be recovered later.
+                     </p>
+                   </div>
+
+                   <div className="flex-1 overflow-y-auto space-y-3 pr-2 mb-6 custom-scrollbar">
+                     {createdCredentials.map((cred, index) => (
+                       <div key={index} className="bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-800 rounded-xl p-4 group hover:border-zinc-400 transition-colors">
+                         <div className="flex items-center justify-between mb-2">
+                           <span className="text-xs font-semibold uppercase tracking-wider text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 px-2 py-1 rounded-md">
+                             {cred.role}
+                           </span>
+                           <button onClick={() => copyCredentials(index)} className="text-zinc-400 hover:text-zinc-900 dark:hover:text-white transition-colors">
+                             {copiedIndex === index ? <Check className="w-4 h-4 text-zinc-500" /> : <Copy className="w-4 h-4" />}
+                           </button>
+                         </div>
+                         <div className="grid grid-cols-2 gap-4 text-sm">
+                           <div>
+                             <span className="text-zinc-500 text-xs block mb-1">Username</span>
+                             <code className="font-mono text-zinc-900 dark:text-zinc-200 bg-white dark:bg-zinc-900 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 block w-full">
+                               {cred.username}
+                             </code>
+                           </div>
+                           <div>
+                             <span className="text-zinc-500 text-xs block mb-1">Password</span>
+                             <div className="relative">
+                               <code className="font-mono text-zinc-900 dark:text-zinc-200 bg-white dark:bg-zinc-900 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 block w-full">
+                                 {showPassword ? cred.password : '••••••••'}
+                               </code>
+                               <button 
+                                 onClick={() => setShowPassword(!showPassword)}
+                                 className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
+                               >
+                                 {showPassword ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                               </button>
+                             </div>
+                           </div>
+                         </div>
+                       </div>
+                     ))}
+                   </div>
+
+                   <div className="grid grid-cols-2 gap-3">
+                     <button
+                       onClick={copyAllCredentials}
+                       className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                     >
+                       {copiedIndex === -1 ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                       Copy All
+                     </button>
+                     <button
+                       onClick={() => { handleClose(); onSuccess(); }}
+                       className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-medium hover:bg-black dark:hover:bg-zinc-200 transition-colors shadow-lg shadow-zinc-500/10"
+                     >
+                       Done
+                     </button>
+                   </div>
+                 </div>
+              ) : (
+                // Create Form View
+                <>
+                  <div className="px-8 py-6 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-zinc-50/50 dark:bg-zinc-900/50 backdrop-blur-xl">
+                    <div>
+                      <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Create Business</h2>
+                      <p className="text-sm text-zinc-500">Step {step} of 3: {step === 1 ? 'Basic Info' : step === 2 ? 'Subscription' : 'Users'}</p>
+                    </div>
+                    <button onClick={handleClose} className="p-2 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                      <X className="w-5 h-5 text-zinc-500" />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                    {error && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10 }} 
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mb-6 p-4 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/20 rounded-xl text-red-600 dark:text-red-400 text-sm flex items-center gap-2"
+                      >
+                        <X className="w-4 h-4" /> {error}
+                      </motion.div>
+                    )}
+
+                    {step === 1 && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Name</label>
+                            <div className="relative">
+                              <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                              <input 
+                                value={formData.name}
+                                onChange={(e) => handleNameChange(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
+                                placeholder="e.g. The Burger Joint"
+                              />
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Slug (URL)</label>
+                            <div className="relative">
+                              <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                              <input 
+                                value={formData.slug}
+                                onChange={(e) => setFormData({...formData, slug: e.target.value})}
+                                className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all font-mono text-sm text-zinc-600 dark:text-zinc-400"
+                                placeholder="auto-generated"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Type</label>
+                             <select 
+                               value={formData.business_type}
+                               onChange={(e) => setFormData({...formData, business_type: e.target.value})}
+                               className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all appearance-none"
+                             >
+                               <option value="restaurant">Restaurant</option>
+                               <option value="cafe">Cafe</option>
+                               <option value="retail">Retail</option>
+                               <option value="service">Service</option>
+                             </select>
+                          </div>
+                          <div className="space-y-2">
+                             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Phone</label>
+                             <div className="relative">
+                               <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                               <input 
+                                 value={formData.phone}
+                                 onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                                 className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
+                                 placeholder="+1 (555) 000-0000"
+                               />
+                             </div>
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-2">
+                           <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Email</label>
+                           <div className="relative">
+                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+                             <input 
+                               value={formData.email}
+                               onChange={(e) => setFormData({...formData, email: e.target.value})}
+                               className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
+                               placeholder="business@example.com"
+                             />
+                           </div>
+                        </div>
+
+                        <div className="space-y-2">
+                           <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Address</label>
+                           <div className="relative">
+                             <MapPin className="absolute left-3 top-3 w-4 h-4 text-zinc-400" />
+                             <textarea 
+                               value={formData.address}
+                               onChange={(e) => setFormData({...formData, address: e.target.value})}
+                               className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all min-h-[80px] resize-none"
+                               placeholder="123 Main St, City, Country"
+                             />
+                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {step === 2 && (
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          {['basic', 'pro', 'enterprise'].map((tier) => (
+                            <div 
+                              key={tier}
+                              onClick={() => setFormData({...formData, subscription_tier: tier as any})}
+                              className={`cursor-pointer p-4 rounded-xl border-2 transition-all ${
+                                formData.subscription_tier === tier 
+                                ? 'border-zinc-500 bg-zinc-100 dark:bg-zinc-800' 
+                                : 'border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600'
+                              }`}
+                            >
+                              <div className="capitalize font-semibold text-zinc-900 dark:text-white mb-1">{tier}</div>
+                              <div className="text-xs text-zinc-500">
+                                {tier === 'basic' ? 'For small businesses' : tier === 'pro' ? 'For growing teams' : 'For large scale ops'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Max Users</label>
+                             <input 
+                               type="number"
+                               value={formData.max_users}
+                               onChange={(e) => setFormData({...formData, max_users: parseInt(e.target.value)})}
+                               className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
+                             />
+                          </div>
+                          <div className="space-y-2">
+                             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Max Products</label>
+                             <input 
+                               type="number"
+                               value={formData.max_products}
+                               onChange={(e) => setFormData({...formData, max_products: parseInt(e.target.value)})}
+                               className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
+                             />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Certificate (Optional)</label>
+                          <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 dark:hover:border-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-all">
+                             <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                               <Upload className="w-8 h-8 text-zinc-400 mb-2" />
+                               <p className="text-sm text-zinc-500">
+                                 <span className="font-semibold">Click to upload</span> or drag and drop
+                               </p>
+                               <p className="text-xs text-zinc-400 mt-1">{certificateFile ? certificateFile.name : 'SVG, PNG, JPG (MAX. 5MB)'}</p>
+                             </div>
+                             <input type="file" className="hidden" onChange={handleFileChange} accept="image/*" />
+                          </label>
+                        </div>
+                      </div>
+                    )}
+
+                    {step === 3 && (
+                      <div className="space-y-6">
+                        <div className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                          <div className="flex gap-4">
+                            <div className="flex-1 space-y-3">
+                               <input 
+                                 placeholder="Username"
+                                 value={newUser.username}
+                                 onChange={(e) => setNewUser({...newUser, username: e.target.value})}
+                                 className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
+                               />
+                               <div className="flex gap-3">
+                                 <input 
+                                   placeholder="First Name"
+                                   value={newUser.first_name}
+                                   onChange={(e) => setNewUser({...newUser, first_name: e.target.value})}
+                                   className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
+                                 />
+                                 <input 
+                                   placeholder="Last Name"
+                                   value={newUser.last_name}
+                                   onChange={(e) => setNewUser({...newUser, last_name: e.target.value})}
+                                   className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
+                                 />
+                               </div>
+                            </div>
+                            <div className="w-32 space-y-3">
+                               <select
+                                  value={newUser.role}
+                                  onChange={(e) => setNewUser({...newUser, role: e.target.value as any})}
+                                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
+                               >
+                                 <option value="owner">Owner</option>
+                                 <option value="manager">Manager</option>
+                                 <option value="employee">Employee</option>
+                                 <option value="pos">POS Terminal</option>
+                               </select>
+                               <button 
+                                 onClick={handleAddUser}
+                                 className="w-full py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg text-sm font-medium hover:bg-black dark:hover:bg-zinc-200 transition-colors"
+                               >
+                                 Add
+                               </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-semibold uppercase text-zinc-400 tracking-wider">Added Users</label>
+                          {formData.users && formData.users.length > 0 ? (
+                            <div className="space-y-2">
+                              {formData.users.map((u, i) => (
+                                <div key={i} className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl">
+                                   <div className="flex items-center gap-3">
+                                     <div className="w-8 h-8 bg-zinc-200 dark:bg-zinc-700 rounded-full flex items-center justify-center text-xs font-bold">
+                                       {u.username[0].toUpperCase()}
+                                     </div>
+                                     <div>
+                                       <div className="text-sm font-medium text-zinc-900 dark:text-white">{u.username}</div>
+                                       <div className="text-xs text-zinc-500 capitalize">{u.role}</div>
+                                     </div>
+                                   </div>
+                                   <button onClick={() => handleRemoveUser(i)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-zinc-400 hover:text-red-500 rounded-lg transition-colors">
+                                     <Trash2 className="w-4 h-4" />
+                                   </button>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-zinc-400 text-sm border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl">
+                              No users added yet.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-6 border-t border-zinc-200 dark:border-zinc-800 flex justify-between items-center bg-zinc-50/50 dark:bg-zinc-900/50 backdrop-blur-xl">
+                    {step > 1 ? (
+                      <button 
+                        onClick={() => setStep(step - 1)}
+                        className="px-6 py-2.5 text-zinc-600 dark:text-zinc-400 font-medium hover:text-zinc-900 dark:hover:text-white transition-colors"
+                      >
+                        Back
+                      </button>
+                    ) : (
+                      <div></div>
+                    )}
+                    
+                    {step < 3 ? (
+                      <button 
+                        onClick={() => setStep(step + 1)}
+                        className="px-6 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl font-medium hover:shadow-lg hover:shadow-zinc-500/20 transition-all flex items-center gap-2"
+                      >
+                        Next Step <ArrowRight className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={handleSubmit}
+                        disabled={loading}
+                        className="px-6 py-2.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl font-medium hover:bg-black dark:hover:bg-zinc-200 hover:shadow-lg hover:shadow-zinc-500/20 transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {loading ? 'Creating...' : 'Create Business'} <Sparkles className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </motion.div>
+          </div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}

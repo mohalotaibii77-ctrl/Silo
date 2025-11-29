@@ -1,0 +1,40 @@
+---
+alwaysApply: true
+---
+We are building a multi-tenant Restaurant Operating System similar to Foodics, but everything works inside a single unified platform.
+
+The system architecture is:
+
+(1) One backend
+Contains all microservices: POS, inventory, HR, accounting, operations, QHSE, maintenance, training, customer care, and the AI Core.
+The backend controls all business logic and provides APIs for multiple restaurants (multi-tenant).
+The backend also includes the data warehouse + audit logs + AI models.
+
+(2) SuperAdmin Frontend
+Used only by us (platform owner).
+We use it to create new businesses, manage subscriptions, control access, monitor system-wide analytics, and manage support.
+
+(3) Business Frontend (Restaurant App)
+This is the main app used by each restaurant.
+The frontend contains multiple user interfaces depending on the role:
+
+Owner UI: dashboard, HR, inventory, operations, accounting, AI reports.
+
+Operations Manager UI: daily tasks, checklists, shifts, incidents, waste, EOD.
+
+Employee UI: check-in, tasks, uploads, training, issues.
+
+The system is NOT dependent on external POS or external accounting software — our backend includes both POS logic and accounting logic internally.
+
+All modules (POS, Inventory, HR, Operations, QHSE, Accounting, AI) are internal backend microservices connected through the API Gateway and served to the Business Frontend.
+
+The Business Frontend is where all operational activity happens.
+The SuperAdmin Frontend is for platform-level control.
+The backend is the single engine powering everything.
+
+
+
+This APP solely uses the project Silo from our database. Dont edit or do anything to other projects.
+
+When I ask you to do something, implement and then give a brief summary within the chat, do not create a document unless it is a requirement that we need.
+

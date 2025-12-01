@@ -40,6 +40,8 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
   const [loading, setLoading] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [error, setError] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [certificateFile, setCertificateFile] = useState<File | null>(null);
   const [showCredentials, setShowCredentials] = useState(false);
   const [createdCredentials, setCreatedCredentials] = useState<UserCredentials[]>([]);
@@ -49,7 +51,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
 
   const [formData, setFormData] = useState<UpdateBusinessInput>({
     name: '', slug: '', email: '', phone: '', address: '',
-    business_type: 'restaurant', certificate_url: '',
+    business_type: 'restaurant', logo_url: '', certificate_url: '',
     subscription_tier: 'basic', subscription_status: 'active',
     max_users: 5, max_products: 100, users: [],
   });
@@ -68,6 +70,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
         phone: business.phone || '',
         address: business.address || '',
         business_type: business.business_type || 'restaurant',
+        logo_url: business.logo_url || '',
         certificate_url: business.certificate_url || '',
         subscription_tier: business.subscription_tier,
         subscription_status: business.subscription_status,
@@ -75,6 +78,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
         max_products: business.max_products,
         users: [],
       });
+      setLogoPreview(business.logo_url || null);
       loadBusinessUsers(business.id);
     }
   }, [business, isOpen]);
@@ -110,13 +114,46 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
     setError('');
   };
 
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError('File size must be less than 5MB');
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        setError('Only image files are allowed');
+        return;
+      }
+      setLogoFile(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onload = () => setLogoPreview(reader.result as string);
+      reader.readAsDataURL(file);
+      setError('');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!business) return;
     setError('');
     setLoading(true);
 
     try {
+      let logoUrl = formData.logo_url;
       let certificateUrl = formData.certificate_url;
+
+      // Convert logo file to base64
+      if (logoFile) {
+        const reader = new FileReader();
+        logoUrl = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(logoFile);
+        });
+      }
+
+      // Convert certificate file to base64
       if (certificateFile) {
         const reader = new FileReader();
         certificateUrl = await new Promise((resolve, reject) => {
@@ -132,6 +169,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
       
       const dataToSend = { 
         ...formData, 
+        logo_url: logoUrl,
         certificate_url: certificateUrl, 
         users: newUsersOnly,
         deleteUserIds: deletedUserIds.length > 0 ? deletedUserIds : undefined
@@ -153,6 +191,8 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
   };
 
   const handleClose = () => {
+    setLogoFile(null);
+    setLogoPreview(null);
     setCertificateFile(null);
     setShowCredentials(false);
     setCreatedCredentials([]);
@@ -298,6 +338,39 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                               onChange={(e) => setFormData({...formData, email: e.target.value})}
                               className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg outline-none"
                             />
+                          </div>
+                        </div>
+
+                        {/* Logo Upload */}
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-zinc-500">Business Logo</label>
+                          <div className="flex items-center gap-4">
+                            <div className="w-16 h-16 rounded-xl bg-zinc-100 dark:bg-zinc-800 border-2 border-dashed border-zinc-300 dark:border-zinc-700 flex items-center justify-center overflow-hidden">
+                              {logoPreview ? (
+                                <img src={logoPreview} alt="Logo preview" className="w-full h-full object-cover" />
+                              ) : (
+                                <Building2 className="w-6 h-6 text-zinc-400" />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <label className="flex items-center justify-center w-full h-16 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 dark:hover:border-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-all">
+                                <div className="flex items-center gap-2">
+                                  <Upload className="w-4 h-4 text-zinc-400" />
+                                  <span className="text-sm text-zinc-500">
+                                    {logoFile ? logoFile.name : 'Change logo'}
+                                  </span>
+                                </div>
+                                <input type="file" className="hidden" onChange={handleLogoChange} accept="image/*" />
+                              </label>
+                            </div>
+                            {(logoFile || logoPreview) && (
+                              <button 
+                                onClick={() => { setLogoFile(null); setLogoPreview(null); setFormData({...formData, logo_url: ''}); }}
+                                className="p-2 text-zinc-400 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>

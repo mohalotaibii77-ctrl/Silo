@@ -11,6 +11,7 @@ export { inventoryService, InventoryService } from './inventory.service';
 export { hrService, HRService } from './hr.service';
 export { operationsService, OperationsService } from './operations.service';
 export { businessService, BusinessService } from './business.service';
+export { productsService, ProductsService } from './products.service';
 
 /**
  * Service Registry
@@ -23,5 +24,6 @@ export const services = {
   hr: () => import('./hr.service').then(m => m.hrService),
   operations: () => import('./operations.service').then(m => m.operationsService),
   business: () => import('./business.service').then(m => m.businessService),
+  products: () => import('./products.service').then(m => m.productsService),
 };
 

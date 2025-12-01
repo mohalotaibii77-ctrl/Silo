@@ -38,6 +38,10 @@ export interface BusinessLoginResponse {
     id: number;
     name: string;
     slug: string;
+    currency?: string;
+    tax_rate?: number;
+    language?: string;
+    logo_url?: string;
   } | null;
 }
 
@@ -86,12 +90,12 @@ export class BusinessAuthService {
       businessId: String(user.business_id),
     });
 
-    // Get business info
+    // Get business info including settings
     let business = null;
     if (user.business_id) {
       const { data: bizData } = await supabaseAdmin
         .from('businesses')
-        .select('id, name, slug')
+        .select('id, name, slug, currency, tax_rate, language, logo_url')
         .eq('id', user.business_id)
         .single();
       business = bizData;

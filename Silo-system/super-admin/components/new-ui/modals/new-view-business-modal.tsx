@@ -77,27 +77,36 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
               className="w-full max-w-3xl bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden pointer-events-auto flex flex-col max-h-[90vh]"
             >
               {/* Header */}
-              <div className="relative h-32 bg-zinc-900 dark:bg-zinc-950">
-                <div className="absolute top-4 right-4">
-                  <button onClick={onClose} className="p-2 bg-black/20 hover:bg-black/40 text-white rounded-full backdrop-blur-md transition-colors">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <div className="absolute -bottom-10 left-8 flex items-end gap-4">
-                  <div className="w-20 h-20 rounded-2xl bg-white dark:bg-zinc-900 p-1 shadow-xl">
-                    <div className="w-full h-full rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                       <Building2 className="w-8 h-8 text-zinc-400" />
+              <div className="bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center overflow-hidden">
+                      {business.logo_url ? (
+                        <Image 
+                          src={business.logo_url} 
+                          alt={`${business.name} logo`}
+                          width={48}
+                          height={48}
+                          className="w-full h-full object-cover"
+                          unoptimized
+                        />
+                      ) : (
+                        <Building2 className="w-6 h-6 text-zinc-400" />
+                      )}
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-bold text-zinc-900 dark:text-white">{business.name}</h2>
+                      <p className="text-zinc-500 font-mono text-sm">@{business.slug}</p>
                     </div>
                   </div>
-                  <div className="pb-2">
-                    <h2 className="text-2xl font-bold text-white drop-shadow-md">{business.name}</h2>
-                    <p className="text-zinc-400 font-mono text-sm opacity-90">@{business.slug}</p>
-                  </div>
+                  <button onClick={onClose} className="p-2 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-zinc-500" />
+                  </button>
                 </div>
               </div>
 
               {/* Content */}
-              <div className="pt-14 px-8 pb-8 overflow-y-auto custom-scrollbar space-y-8">
+              <div className="px-6 py-6 overflow-y-auto custom-scrollbar space-y-8">
                 
                 {/* Quick Stats */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -109,6 +109,12 @@ export const businessApi = {
   delete: async (id: number): Promise<void> => {
     await api.delete(`/api/businesses/${id}`);
   },
+
+  deleteWithPassword: async (id: number, password: string): Promise<void> => {
+    await api.delete(`/api/businesses/${id}`, {
+      data: { password }
+    });
+  },
 };
 
 // User APIs

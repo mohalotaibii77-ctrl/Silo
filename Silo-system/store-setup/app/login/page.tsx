@@ -41,6 +41,11 @@ export default function LoginPage() {
       localStorage.setItem('setup_user', JSON.stringify(user));
       localStorage.setItem('setup_business', JSON.stringify(business));
 
+      // Apply language direction immediately before navigation
+      const lang = business?.language || 'en';
+      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+      document.documentElement.lang = lang;
+
       // Navigate to setup dashboard
       router.push('/');
     } catch (err: any) {

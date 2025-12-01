@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Building2, Mail, Phone, MapPin, Tag, Upload, FileText, 
   UserPlus, Users, Trash2, Copy, Check, Eye, EyeOff, ShieldCheck,
-  Sparkles, ArrowRight, ChevronRight
+  Sparkles, ArrowRight, ChevronRight, Crown, Plus
 } from 'lucide-react';
 import { businessApi, UserCredentials } from '@/lib/api';
 import type { CreateBusinessInput, BusinessUser } from '@/types';
@@ -37,6 +37,8 @@ const modalVariants = {
 export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreateBusinessModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [logoFile, setLogoFile] = useState<File | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [certificateFile, setCertificateFile] = useState<File | null>(null);
   const [showCredentials, setShowCredentials] = useState(false);
   const [createdCredentials, setCreatedCredentials] = useState<UserCredentials[]>([]);
@@ -51,6 +53,7 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     phone: '',
     address: '',
     business_type: 'restaurant',
+    logo_url: '',
     certificate_url: '',
     subscription_tier: 'basic',
     max_users: 5,
@@ -108,8 +111,20 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     setLoading(true);
 
     try {
+      let logoUrl = formData.logo_url;
       let certificateUrl = formData.certificate_url;
       
+      // Convert logo file to base64
+      if (logoFile) {
+        const reader = new FileReader();
+        logoUrl = await new Promise((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(logoFile);
+        });
+      }
+
+      // Convert certificate file to base64
       if (certificateFile) {
         const reader = new FileReader();
         certificateUrl = await new Promise((resolve, reject) => {
@@ -119,7 +134,7 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
         });
       }
 
-      const dataToSend = { ...formData, certificate_url: certificateUrl };
+      const dataToSend = { ...formData, logo_url: logoUrl, certificate_url: certificateUrl };
       const response = await businessApi.create(dataToSend);
       
       if (response.userCredentials && response.userCredentials.length > 0) {
@@ -139,9 +154,11 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
   const handleClose = () => {
     setFormData({
       name: '', slug: '', email: '', phone: '', address: '',
-      business_type: 'restaurant', certificate_url: '',
+      business_type: 'restaurant', logo_url: '', certificate_url: '',
       subscription_tier: 'basic', max_users: 5, max_products: 100, users: [],
     });
+    setLogoFile(null);
+    setLogoPreview(null);
     setCertificateFile(null);
     setShowCredentials(false);
     setCreatedCredentials([]);
@@ -158,7 +175,7 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     setFormData(prev => ({ ...prev, name, slug: generateSlug(name) }));
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
@@ -167,6 +184,26 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
       }
       if (!file.type.startsWith('image/')) {
         setError('Only image files are allowed');
+        return;
+      }
+      setLogoFile(file);
+      // Create preview URL
+      const reader = new FileReader();
+      reader.onload = () => setLogoPreview(reader.result as string);
+      reader.readAsDataURL(file);
+      setError('');
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setError('File size must be less than 5MB');
+        return;
+      }
+      if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
+        setError('Only image or PDF files are allowed');
         return;
       }
       setCertificateFile(file);
@@ -363,6 +400,40 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
                              </div>
                           </div>
                         </div>
+
+                        {/* Logo Upload */}
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Logo (Optional)</label>
+                          <div className="flex items-center gap-4">
+                            <div className="w-20 h-20 rounded-xl bg-zinc-100 dark:bg-zinc-800 border-2 border-dashed border-zinc-300 dark:border-zinc-700 flex items-center justify-center overflow-hidden">
+                              {logoPreview ? (
+                                <img src={logoPreview} alt="Logo preview" className="w-full h-full object-cover" />
+                              ) : (
+                                <Building2 className="w-8 h-8 text-zinc-400" />
+                              )}
+                            </div>
+                            <div className="flex-1">
+                              <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 dark:hover:border-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-all">
+                                <div className="flex items-center gap-2">
+                                  <Upload className="w-5 h-5 text-zinc-400" />
+                                  <span className="text-sm text-zinc-500">
+                                    {logoFile ? logoFile.name : 'Upload logo'}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-zinc-400 mt-1">PNG, JPG up to 5MB</p>
+                                <input type="file" className="hidden" onChange={handleLogoChange} accept="image/*" />
+                              </label>
+                            </div>
+                            {logoFile && (
+                              <button 
+                                onClick={() => { setLogoFile(null); setLogoPreview(null); }}
+                                className="p-2 text-zinc-400 hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
                         
                         <div className="space-y-2">
                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Email</label>
@@ -452,78 +523,100 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
 
                     {step === 3 && (
                       <div className="space-y-6">
-                        <div className="p-4 bg-zinc-100 dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700">
-                          <div className="flex gap-4">
-                            <div className="flex-1 space-y-3">
-                               <input 
-                                 placeholder="Username"
-                                 value={newUser.username}
-                                 onChange={(e) => setNewUser({...newUser, username: e.target.value})}
-                                 className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
-                               />
-                               <div className="flex gap-3">
-                                 <input 
-                                   placeholder="First Name"
-                                   value={newUser.first_name}
-                                   onChange={(e) => setNewUser({...newUser, first_name: e.target.value})}
-                                   className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
-                                 />
-                                 <input 
-                                   placeholder="Last Name"
-                                   value={newUser.last_name}
-                                   onChange={(e) => setNewUser({...newUser, last_name: e.target.value})}
-                                   className="flex-1 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
-                                 />
-                               </div>
+                        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
+                          <p className="text-sm text-blue-700 dark:text-blue-300">
+                            Create the business owner account. The owner can then add managers and employees from their Store Setup dashboard.
+                          </p>
+                        </div>
+
+                        <div className="p-5 bg-zinc-100 dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700">
+                          <div className="flex items-center gap-2 mb-4">
+                            <div className="w-8 h-8 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center">
+                              <Crown className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                             </div>
-                            <div className="w-32 space-y-3">
-                               <select
-                                  value={newUser.role}
-                                  onChange={(e) => setNewUser({...newUser, role: e.target.value as any})}
-                                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm focus:border-zinc-500 outline-none"
-                               >
-                                 <option value="owner">Owner</option>
-                                 <option value="manager">Manager</option>
-                                 <option value="employee">Employee</option>
-                                 <option value="pos">POS Terminal</option>
-                               </select>
-                               <button 
-                                 onClick={handleAddUser}
-                                 className="w-full py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg text-sm font-medium hover:bg-black dark:hover:bg-zinc-200 transition-colors"
-                               >
-                                 Add
-                               </button>
+                            <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">Owner Account</span>
+                          </div>
+                          <div className="space-y-4">
+                            <div>
+                              <label className="text-xs font-medium text-zinc-500 mb-1 block">Username *</label>
+                              <input 
+                                placeholder="e.g., owner_john"
+                                value={newUser.username}
+                                onChange={(e) => setNewUser({...newUser, username: e.target.value, role: 'owner'})}
+                                className="w-full px-4 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm focus:border-zinc-500 focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all"
+                              />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="text-xs font-medium text-zinc-500 mb-1 block">First Name</label>
+                                <input 
+                                  placeholder="First Name"
+                                  value={newUser.first_name}
+                                  onChange={(e) => setNewUser({...newUser, first_name: e.target.value})}
+                                  className="w-full px-4 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm focus:border-zinc-500 focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs font-medium text-zinc-500 mb-1 block">Last Name</label>
+                                <input 
+                                  placeholder="Last Name"
+                                  value={newUser.last_name}
+                                  onChange={(e) => setNewUser({...newUser, last_name: e.target.value})}
+                                  className="w-full px-4 py-2.5 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm focus:border-zinc-500 focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all"
+                                />
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900/50 rounded-lg">
+                              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                                Default Password: <code className="font-mono bg-zinc-200 dark:bg-zinc-800 px-2 py-0.5 rounded">{DEFAULT_PASSWORD}</code>
+                              </div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="text-xs font-semibold uppercase text-zinc-400 tracking-wider">Added Users</label>
-                          {formData.users && formData.users.length > 0 ? (
-                            <div className="space-y-2">
-                              {formData.users.map((u, i) => (
-                                <div key={i} className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl">
-                                   <div className="flex items-center gap-3">
-                                     <div className="w-8 h-8 bg-zinc-200 dark:bg-zinc-700 rounded-full flex items-center justify-center text-xs font-bold">
-                                       {u.username[0].toUpperCase()}
-                                     </div>
-                                     <div>
-                                       <div className="text-sm font-medium text-zinc-900 dark:text-white">{u.username}</div>
-                                       <div className="text-xs text-zinc-500 capitalize">{u.role}</div>
-                                     </div>
-                                   </div>
-                                   <button onClick={() => handleRemoveUser(i)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-zinc-400 hover:text-red-500 rounded-lg transition-colors">
-                                     <Trash2 className="w-4 h-4" />
-                                   </button>
+                        {formData.users && formData.users.length > 0 && (
+                          <div className="space-y-2">
+                            <label className="text-xs font-semibold uppercase text-zinc-400 tracking-wider">Owner to be Created</label>
+                            <div className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-emerald-200 dark:bg-emerald-800 rounded-full flex items-center justify-center text-sm font-bold text-emerald-700 dark:text-emerald-300">
+                                  {formData.users[0].username[0].toUpperCase()}
                                 </div>
-                              ))}
+                                <div>
+                                  <div className="text-sm font-medium text-zinc-900 dark:text-white">{formData.users[0].username}</div>
+                                  <div className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                    <Crown className="w-3 h-3" /> Owner
+                                  </div>
+                                </div>
+                              </div>
+                              <button onClick={() => handleRemoveUser(0)} className="p-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-zinc-400 hover:text-red-500 rounded-lg transition-colors">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
                             </div>
-                          ) : (
-                            <div className="text-center py-8 text-zinc-400 text-sm border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-xl">
-                              No users added yet.
-                            </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
+
+                        {(!formData.users || formData.users.length === 0) && newUser.username && (
+                          <button 
+                            onClick={() => {
+                              if (newUser.username) {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  users: [{
+                                    username: newUser.username!,
+                                    role: 'owner',
+                                    first_name: newUser.first_name,
+                                    last_name: newUser.last_name,
+                                    password: DEFAULT_PASSWORD,
+                                  }],
+                                }));
+                              }
+                            }}
+                            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium transition-colors flex items-center justify-center gap-2"
+                          >
+                            <Plus className="w-4 h-4" /> Set as Owner
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

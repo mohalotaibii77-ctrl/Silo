@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Noto_Sans_Arabic } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
+import { LanguageProvider } from "@/lib/language-context";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -11,6 +12,12 @@ const inter = Inter({
 const jetbrainsMono = JetBrains_Mono({
   variable: "--font-mono",
   subsets: ["latin"],
+});
+
+const notoArabic = Noto_Sans_Arabic({
+  variable: "--font-arabic",
+  subsets: ["arabic"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -26,7 +33,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${jetbrainsMono.variable} antialiased bg-background text-foreground font-sans`}
+        className={`${inter.variable} ${jetbrainsMono.variable} ${notoArabic.variable} antialiased bg-background text-foreground font-sans`}
       >
         <ThemeProvider
           attribute="class"
@@ -34,7 +41,9 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <LanguageProvider>
+            {children}
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -5,6 +5,7 @@
 
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../config/database';
+import { storageService } from './storage.service';
 
 // Types matching the database schema
 export interface DBBusiness {
@@ -15,12 +16,18 @@ export interface DBBusiness {
   phone: string | null;
   address: string | null;
   business_type: string | null;
+  logo_url: string | null;
   certificate_url: string | null;
   subscription_tier: string | null;
   subscription_status: string | null;
   max_users: number | null;
   max_products: number | null;
   user_count: number | null;
+  // Localization fields
+  country: string | null;
+  currency: string | null;
+  language: string | null;
+  timezone: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +55,7 @@ export interface CreateBusinessInput {
   phone?: string;
   address?: string;
   business_type?: string;
+  logo_url?: string;
   certificate_url?: string;
   subscription_tier?: 'basic' | 'pro' | 'enterprise';
   max_users?: number;
@@ -143,7 +151,7 @@ export class BusinessService {
       throw new Error('Business with this slug already exists');
     }
 
-    // Create business
+    // First create business to get ID for file uploads
     const { data: business, error } = await supabaseAdmin
       .from('businesses')
       .insert({
@@ -153,7 +161,8 @@ export class BusinessService {
         phone: input.phone || null,
         address: input.address || null,
         business_type: input.business_type || 'restaurant',
-        certificate_url: input.certificate_url || null,
+        logo_url: null,
+        certificate_url: null,
         subscription_tier: input.subscription_tier || 'basic',
         subscription_status: 'active',
         max_users: input.max_users || 5,
@@ -169,6 +178,43 @@ export class BusinessService {
         throw new Error('Business with this name or slug already exists');
       }
       throw new Error('Failed to create business');
+    }
+
+    // Upload logo and certificate if provided as base64
+    let logoUrl = null;
+    let certificateUrl = null;
+
+    if (input.logo_url && input.logo_url.startsWith('data:')) {
+      try {
+        const result = await storageService.uploadBase64(input.logo_url, business.id, 'logo');
+        logoUrl = result.url;
+      } catch (err) {
+        console.error('Error uploading logo:', err);
+      }
+    }
+
+    if (input.certificate_url && input.certificate_url.startsWith('data:')) {
+      try {
+        const result = await storageService.uploadBase64(input.certificate_url, business.id, 'certificate');
+        certificateUrl = result.url;
+      } catch (err) {
+        console.error('Error uploading certificate:', err);
+      }
+    }
+
+    // Update business with uploaded file URLs
+    if (logoUrl || certificateUrl) {
+      const updateFields: Record<string, unknown> = {};
+      if (logoUrl) updateFields.logo_url = logoUrl;
+      if (certificateUrl) updateFields.certificate_url = certificateUrl;
+
+      await supabaseAdmin
+        .from('businesses')
+        .update(updateFields)
+        .eq('id', business.id);
+
+      business.logo_url = logoUrl;
+      business.certificate_url = certificateUrl;
     }
 
     // Create users if provided
@@ -211,6 +257,28 @@ export class BusinessService {
    * Update business
    */
   async updateBusiness(id: number, input: UpdateBusinessInput): Promise<{ business: DBBusiness; userCredentials?: UserCredentials[] }> {
+    // Handle file uploads first
+    let logoUrl: string | undefined;
+    let certificateUrl: string | undefined;
+
+    if (input.logo_url && input.logo_url.startsWith('data:')) {
+      try {
+        const result = await storageService.uploadBase64(input.logo_url, id, 'logo');
+        logoUrl = result.url;
+      } catch (err) {
+        console.error('Error uploading logo:', err);
+      }
+    }
+
+    if (input.certificate_url && input.certificate_url.startsWith('data:')) {
+      try {
+        const result = await storageService.uploadBase64(input.certificate_url, id, 'certificate');
+        certificateUrl = result.url;
+      } catch (err) {
+        console.error('Error uploading certificate:', err);
+      }
+    }
+
     // Build update object
     const updateData: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -222,7 +290,10 @@ export class BusinessService {
     if (input.phone !== undefined) updateData.phone = input.phone;
     if (input.address !== undefined) updateData.address = input.address;
     if (input.business_type !== undefined) updateData.business_type = input.business_type;
-    if (input.certificate_url !== undefined) updateData.certificate_url = input.certificate_url;
+    if (logoUrl) updateData.logo_url = logoUrl;
+    else if (input.logo_url !== undefined && !input.logo_url.startsWith('data:')) updateData.logo_url = input.logo_url;
+    if (certificateUrl) updateData.certificate_url = certificateUrl;
+    else if (input.certificate_url !== undefined && !input.certificate_url.startsWith('data:')) updateData.certificate_url = input.certificate_url;
     if (input.subscription_tier !== undefined) updateData.subscription_tier = input.subscription_tier;
     if (input.subscription_status !== undefined) updateData.subscription_status = input.subscription_status;
     if (input.max_users !== undefined) updateData.max_users = input.max_users;

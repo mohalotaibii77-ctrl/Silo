@@ -34,19 +34,27 @@ export interface User extends BaseEntity {
 
 export type UserRole = 'owner' | 'manager' | 'employee' | 'pos' | 'super_admin';
 
-// Items (Menu Items / Ingredients)
-export interface Item extends BaseEntity {
-  business_id: string;
+// Item Categories (raw materials/ingredients)
+export type ItemCategory = 
+  | 'vegetable' | 'fruit' | 'meat' | 'poultry' | 'seafood' 
+  | 'dairy' | 'grain' | 'bread' | 'sauce' | 'condiment' 
+  | 'spice' | 'oil' | 'beverage' | 'sweetener' | 'other';
+
+export type ItemUnit = 'grams' | 'mL' | 'piece';
+
+// Items (Raw Materials / Ingredients)
+export interface Item {
+  id: number;
+  business_id: number | null;
   name: string;
-  sku?: string;
-  type: 'product' | 'ingredient' | 'supply';
-  category_id?: string;
-  unit: string;
-  cost_price?: number;
-  sell_price?: number;
-  current_stock: number;
-  min_stock_level: number;
-  is_active: boolean;
+  name_ar?: string | null;
+  category: ItemCategory;
+  unit: ItemUnit;
+  cost_per_unit: number;
+  is_system_item: boolean;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
 }
 
 // Category

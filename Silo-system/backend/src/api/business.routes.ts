@@ -5,6 +5,9 @@
 
 import { Router, Request, Response } from 'express';
 import { businessService, CreateBusinessInput, UpdateBusinessInput } from '../services/business.service';
+import { supabaseAdmin as supabase } from '../config/database';
+import { authService } from '../services/auth.service';
+import bcrypt from 'bcryptjs';
 
 const router = Router();
 
@@ -113,6 +116,7 @@ router.put('/:id', async (req: Request, res: Response): Promise<void> => {
 /**
  * DELETE /api/businesses/:id
  * Delete business and all related data
+ * Requires admin password verification
  */
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -122,6 +126,55 @@ router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    const { password } = req.body;
+    
+    if (!password) {
+      res.status(400).json({ error: 'Admin password is required' });
+      return;
+    }
+
+    // Get the admin user from the token
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    let payload;
+    try {
+      payload = authService.verifyToken(token);
+    } catch {
+      res.status(401).json({ error: 'Invalid or expired token' });
+      return;
+    }
+
+    // Get the admin user's password hash from the database
+    const { data: adminUser, error: userError } = await supabase
+      .from('users')
+      .select('password_hash, role')
+      .eq('id', payload.userId)
+      .single();
+
+    if (userError || !adminUser) {
+      res.status(401).json({ error: 'Admin user not found' });
+      return;
+    }
+
+    // Verify the user is a super_admin
+    if (adminUser.role !== 'super_admin') {
+      res.status(403).json({ error: 'Only super admins can delete businesses' });
+      return;
+    }
+
+    // Verify the password
+    const isValidPassword = await bcrypt.compare(password, adminUser.password_hash);
+    if (!isValidPassword) {
+      res.status(401).json({ error: 'Invalid password' });
+      return;
+    }
+
+    // Password verified, proceed with deletion
     await businessService.deleteBusiness(id);
     res.json({ message: 'Business deleted successfully' });
   } catch (error) {
@@ -151,6 +204,137 @@ router.get('/:id/users', async (req: Request, res: Response): Promise<void> => {
     console.error('Error fetching business users:', error);
     res.status(500).json({ 
       error: 'Failed to fetch business users',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /api/businesses/change-requests
+ * Get all pending change requests (for SuperAdmin notifications)
+ */
+router.get('/change-requests/all', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const status = req.query.status as string || 'pending';
+    
+    const { data, error } = await supabase
+      .from('business_change_requests')
+      .select(`
+        *,
+        business:businesses(id, name, slug),
+        requester:business_users(id, username, first_name, last_name)
+      `)
+      .eq('status', status)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ data });
+  } catch (error) {
+    console.error('Error fetching change requests:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch change requests',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * PUT /api/businesses/change-requests/:id/approve
+ * Approve a change request
+ */
+router.put('/change-requests/:id/approve', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requestId = parseInt(req.params.id, 10);
+    const { admin_notes, reviewed_by } = req.body;
+
+    // Get the request
+    const { data: request, error: fetchError } = await supabase
+      .from('business_change_requests')
+      .select('*')
+      .eq('id', requestId)
+      .single();
+
+    if (fetchError || !request) {
+      res.status(404).json({ error: 'Change request not found' });
+      return;
+    }
+
+    // Apply the changes to the business
+    const updateData: any = {};
+    if (request.new_name) updateData.name = request.new_name;
+    if (request.new_email) updateData.email = request.new_email;
+    if (request.new_phone) updateData.phone = request.new_phone;
+    if (request.new_address) updateData.address = request.new_address;
+    if (request.new_logo_url) updateData.logo_url = request.new_logo_url;
+    if (request.new_certificate_url) updateData.certificate_url = request.new_certificate_url;
+
+    if (Object.keys(updateData).length > 0) {
+      updateData.updated_at = new Date().toISOString();
+      
+      const { error: updateError } = await supabase
+        .from('businesses')
+        .update(updateData)
+        .eq('id', request.business_id);
+
+      if (updateError) throw updateError;
+    }
+
+    // Update request status
+    const { data, error } = await supabase
+      .from('business_change_requests')
+      .update({
+        status: 'approved',
+        admin_notes,
+        reviewed_by,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', requestId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ data, message: 'Change request approved' });
+  } catch (error) {
+    console.error('Error approving change request:', error);
+    res.status(500).json({ 
+      error: 'Failed to approve change request',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * PUT /api/businesses/change-requests/:id/reject
+ * Reject a change request
+ */
+router.put('/change-requests/:id/reject', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const requestId = parseInt(req.params.id, 10);
+    const { admin_notes, reviewed_by } = req.body;
+
+    const { data, error } = await supabase
+      .from('business_change_requests')
+      .update({
+        status: 'rejected',
+        admin_notes,
+        reviewed_by,
+        reviewed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', requestId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    res.json({ data, message: 'Change request rejected' });
+  } catch (error) {
+    console.error('Error rejecting change request:', error);
+    res.status(500).json({ 
+      error: 'Failed to reject change request',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
   }

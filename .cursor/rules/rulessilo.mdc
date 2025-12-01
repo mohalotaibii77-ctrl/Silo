@@ -38,3 +38,5 @@ This APP solely uses the project Silo from our database. Dont edit or do anythin
 
 When I ask you to do something, implement and then give a brief summary within the chat, do not create a document unless it is a requirement that we need.
 
+
+the backend should be Modular Monolith

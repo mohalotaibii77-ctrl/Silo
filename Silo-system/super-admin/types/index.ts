@@ -38,6 +38,7 @@ export interface Business {
   phone: string | null;
   address: string | null;
   business_type: string;
+  logo_url: string | null;
   certificate_url: string | null;
   subscription_tier: 'basic' | 'pro' | 'enterprise';
   subscription_status: 'active' | 'inactive' | 'suspended' | 'trial';
@@ -58,6 +59,7 @@ export interface CreateBusinessInput {
   phone?: string;
   address?: string;
   business_type?: string;
+  logo_url?: string;
   certificate_url?: string;
   subscription_tier?: 'basic' | 'pro' | 'enterprise';
   max_users?: number;

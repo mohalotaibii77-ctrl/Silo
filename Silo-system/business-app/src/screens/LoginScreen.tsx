@@ -3,7 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Animated, E
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/client';
 import { useTheme } from '../theme/ThemeContext';
-import { Command, Mail, Lock, ShoppingCart, Sun, Moon, ArrowRight } from 'lucide-react-native';
+import { Command, Mail, Lock, Sun, Moon, ArrowRight } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -66,6 +66,11 @@ export default function LoginScreen({ navigation }: any) {
       const response = await api.post('/business-auth/login', { email, password });
       await AsyncStorage.setItem('token', response.data.token);
       await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
+      
+      // Save business data including currency settings
+      if (response.data.business) {
+        await AsyncStorage.setItem('business', JSON.stringify(response.data.business));
+      }
       
       const role = response.data.user.role;
       
@@ -197,7 +202,7 @@ export default function LoginScreen({ navigation }: any) {
     },
     button: {
       backgroundColor: colors.primary,
-      height: 56, // Taller button
+      height: 56,
       borderRadius: 14,
       flexDirection: 'row',
       alignItems: 'center',
@@ -207,7 +212,6 @@ export default function LoginScreen({ navigation }: any) {
       shadowOpacity: 0.2,
       shadowRadius: 8,
       elevation: 4,
-      marginBottom: 24,
       gap: 10,
     },
     buttonDisabled: {
@@ -218,65 +222,14 @@ export default function LoginScreen({ navigation }: any) {
       fontSize: 16,
       fontWeight: '600',
     },
-    divider: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 24,
-    },
-    dividerLine: {
-      flex: 1,
-      height: 1,
-      backgroundColor: colors.border,
-    },
-    dividerText: {
-      marginHorizontal: 16,
-      fontSize: 12,
-      color: colors.mutedForeground,
-      fontWeight: '600',
-    },
-    storefrontButton: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      height: 56,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.background,
-      gap: 10,
-    },
-    storefrontButtonText: {
-      color: colors.foreground,
-      fontSize: 16,
-      fontWeight: '600',
-    },
     footer: {
-      marginTop: 32,
+      marginTop: 24,
       alignItems: 'center',
     },
     footerText: {
       fontSize: 12,
       color: colors.mutedForeground,
       opacity: 0.6,
-    },
-    adminCreds: {
-      marginTop: 24,
-      padding: 16,
-      backgroundColor: colors.muted,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      alignItems: 'center',
-    },
-    adminCredsLabel: {
-      fontSize: 12,
-      color: colors.mutedForeground,
-      marginBottom: 4,
-    },
-    adminCredsText: {
-      fontSize: 12,
-      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-      color: colors.foreground,
     },
   });
 
@@ -363,25 +316,6 @@ export default function LoginScreen({ navigation }: any) {
               </>
             )}
           </TouchableOpacity>
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <TouchableOpacity 
-            style={styles.storefrontButton}
-            onPress={() => navigation.replace('Storefront')}
-          >
-            <ShoppingCart size={20} color={colors.foreground} />
-            <Text style={styles.storefrontButtonText}>Open Storefront (Walk-in)</Text>
-          </TouchableOpacity>
-          
-          <View style={styles.adminCreds}>
-            <Text style={styles.adminCredsLabel}>Demo Credentials</Text>
-            <Text style={styles.adminCredsText}>Mohalotaibii77@gmail.com</Text>
-          </View>
 
           <View style={styles.footer}>
             <Text style={styles.footerText}>Powered by Silo System</Text>

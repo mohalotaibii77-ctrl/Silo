@@ -63,20 +63,20 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 
 // Category colors for badges
 const categoryColors: Record<ItemCategory, string> = {
-  vegetable: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
-  fruit: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
-  meat: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
-  poultry: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-  seafood: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
-  dairy: 'bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400',
-  grain: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400',
-  bread: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
-  sauce: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400',
-  condiment: 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400',
-  spice: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
-  oil: 'bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400',
-  beverage: 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400',
-  sweetener: 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-400',
+  vegetable: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  fruit: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  meat: 'bg-zinc-300 dark:bg-zinc-600 text-zinc-800 dark:text-zinc-200',
+  poultry: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  seafood: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  dairy: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  grain: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  bread: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  sauce: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  condiment: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  spice: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  oil: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
+  beverage: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300',
+  sweetener: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300',
   other: 'bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400',
 };
 
@@ -401,7 +401,7 @@ export default function ItemsPage() {
                             {formatPrice(getDisplayPrice(item))}
                           </span>
                           {hasCustomPrice(item) && (
-                            <span className="text-[9px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 uppercase">
+                            <span className="text-[9px] px-1 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 uppercase">
                               {t('Custom', 'مخصص')}
                             </span>
                           )}

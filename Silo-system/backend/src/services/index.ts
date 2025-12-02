@@ -12,6 +12,7 @@ export { hrService, HRService } from './hr.service';
 export { operationsService, OperationsService } from './operations.service';
 export { businessService, BusinessService } from './business.service';
 export { productsService, ProductsService } from './products.service';
+export { ownerService, OwnerService } from './owner.service';
 
 /**
  * Service Registry

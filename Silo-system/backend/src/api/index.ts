@@ -14,7 +14,9 @@ import productsRoutes from './products.routes';
 import storeProductsRoutes from './store-products.routes';
 import categoriesRoutes from './categories.routes';
 import discountsRoutes from './discounts.routes';
+import bundlesRoutes from './bundles.routes';
 import businessUsersRoutes from './business-users.routes';
+import ownerRoutes from './owner.routes';
 
 const router = Router();
 
@@ -38,7 +40,9 @@ router.use('/products', productsRoutes);  // POS Products with variants and modi
 router.use('/store-products', storeProductsRoutes);  // Store-setup products with ingredients
 router.use('/categories', categoriesRoutes);  // Product categories (system + business-specific)
 router.use('/discounts', discountsRoutes);  // Discount codes management
+router.use('/bundles', bundlesRoutes);  // Product bundles (2+ products sold as 1)
 router.use('/business-users', businessUsersRoutes);  // Business users management (for store-setup)
+router.use('/owners', ownerRoutes);  // Platform-level owner management (SuperAdmin)
 
 // TODO: Add more routes as services are implemented
 // router.use('/hr', hrRoutes);

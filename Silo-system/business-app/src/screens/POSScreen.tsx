@@ -37,6 +37,8 @@ import {
   CheckCircle,
   Printer,
   Check,
+  Truck,
+  Boxes,
 } from 'lucide-react-native';
 import { API_URL } from '../api/client';
 
@@ -86,6 +88,8 @@ interface Product {
   available: boolean;
   variant_groups: VariantGroup[];
   modifiers: ProductModifier[];
+  isBundle?: boolean; // Flag to identify bundles
+  bundleItems?: any[]; // Items included in the bundle
 }
 
 interface Category {
@@ -105,12 +109,16 @@ interface CartItem {
   removedModifiers: string[]; // names of removed items
   addedModifiers: { name: string; price: number }[]; // extra items added
   totalPrice: number; // calculated total per item
+  isBundle?: boolean; // Flag to identify bundles in cart
+  bundleItems?: any[]; // Items included in the bundle for receipt
 }
 
 interface OrderType {
-  type: 'dine_in' | 'takeaway';
+  type: 'dine_in' | 'takeaway' | 'delivery';
   tableNumber?: string;
   customerName?: string;
+  deliveryAddress?: string;
+  deliveryPhone?: string;
 }
 
 export default function POSScreen({ navigation }: any) {
@@ -137,6 +145,7 @@ export default function POSScreen({ navigation }: any) {
   const [selectedVariants, setSelectedVariants] = useState<Record<string, VariantOption>>({});
   const [removedModifiers, setRemovedModifiers] = useState<Set<string>>(new Set());
   const [addedModifiers, setAddedModifiers] = useState<Set<string>>(new Set());
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
 
   useEffect(() => {
     loadUser();
@@ -198,7 +207,10 @@ export default function POSScreen({ navigation }: any) {
       const token = await AsyncStorage.getItem('token');
       
       if (token && API_URL) {
-        // Fetch products from store-products endpoint (products table with ingredients/modifiers)
+        let posProducts: Product[] = [];
+        let posBundles: Product[] = [];
+
+        // Fetch products from store-products endpoint
         try {
           const response = await fetch(`${API_URL}/store-products`, {
             headers: { Authorization: `Bearer ${token}` }
@@ -206,7 +218,7 @@ export default function POSScreen({ navigation }: any) {
           const result = await response.json();
           if (result.success && result.data) {
             // Transform products to POS format
-            const posProducts: Product[] = result.data.map((p: any) => ({
+            posProducts = result.data.map((p: any) => ({
               id: String(p.id),
               name: p.name,
               name_ar: p.name_ar,
@@ -251,23 +263,58 @@ export default function POSScreen({ navigation }: any) {
                 }))
               ]
             }));
-            
-            setProducts(posProducts);
-            
-            // Build categories from products
-            const cats = new Set<string>();
-            posProducts.forEach((p: Product) => {
-              if (p.category_name) cats.add(p.category_name);
-            });
-            setCategories([
-              DEFAULT_CATEGORIES[0],
-              ...Array.from(cats).map(name => ({ id: name, name, icon: Grid3X3 }))
-            ]);
-            return;
           }
         } catch (apiError) {
           console.log('Products API error:', apiError);
         }
+
+        // Fetch bundles from bundles endpoint
+        try {
+          const bundlesResponse = await fetch(`${API_URL}/bundles`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const bundlesResult = await bundlesResponse.json();
+          if (bundlesResult.success && bundlesResult.data) {
+            // Transform bundles to POS format (bundles are simple - no variants/modifiers)
+            posBundles = bundlesResult.data
+              .filter((b: any) => b.is_active)
+              .map((b: any) => ({
+                id: `bundle-${b.id}`,
+                name: b.name,
+                name_ar: b.name_ar,
+                base_price: b.price,
+                category_id: 'bundles',
+                category_name: 'Bundles',
+                available: true,
+                variant_groups: [],
+                modifiers: [],
+                isBundle: true, // Flag to identify bundles
+                bundleItems: b.items, // Store bundle items for receipt
+              }));
+          }
+        } catch (bundlesError) {
+          console.log('Bundles API error:', bundlesError);
+        }
+
+        // Combine products and bundles
+        const allItems = [...posProducts, ...posBundles];
+        setProducts(allItems);
+        
+        // Build categories from products + add Bundles category if there are bundles
+        const cats = new Set<string>();
+        posProducts.forEach((p: Product) => {
+          if (p.category_name) cats.add(p.category_name);
+        });
+        const categoryList = [
+          DEFAULT_CATEGORIES[0],
+          ...Array.from(cats).map(name => ({ id: name, name, icon: Grid3X3 }))
+        ];
+        // Add Bundles category if there are bundles
+        if (posBundles.length > 0) {
+          categoryList.push({ id: 'Bundles', name: 'Bundles', icon: Boxes });
+        }
+        setCategories(categoryList);
+        return;
       }
       
       // No products found - show empty state
@@ -305,14 +352,33 @@ export default function POSScreen({ navigation }: any) {
     return matchesCategory && matchesSearch;
   });
 
-  // Handle product tap - always show customization modal for better UX
+  // Handle product tap - bundles add directly, products show customization
   const handleProductTap = (product: Product) => {
     if (!product.available) {
       Alert.alert('Unavailable', 'This item is currently unavailable');
       return;
     }
 
-    // Always show customization modal - users can see product details and customize
+    // Bundles: Add directly to cart (no customization)
+    if (product.isBundle) {
+      const cartItem: CartItem = {
+        id: `${product.id}-${Date.now()}`,
+        productId: product.id,
+        name: product.name,
+        basePrice: product.base_price,
+        quantity: 1,
+        selectedVariants: [],
+        removedModifiers: [],
+        addedModifiers: [],
+        totalPrice: product.base_price,
+        isBundle: true,
+        bundleItems: product.bundleItems,
+      };
+      setCart(prev => [...prev, cartItem]);
+      return;
+    }
+
+    // Regular products: Show customization modal
     setSelectedProduct(product);
     // Pre-select first option for required variant groups
     const initialVariants: Record<string, VariantOption> = {};
@@ -440,11 +506,112 @@ export default function POSScreen({ navigation }: any) {
   // Helper function to format currency
   const formatPrice = (amount: number) => `${currency} ${amount.toFixed(2)}`;
 
-  const processPayment = (method: 'cash' | 'card') => {
-    const orderNumber = `ORD-${Date.now().toString().slice(-6)}`;
-    setLastOrderNumber(orderNumber);
-    setShowPaymentModal(false);
-    setShowReceiptModal(true);
+  const processPayment = async (method: 'cash' | 'card') => {
+    // Prevent double-clicks
+    if (isProcessingPayment) {
+      console.log('Already processing payment...');
+      return;
+    }
+    
+    setIsProcessingPayment(true);
+    console.log('Processing payment:', method);
+    
+    try {
+      const token = await AsyncStorage.getItem('token');
+      
+      if (!token || !API_URL) {
+        console.error('Not authenticated - no token or API_URL');
+        if (Platform.OS === 'web') {
+          window.alert('Not authenticated');
+        } else {
+          Alert.alert('Error', 'Not authenticated');
+        }
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      console.log('API_URL:', API_URL);
+      console.log('Cart items:', cart.length);
+
+      // Build order items for API
+      const orderItems = cart.map(item => ({
+        product_id: item.productId.startsWith('bundle-') ? null : parseInt(item.productId),
+        product_name: item.name,
+        product_category: item.isBundle ? 'Bundle' : undefined,
+        quantity: item.quantity,
+        unit_price: item.totalPrice, // Total price per item (with modifiers)
+        special_instructions: [
+          ...item.selectedVariants.map(v => v.optionName),
+          ...item.removedModifiers.map(m => `No ${m}`),
+          ...item.addedModifiers.map(m => `+${m.name}`),
+        ].join(', ') || undefined,
+        is_combo: item.isBundle || false,
+        modifiers: item.addedModifiers.map(m => ({
+          modifier_name: m.name,
+          unit_price: m.price,
+          quantity: 1,
+        })),
+      }));
+
+      console.log('Sending order to API...');
+      
+      // Create order via API
+      const response = await fetch(`${API_URL}/pos/orders`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          order_source: 'pos',
+          order_type: orderType.type,
+          table_number: orderType.tableNumber,
+          customer_name: orderType.customerName,
+          delivery_address: orderType.deliveryAddress,
+          customer_phone: orderType.deliveryPhone,
+          items: orderItems,
+          payment_method: method,
+        }),
+      });
+
+      console.log('Response status:', response.status);
+      const result = await response.json();
+      console.log('Response:', result);
+
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to create order');
+      }
+
+      // Order created successfully
+      setLastOrderNumber(result.data.order_number || result.data.display_number);
+      setShowPaymentModal(false);
+      setShowReceiptModal(true);
+
+      // Mark as paid
+      if (result.data.id) {
+        await fetch(`${API_URL}/pos/orders/${result.data.id}/payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            payment_method: method,
+            amount: total,
+          }),
+        });
+      }
+
+    } catch (error: any) {
+      console.error('Error creating order:', error);
+      if (Platform.OS === 'web') {
+        window.alert('Error: ' + (error.message || 'Failed to process payment'));
+      } else {
+        Alert.alert('Error', error.message || 'Failed to process payment');
+      }
+    } finally {
+      setIsProcessingPayment(false);
+    }
   };
 
   const completeOrder = () => {
@@ -817,6 +984,25 @@ export default function POSScreen({ navigation }: any) {
       fontSize: 10,
       fontWeight: '600',
       color: '#fff',
+    },
+    bundleBadge: {
+      position: 'absolute',
+      top: 8,
+      left: 8,
+      backgroundColor: '#8B5CF6',
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 4,
+    },
+    bundleText: {
+      fontSize: 10,
+      fontWeight: '600',
+      color: '#fff',
+    },
+    bundleItemCount: {
+      fontSize: 10,
+      color: '#8B5CF6',
+      marginTop: 2,
     },
     customizableTag: {
       fontSize: 10,
@@ -1240,9 +1426,17 @@ export default function POSScreen({ navigation }: any) {
           <Text style={styles.unavailableText}>Sold Out</Text>
         </View>
       )}
+      {item.isBundle && (
+        <View style={styles.bundleBadge}>
+          <Text style={styles.bundleText}>Bundle</Text>
+        </View>
+      )}
       <Text style={styles.menuItemName}>{item.name}</Text>
       <Text style={styles.menuItemPrice}>{formatPrice(item.base_price)}</Text>
-      {(item.variant_groups.length > 0 || item.modifiers.length > 0) && (
+      {item.isBundle && item.bundleItems && (
+        <Text style={styles.bundleItemCount}>{item.bundleItems.length} items</Text>
+      )}
+      {!item.isBundle && (item.variant_groups.length > 0 || item.modifiers.length > 0) && (
         <Text style={styles.customizableTag}>Customizable</Text>
       )}
     </TouchableOpacity>
@@ -1250,6 +1444,14 @@ export default function POSScreen({ navigation }: any) {
 
   // Get cart item display text with customizations
   const getCartItemDescription = (item: CartItem) => {
+    // For bundles, show the items included
+    if (item.isBundle && item.bundleItems && item.bundleItems.length > 0) {
+      const bundleItemNames = item.bundleItems
+        .map((bi: any) => `${bi.quantity}x ${bi.product?.name || 'Item'}`)
+        .join(', ');
+      return `Bundle: ${bundleItemNames}`;
+    }
+
     const parts: string[] = [];
     
     // Add variants
@@ -1471,6 +1673,30 @@ export default function POSScreen({ navigation }: any) {
                 ]}
               >
                 Takeaway
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.orderTypeBtn,
+                orderType.type === 'delivery' && styles.orderTypeBtnActive,
+              ]}
+              onPress={() => setOrderType({ ...orderType, type: 'delivery' })}
+            >
+              <Truck
+                size={16}
+                color={
+                  orderType.type === 'delivery'
+                    ? colors.primaryForeground
+                    : colors.foreground
+                }
+              />
+              <Text
+                style={[
+                  styles.orderTypeBtnText,
+                  orderType.type === 'delivery' && styles.orderTypeBtnTextActive,
+                ]}
+              >
+                Delivery
               </Text>
             </TouchableOpacity>
           </View>
@@ -1716,9 +1942,15 @@ export default function POSScreen({ navigation }: any) {
             </View>
 
             <View style={styles.paymentOptions}>
+              {isProcessingPayment && (
+                <Text style={{ textAlign: 'center', marginBottom: 12, color: colors.primary }}>
+                  Processing payment...
+                </Text>
+              )}
               <TouchableOpacity
-                style={styles.paymentBtn}
+                style={[styles.paymentBtn, isProcessingPayment && { opacity: 0.5 }]}
                 onPress={() => processPayment('cash')}
+                disabled={isProcessingPayment}
               >
                 <View style={styles.paymentIcon}>
                   <Banknote size={24} color="#fff" />
@@ -1735,8 +1967,9 @@ export default function POSScreen({ navigation }: any) {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={styles.paymentBtn}
+                style={[styles.paymentBtn, isProcessingPayment && { opacity: 0.5 }]}
                 onPress={() => processPayment('card')}
+                disabled={isProcessingPayment}
               >
                 <View style={styles.paymentIcon}>
                   <CreditCard size={24} color="#fff" />

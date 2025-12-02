@@ -42,6 +42,20 @@ export interface CreateStoreProductInput {
 export class StoreProductsService {
   
   /**
+   * Generate unique SKU for a new store product
+   */
+  private async generateProductSku(businessId: number): Promise<string> {
+    // Get count of products for this business
+    const { count } = await supabaseAdmin
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('business_id', businessId);
+    
+    const sequence = String((count || 0) + 1).padStart(4, '0');
+    return `${businessId}-PRD-${sequence}`;
+  }
+
+  /**
    * Get all products for a business (with variants, ingredients, and modifiers for POS)
    */
   async getProducts(businessId: number): Promise<any[]> {
@@ -190,6 +204,9 @@ export class StoreProductsService {
    * Create a new product
    */
   async createProduct(businessId: number, data: CreateStoreProductInput): Promise<StoreProduct> {
+    // Generate SKU if not provided
+    const sku = data.sku || await this.generateProductSku(businessId);
+    
     // Handle base64 image upload if provided
     let finalImageUrl: string | null = null;
     if (data.image_url && data.image_url.startsWith('data:')) {
@@ -212,7 +229,7 @@ export class StoreProductsService {
         name_ar: data.name_ar || null,
         description: data.description || null,
         description_ar: data.description_ar || null,
-        sku: data.sku || null,
+        sku: sku,
         category_id: data.category_id || null,
         price: data.price,
         tax_rate: data.tax_rate || 0,

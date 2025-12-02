@@ -5,10 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Building2, Mail, Phone, MapPin, Tag, Upload, FileText, 
   UserPlus, Users, Trash2, Copy, Check, Eye, EyeOff, ShieldCheck,
-  Sparkles, Save, RefreshCw
+  Sparkles, Save, RefreshCw, Store, Plus, Edit2
 } from 'lucide-react';
 import { businessApi, UserCredentials } from '@/lib/api';
-import type { Business, UpdateBusinessInput, BusinessUser } from '@/types';
+import type { Business, UpdateBusinessInput, BusinessUser, Branch, BranchInput } from '@/types';
 import Image from 'next/image';
 
 interface NewEditBusinessModalProps {
@@ -39,6 +39,7 @@ const modalVariants = {
 export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: NewEditBusinessModalProps) {
   const [loading, setLoading] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [loadingBranches, setLoadingBranches] = useState(false);
   const [error, setError] = useState('');
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
@@ -47,7 +48,14 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
   const [createdCredentials, setCreatedCredentials] = useState<UserCredentials[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [showPassword, setShowPassword] = useState(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'subscription' | 'users'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'subscription' | 'users' | 'branches'>('info');
+  
+  // Branch management state
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [newBranch, setNewBranch] = useState<BranchInput>({ name: '', address: '', phone: '', email: '' });
+  const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
+  const [editingBranch, setEditingBranch] = useState<Partial<BranchInput>>({});
+  const [branchActionLoading, setBranchActionLoading] = useState(false);
 
   const [formData, setFormData] = useState<UpdateBusinessInput>({
     name: '', slug: '', email: '', phone: '', address: '',
@@ -80,6 +88,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
       });
       setLogoPreview(business.logo_url || null);
       loadBusinessUsers(business.id);
+      loadBusinessBranches(business.id);
     }
   }, [business, isOpen]);
 
@@ -93,6 +102,83 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
     } finally {
       setLoadingUsers(false);
     }
+  };
+
+  const loadBusinessBranches = async (businessId: number) => {
+    setLoadingBranches(true);
+    try {
+      const branchesData = await businessApi.getBranches(businessId);
+      setBranches(branchesData);
+    } catch (err) {
+      console.error('Failed to load branches:', err);
+    } finally {
+      setLoadingBranches(false);
+    }
+  };
+
+  const handleAddBranch = async () => {
+    if (!business || !newBranch.name.trim()) {
+      setError('Branch name is required');
+      return;
+    }
+    setBranchActionLoading(true);
+    setError('');
+    try {
+      const created = await businessApi.createBranch(business.id, newBranch);
+      setBranches(prev => [...prev, created]);
+      setNewBranch({ name: '', address: '', phone: '', email: '' });
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to create branch');
+    } finally {
+      setBranchActionLoading(false);
+    }
+  };
+
+  const handleUpdateBranch = async (branchId: number) => {
+    if (!business) return;
+    setBranchActionLoading(true);
+    setError('');
+    try {
+      const updated = await businessApi.updateBranch(business.id, branchId, editingBranch);
+      setBranches(prev => prev.map(b => b.id === branchId ? updated : b));
+      setEditingBranchId(null);
+      setEditingBranch({});
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to update branch');
+    } finally {
+      setBranchActionLoading(false);
+    }
+  };
+
+  const handleDeleteBranch = async (branchId: number) => {
+    if (!business) return;
+    const branch = branches.find(b => b.id === branchId);
+    if (branch?.is_main) {
+      setError('Cannot delete the main branch');
+      return;
+    }
+    if (!confirm('Are you sure you want to delete this branch?')) return;
+    
+    setBranchActionLoading(true);
+    setError('');
+    try {
+      await businessApi.deleteBranch(business.id, branchId);
+      setBranches(prev => prev.filter(b => b.id !== branchId));
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to delete branch');
+    } finally {
+      setBranchActionLoading(false);
+    }
+  };
+
+  const startEditingBranch = (branch: Branch) => {
+    setEditingBranchId(branch.id);
+    setEditingBranch({
+      name: branch.name,
+      address: branch.address || '',
+      phone: branch.phone || '',
+      email: branch.email || '',
+    });
   };
 
   const handleAddUser = () => {
@@ -197,6 +283,11 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
     setShowCredentials(false);
     setCreatedCredentials([]);
     setDeletedUserIds([]);
+    setBranches([]);
+    setNewBranch({ name: '', address: '', phone: '', email: '' });
+    setEditingBranchId(null);
+    setEditingBranch({});
+    setActiveTab('info');
     setError('');
     onClose();
   };
@@ -271,7 +362,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                       </button>
                     </div>
                     <div className="flex px-6 gap-6">
-                      {['info', 'subscription', 'users'].map((tab) => (
+                      {['info', 'subscription', 'users', 'branches'].map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setActiveTab(tab as any)}
@@ -281,7 +372,7 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                             : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300'
                           }`}
                         >
-                          {tab}
+                          {tab === 'branches' ? `Branches (${branches.length})` : tab}
                         </button>
                       ))}
                     </div>
@@ -483,6 +574,161 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                                   </button>
                                 </div>
                               ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {activeTab === 'branches' && (
+                      <div className="space-y-4">
+                        {loadingBranches ? (
+                          <div className="flex justify-center py-8"><RefreshCw className="animate-spin text-zinc-400" /></div>
+                        ) : (
+                          <>
+                            {/* Add New Branch Form */}
+                            <div className="p-4 bg-white dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700 space-y-3">
+                              <h4 className="text-xs font-bold uppercase text-zinc-400 flex items-center gap-2">
+                                <Plus className="w-3 h-3" /> Add New Branch
+                              </h4>
+                              <div className="grid grid-cols-2 gap-3">
+                                <input 
+                                  placeholder="Branch Name *" 
+                                  value={newBranch.name}
+                                  onChange={(e) => setNewBranch({...newBranch, name: e.target.value})}
+                                  className="px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                />
+                                <input 
+                                  placeholder="Phone" 
+                                  value={newBranch.phone}
+                                  onChange={(e) => setNewBranch({...newBranch, phone: e.target.value})}
+                                  className="px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                />
+                              </div>
+                              <input 
+                                placeholder="Address" 
+                                value={newBranch.address}
+                                onChange={(e) => setNewBranch({...newBranch, address: e.target.value})}
+                                className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                              />
+                              <div className="flex gap-3">
+                                <input 
+                                  placeholder="Email" 
+                                  value={newBranch.email}
+                                  onChange={(e) => setNewBranch({...newBranch, email: e.target.value})}
+                                  className="flex-1 px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                />
+                                <button 
+                                  onClick={handleAddBranch}
+                                  disabled={branchActionLoading || !newBranch.name.trim()}
+                                  className="px-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg hover:bg-black dark:hover:bg-zinc-200 font-medium text-sm disabled:opacity-50 flex items-center gap-2"
+                                >
+                                  {branchActionLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                  Add
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Existing Branches List */}
+                            <div className="space-y-2">
+                              {branches.map((branch) => (
+                                <div key={branch.id} className={`p-4 bg-white dark:bg-zinc-800 border rounded-xl transition-all ${branch.is_main ? 'border-zinc-400 dark:border-zinc-500' : 'border-zinc-200 dark:border-zinc-700'}`}>
+                                  {editingBranchId === branch.id ? (
+                                    // Edit mode
+                                    <div className="space-y-3">
+                                      <div className="grid grid-cols-2 gap-3">
+                                        <input 
+                                          placeholder="Branch Name" 
+                                          value={editingBranch.name || ''}
+                                          onChange={(e) => setEditingBranch({...editingBranch, name: e.target.value})}
+                                          className="px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                        />
+                                        <input 
+                                          placeholder="Phone" 
+                                          value={editingBranch.phone || ''}
+                                          onChange={(e) => setEditingBranch({...editingBranch, phone: e.target.value})}
+                                          className="px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                        />
+                                      </div>
+                                      <input 
+                                        placeholder="Address" 
+                                        value={editingBranch.address || ''}
+                                        onChange={(e) => setEditingBranch({...editingBranch, address: e.target.value})}
+                                        className="w-full px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                      />
+                                      <div className="flex gap-3">
+                                        <input 
+                                          placeholder="Email" 
+                                          value={editingBranch.email || ''}
+                                          onChange={(e) => setEditingBranch({...editingBranch, email: e.target.value})}
+                                          className="flex-1 px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                        />
+                                        <button 
+                                          onClick={() => handleUpdateBranch(branch.id)}
+                                          disabled={branchActionLoading}
+                                          className="px-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg font-medium text-sm disabled:opacity-50"
+                                        >
+                                          Save
+                                        </button>
+                                        <button 
+                                          onClick={() => { setEditingBranchId(null); setEditingBranch({}); }}
+                                          className="px-4 bg-zinc-100 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded-lg font-medium text-sm"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    // View mode
+                                    <div className="flex items-start justify-between">
+                                      <div className="flex items-start gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-700 flex items-center justify-center">
+                                          <Store className="w-5 h-5 text-zinc-500" />
+                                        </div>
+                                        <div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-sm font-medium text-zinc-900 dark:text-white">{branch.name}</span>
+                                            {branch.is_main && (
+                                              <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-zinc-600 dark:text-zinc-300">Main</span>
+                                            )}
+                                          </div>
+                                          {branch.address && (
+                                            <p className="text-xs text-zinc-500 mt-1">{branch.address}</p>
+                                          )}
+                                          <div className="flex items-center gap-3 mt-1 text-xs text-zinc-400">
+                                            {branch.phone && <span>{branch.phone}</span>}
+                                            {branch.email && <span>{branch.email}</span>}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <button 
+                                          onClick={() => startEditingBranch(branch)}
+                                          className="p-2 text-zinc-400 hover:text-zinc-900 dark:hover:text-white rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                                        >
+                                          <Edit2 className="w-4 h-4" />
+                                        </button>
+                                        {!branch.is_main && (
+                                          <button 
+                                            onClick={() => handleDeleteBranch(branch.id)}
+                                            disabled={branchActionLoading}
+                                            className="p-2 text-zinc-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"
+                                          >
+                                            <Trash2 className="w-4 h-4" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                              
+                              {branches.length === 0 && (
+                                <div className="text-center py-8 text-zinc-500">
+                                  <Store className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                                  <p>No branches yet. Add your first branch above.</p>
+                                </div>
+                              )}
                             </div>
                           </>
                         )}

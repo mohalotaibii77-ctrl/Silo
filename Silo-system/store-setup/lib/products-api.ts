@@ -39,6 +39,7 @@ export interface ProductModifier {
   name_ar?: string;
   removable: boolean;
   addable: boolean;
+  quantity?: number;
   extra_price: number;
 }
 
@@ -79,7 +80,7 @@ export interface CreateProductData {
   image_url?: string;
   variants?: { name: string; name_ar?: string; price_adjustment?: number; ingredients: { item_id: number; quantity: number; removable?: boolean }[] }[];
   ingredients?: { item_id: number; quantity: number; removable?: boolean }[];
-  modifiers?: { item_id: number; name: string; name_ar?: string; removable: boolean; addable: boolean; extra_price: number }[];
+  modifiers?: { item_id: number; name: string; name_ar?: string; removable: boolean; addable: boolean; quantity?: number; extra_price: number }[];
 }
 
 export interface UpdateProductData extends Partial<CreateProductData> {
@@ -124,7 +125,7 @@ export async function updateProductIngredients(
     has_variants: boolean;
     variants?: { name: string; name_ar?: string; price_adjustment?: number; ingredients: { item_id: number; quantity: number; removable?: boolean }[] }[];
     ingredients?: { item_id: number; quantity: number; removable?: boolean }[];
-    modifiers?: { item_id: number; name: string; name_ar?: string; extra_price: number }[];
+    modifiers?: { item_id: number; name: string; name_ar?: string; quantity?: number; extra_price: number }[];
   }
 ): Promise<Product> {
   const response = await api.put(`/inventory/products/${productId}/ingredients`, ingredientData);

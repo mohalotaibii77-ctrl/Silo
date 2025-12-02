@@ -34,6 +34,7 @@ export interface Product {
   business_id: string;
   name: string;
   name_ar?: string;
+  sku?: string;
   description?: string;
   category_id?: string;
   category_name?: string;
@@ -60,6 +61,20 @@ export interface CreateProductInput {
 
 export class ProductsService {
   
+  /**
+   * Generate unique SKU for a new POS product
+   */
+  private async generateProductSku(businessId: string): Promise<string> {
+    // Get count of products for this business
+    const { count } = await supabaseAdmin
+      .from('pos_products')
+      .select('*', { count: 'exact', head: true })
+      .eq('business_id', businessId);
+    
+    const sequence = String((count || 0) + 1).padStart(4, '0');
+    return `${businessId}-POS-${sequence}`;
+  }
+
   /**
    * Get all products for a business (for POS)
    */
@@ -126,6 +141,9 @@ export class ProductsService {
    * Create a new product
    */
   async createProduct(data: CreateProductInput): Promise<Product> {
+    // Generate unique SKU for this POS product
+    const sku = await this.generateProductSku(data.business_id);
+    
     // Insert product
     const { data: product, error } = await supabaseAdmin
       .from('pos_products')
@@ -137,6 +155,7 @@ export class ProductsService {
         category_id: data.category_id || null,
         base_price: data.base_price,
         image_url: data.image_url || null,
+        sku: sku,
         status: 'active',
       })
       .select()
@@ -358,6 +377,7 @@ export class ProductsService {
       business_id: p.business_id,
       name: p.name,
       name_ar: p.name_ar,
+      sku: p.sku,
       description: p.description,
       category_id: p.category_id,
       category_name: p.pos_categories?.name,

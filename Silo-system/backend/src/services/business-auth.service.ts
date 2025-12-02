@@ -12,6 +12,7 @@ import { env } from '../config/env';
 export interface BusinessUser {
   id: number;
   business_id: number;
+  branch_id: number | null;
   username: string;
   role: 'owner' | 'manager' | 'employee' | 'pos';
   first_name: string | null;
@@ -24,11 +25,20 @@ export interface BusinessUser {
   updated_at: string;
 }
 
+export interface Branch {
+  id: number;
+  business_id: number;
+  name: string;
+  slug: string;
+  is_main: boolean;
+}
+
 export interface BusinessAuthPayload {
   userId: string;
   username: string;
   role: string;
   businessId: string;
+  branchId?: string;
 }
 
 export interface BusinessLoginResponse {
@@ -42,7 +52,9 @@ export interface BusinessLoginResponse {
     tax_rate?: number;
     language?: string;
     logo_url?: string;
+    branch_count?: number;
   } | null;
+  branch: Branch | null;
 }
 
 export class BusinessAuthService {
@@ -82,24 +94,36 @@ export class BusinessAuthService {
       throw new Error('Account is disabled');
     }
 
-    // Generate JWT token
-    const token = this.generateToken({
-      userId: String(user.id),
-      username: user.username,
-      role: user.role,
-      businessId: String(user.business_id),
-    });
-
     // Get business info including settings
     let business = null;
     if (user.business_id) {
       const { data: bizData } = await supabaseAdmin
         .from('businesses')
-        .select('id, name, slug, currency, tax_rate, language, logo_url')
+        .select('id, name, slug, currency, tax_rate, language, logo_url, branch_count')
         .eq('id', user.business_id)
         .single();
       business = bizData;
     }
+
+    // Get branch info if user is assigned to a branch
+    let branch: Branch | null = null;
+    if (user.branch_id) {
+      const { data: branchData } = await supabaseAdmin
+        .from('branches')
+        .select('id, business_id, name, slug, is_main')
+        .eq('id', user.branch_id)
+        .single();
+      branch = branchData;
+    }
+
+    // Generate JWT token with branch info
+    const token = this.generateToken({
+      userId: String(user.id),
+      username: user.username,
+      role: user.role,
+      businessId: String(user.business_id),
+      branchId: user.branch_id ? String(user.branch_id) : undefined,
+    });
 
     // Update last login
     await supabaseAdmin
@@ -114,6 +138,7 @@ export class BusinessAuthService {
       token,
       user: safeUser,
       business,
+      branch,
     };
   }
 

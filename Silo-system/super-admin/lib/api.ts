@@ -1,12 +1,18 @@
 import axios, { AxiosError } from 'axios';
 import type { 
   Business, 
+  Branch,
   CreateBusinessInput, 
   UpdateBusinessInput,
   AuthResponse,
   ApiResponse,
   LoginCredentials,
-  BusinessUser
+  BusinessUser,
+  BranchInput,
+  Owner,
+  CreateOwnerInput,
+  UpdateOwnerInput,
+  UnassignedBusiness
 } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9000';
@@ -31,6 +37,7 @@ export interface CreateBusinessResponse {
   message: string;
   business: Business;
   userCredentials?: UserCredentials[];
+  branches?: Branch[];
 }
 
 export interface UpdateBusinessResponse {
@@ -115,6 +122,26 @@ export const businessApi = {
       data: { password }
     });
   },
+
+  // Branch management
+  getBranches: async (businessId: number): Promise<Branch[]> => {
+    const response = await api.get<{ branches: Branch[] }>(`/api/businesses/${businessId}/branches`);
+    return response.data.branches || [];
+  },
+
+  createBranch: async (businessId: number, data: BranchInput): Promise<Branch> => {
+    const response = await api.post<{ branch: Branch }>(`/api/businesses/${businessId}/branches`, data);
+    return response.data.branch;
+  },
+
+  updateBranch: async (businessId: number, branchId: number, data: Partial<BranchInput>): Promise<Branch> => {
+    const response = await api.put<{ branch: Branch }>(`/api/businesses/${businessId}/branches/${branchId}`, data);
+    return response.data.branch;
+  },
+
+  deleteBranch: async (businessId: number, branchId: number): Promise<void> => {
+    await api.delete(`/api/businesses/${businessId}/branches/${branchId}`);
+  },
 };
 
 // User APIs
@@ -136,6 +163,57 @@ export const userApi = {
   
   delete: async (id: number): Promise<void> => {
     await api.delete(`/api/users/${id}`);
+  },
+};
+
+// Owner APIs (platform-level owners who can own multiple businesses)
+export const ownerApi = {
+  // Get all owners with their business counts
+  getAll: async (): Promise<Owner[]> => {
+    const response = await api.get<{ owners: Owner[] }>('/api/owners');
+    return response.data.owners || [];
+  },
+
+  // Get owner by ID with associated businesses
+  getById: async (id: number): Promise<Owner> => {
+    const response = await api.get<{ owner: Owner }>(`/api/owners/${id}`);
+    return response.data.owner;
+  },
+
+  // Create a new owner
+  create: async (data: CreateOwnerInput): Promise<{ message: string; owner: Owner }> => {
+    const response = await api.post<{ message: string; owner: Owner }>('/api/owners', data);
+    return response.data;
+  },
+
+  // Update an owner
+  update: async (id: number, data: UpdateOwnerInput): Promise<{ message: string; owner: Owner }> => {
+    const response = await api.put<{ message: string; owner: Owner }>(`/api/owners/${id}`, data);
+    return response.data;
+  },
+
+  // Delete an owner
+  delete: async (id: number): Promise<void> => {
+    await api.delete(`/api/owners/${id}`);
+  },
+
+  // Get businesses without any owner
+  getUnassignedBusinesses: async (): Promise<UnassignedBusiness[]> => {
+    const response = await api.get<{ businesses: UnassignedBusiness[] }>('/api/owners/unassigned-businesses');
+    return response.data.businesses || [];
+  },
+
+  // Link a business to an owner
+  linkBusiness: async (ownerId: number, businessId: number, role?: string): Promise<void> => {
+    await api.post(`/api/owners/${ownerId}/link-business`, { 
+      business_id: businessId, 
+      role: role || 'owner' 
+    });
+  },
+
+  // Unlink a business from an owner
+  unlinkBusiness: async (ownerId: number, businessId: number): Promise<void> => {
+    await api.delete(`/api/owners/${ownerId}/unlink-business/${businessId}`);
   },
 };
 

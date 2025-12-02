@@ -17,6 +17,7 @@ interface AuthenticatedRequest extends Request {
 }
 
 // Auth middleware - only owner can manage users
+// Supports workspace switching via X-Business-Id header
 async function authenticateOwner(req: AuthenticatedRequest, res: Response, next: Function) {
   try {
     const authHeader = req.headers.authorization;
@@ -38,9 +39,42 @@ async function authenticateOwner(req: AuthenticatedRequest, res: Response, next:
       return res.status(403).json({ error: 'Only owners can manage users' });
     }
 
+    // Check for workspace switching header (X-Business-Id)
+    const headerBusinessId = req.headers['x-business-id'] as string;
+    let businessId = user.business_id;
+
+    console.log(`[business-users] User: ${user.username}, Token business_id: ${user.business_id}, Header X-Business-Id: ${headerBusinessId}`);
+
+    if (headerBusinessId && parseInt(headerBusinessId) !== user.business_id) {
+      // Owner is trying to access a different business (workspace switching)
+      // Verify they have access via the business_owners table
+      const { data: ownerAccess } = await supabase
+        .from('owners')
+        .select(`
+          id,
+          business_owners!inner (
+            business_id
+          )
+        `)
+        .ilike('username', user.username)
+        .eq('business_owners.business_id', parseInt(headerBusinessId))
+        .single();
+
+      console.log(`[business-users] Owner access check for business ${headerBusinessId}:`, ownerAccess ? 'GRANTED' : 'DENIED');
+
+      if (!ownerAccess) {
+        return res.status(403).json({ error: 'Access denied to this business' });
+      }
+
+      // Owner has access - use the header's business ID
+      businessId = parseInt(headerBusinessId);
+    }
+
+    console.log(`[business-users] Final business_id used: ${businessId}`);
+
     req.businessUser = {
       id: user.id,
-      business_id: user.business_id,
+      business_id: businessId,
       username: user.username,
       role: user.role,
     };
@@ -55,6 +89,44 @@ async function authenticateOwner(req: AuthenticatedRequest, res: Response, next:
 router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
+    const ownerUsername = req.businessUser?.username;
+
+    // Ensure owner has a business_users record in this workspace
+    // This handles workspace switching where owner was linked but not created as a business_user
+    if (ownerUsername) {
+      const { data: ownerUserRecord } = await supabase
+        .from('business_users')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('username', ownerUsername)
+        .single();
+
+      if (!ownerUserRecord) {
+        // Get owner details from owners table
+        const { data: owner } = await supabase
+          .from('owners')
+          .select('username, email, first_name, last_name, phone, password_hash')
+          .ilike('username', ownerUsername)
+          .single();
+
+        if (owner) {
+          console.log(`[business-users] Creating missing business_users record for owner ${ownerUsername} in business ${businessId}`);
+          await supabase
+            .from('business_users')
+            .insert({
+              business_id: businessId,
+              username: owner.username,
+              email: owner.email,
+              password_hash: owner.password_hash,
+              role: 'owner',
+              first_name: owner.first_name,
+              last_name: owner.last_name,
+              phone: owner.phone,
+              status: 'active'
+            });
+        }
+      }
+    }
 
     // Get business info for max_users
     const { data: business } = await supabase

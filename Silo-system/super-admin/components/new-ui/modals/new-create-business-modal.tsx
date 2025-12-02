@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Building2, Mail, Phone, MapPin, Tag, Upload, FileText, 
   UserPlus, Users, Trash2, Copy, Check, Eye, EyeOff, ShieldCheck,
-  Sparkles, ArrowRight, ChevronRight, Crown, Plus
+  Sparkles, ArrowRight, ChevronRight, Crown, Plus, Store, Minus
 } from 'lucide-react';
 import { businessApi, UserCredentials } from '@/lib/api';
 import type { CreateBusinessInput, BusinessUser } from '@/types';
@@ -58,6 +58,7 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     subscription_tier: 'basic',
     max_users: 5,
     max_products: 100,
+    branch_count: 1,
     users: [],
   });
 
@@ -155,7 +156,7 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     setFormData({
       name: '', slug: '', email: '', phone: '', address: '',
       business_type: 'restaurant', logo_url: '', certificate_url: '',
-      subscription_tier: 'basic', max_users: 5, max_products: 100, users: [],
+      subscription_tier: 'basic', max_users: 5, max_products: 100, branch_count: 1, users: [],
     });
     setLogoFile(null);
     setLogoPreview(null);
@@ -505,6 +506,44 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
                           </div>
                         </div>
 
+                        {/* Number of Branches */}
+                        <div className="space-y-3">
+                          <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+                            <Store className="w-4 h-4" />
+                            Number of Branches
+                          </label>
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center border border-zinc-200 dark:border-zinc-700 rounded-xl overflow-hidden bg-zinc-50 dark:bg-zinc-800/50">
+                              <button
+                                type="button"
+                                onClick={() => setFormData({...formData, branch_count: Math.max(1, (formData.branch_count || 1) - 1)})}
+                                className="px-4 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={(formData.branch_count || 1) <= 1}
+                              >
+                                <Minus className="w-4 h-4" />
+                              </button>
+                              <span className="px-6 py-2.5 text-lg font-semibold text-zinc-900 dark:text-white min-w-[60px] text-center border-x border-zinc-200 dark:border-zinc-700">
+                                {formData.branch_count || 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setFormData({...formData, branch_count: (formData.branch_count || 1) + 1})}
+                                className="px-4 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            </div>
+                            <p className="text-sm text-zinc-500">
+                              {(formData.branch_count || 1) === 1 
+                                ? 'Single location business' 
+                                : `${formData.branch_count} branches will be created`}
+                            </p>
+                          </div>
+                          <p className="text-xs text-zinc-400">
+                            Branches share products & recipes but have separate orders, employees, and inventory tracking.
+                          </p>
+                        </div>
+
                         <div className="space-y-2">
                           <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Certificate (Optional)</label>
                           <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-zinc-300 dark:border-zinc-700 rounded-xl cursor-pointer hover:border-zinc-500 dark:hover:border-zinc-500 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-all">
@@ -523,8 +562,8 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
 
                     {step === 3 && (
                       <div className="space-y-6">
-                        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl">
-                          <p className="text-sm text-blue-700 dark:text-blue-300">
+                        <div className="p-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl">
+                          <p className="text-sm text-zinc-700 dark:text-zinc-300">
                             Create the business owner account. The owner can then add managers and employees from their Store Setup dashboard.
                           </p>
                         </div>

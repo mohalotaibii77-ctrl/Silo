@@ -14,7 +14,7 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Simple middleware for business token authentication
+// Simple middleware for business token authentication - supports workspace switching
 async function authenticateBusinessToken(req: AuthenticatedRequest, res: Response, next: Function) {
   try {
     const authHeader = req.headers.authorization;
@@ -32,9 +32,32 @@ async function authenticateBusinessToken(req: AuthenticatedRequest, res: Respons
       return res.status(401).json({ error: 'User not found' });
     }
 
+    // Check for workspace switching header (X-Business-Id)
+    const headerBusinessId = req.headers['x-business-id'] as string;
+    let businessId = user.business_id;
+
+    if (headerBusinessId && parseInt(headerBusinessId) !== user.business_id) {
+      if (user.role === 'owner') {
+        const { data: ownerAccess } = await supabase
+          .from('owners')
+          .select(`id, business_owners!inner (business_id)`)
+          .ilike('username', user.username)
+          .eq('business_owners.business_id', parseInt(headerBusinessId))
+          .single();
+
+        if (ownerAccess) {
+          businessId = parseInt(headerBusinessId);
+        } else {
+          return res.status(403).json({ error: 'Access denied to this business' });
+        }
+      } else {
+        return res.status(403).json({ error: 'Only owners can switch workspaces' });
+      }
+    }
+
     req.businessUser = {
       id: user.id,
-      business_id: user.business_id,
+      business_id: businessId,
       username: user.username,
       role: user.role,
     };

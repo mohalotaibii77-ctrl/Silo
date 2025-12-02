@@ -7,6 +7,7 @@ import { motion } from 'framer-motion';
 import { 
   Package, 
   ShoppingBag, 
+  Boxes,
   FolderTree, 
   Percent, 
   UserCog,
@@ -38,6 +39,7 @@ interface SidebarProps {
 const navItems: NavItem[] = [
   { name: 'Items', nameAr: 'المواد', href: '/items', icon: Package },
   { name: 'Products', nameAr: 'المنتجات', href: '/products', icon: ShoppingBag },
+  { name: 'Bundles', nameAr: 'الباقات', href: '/bundles', icon: Boxes },
   { name: 'Categories', nameAr: 'الفئات', href: '/categories', icon: FolderTree },
   { name: 'Discounts', nameAr: 'الخصومات', href: '/discounts', icon: Percent },
   { name: 'Users-Roles', nameAr: 'المستخدمين', href: '/users-roles', icon: UserCog },

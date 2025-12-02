@@ -53,7 +53,7 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
 
 /**
  * POST /api/businesses
- * Create new business with optional users
+ * Create new business with optional users and branches
  */
 router.post('/', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -71,6 +71,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       message: 'Business created successfully',
       business: result.business,
       userCredentials: result.userCredentials,
+      branches: result.branches,
     });
   } catch (error) {
     console.error('Error creating business:', error);
@@ -337,6 +338,127 @@ router.put('/change-requests/:id/reject', async (req: Request, res: Response): P
       error: 'Failed to reject change request',
       message: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+// ============================================
+// BRANCH MANAGEMENT ROUTES
+// ============================================
+
+/**
+ * GET /api/businesses/:id/branches
+ * Get all branches for a business
+ */
+router.get('/:id/branches', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const businessId = parseInt(req.params.id, 10);
+    if (isNaN(businessId)) {
+      res.status(400).json({ error: 'Invalid business ID' });
+      return;
+    }
+
+    const branches = await businessService.getBranches(businessId);
+    res.json({ branches });
+  } catch (error) {
+    console.error('Error fetching branches:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch branches',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * POST /api/businesses/:id/branches
+ * Create a new branch for a business
+ */
+router.post('/:id/branches', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const businessId = parseInt(req.params.id, 10);
+    if (isNaN(businessId)) {
+      res.status(400).json({ error: 'Invalid business ID' });
+      return;
+    }
+
+    const { name, address, phone, email, is_main } = req.body;
+    
+    if (!name) {
+      res.status(400).json({ error: 'Branch name is required' });
+      return;
+    }
+
+    const branch = await businessService.createBranch(businessId, {
+      name,
+      address,
+      phone,
+      email,
+      is_main,
+    });
+
+    res.status(201).json({
+      message: 'Branch created successfully',
+      branch,
+    });
+  } catch (error) {
+    console.error('Error creating branch:', error);
+    res.status(500).json({ 
+      error: 'Failed to create branch',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * PUT /api/businesses/:businessId/branches/:branchId
+ * Update a branch
+ */
+router.put('/:businessId/branches/:branchId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const branchId = parseInt(req.params.branchId, 10);
+    if (isNaN(branchId)) {
+      res.status(400).json({ error: 'Invalid branch ID' });
+      return;
+    }
+
+    const branch = await businessService.updateBranch(branchId, req.body);
+    
+    res.json({
+      message: 'Branch updated successfully',
+      branch,
+    });
+  } catch (error) {
+    console.error('Error updating branch:', error);
+    res.status(500).json({ 
+      error: 'Failed to update branch',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * DELETE /api/businesses/:businessId/branches/:branchId
+ * Soft delete a branch (sets is_active to false)
+ */
+router.delete('/:businessId/branches/:branchId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const branchId = parseInt(req.params.branchId, 10);
+    if (isNaN(branchId)) {
+      res.status(400).json({ error: 'Invalid branch ID' });
+      return;
+    }
+
+    await businessService.deleteBranch(branchId);
+    
+    res.json({ message: 'Branch deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting branch:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    
+    if (message.includes('main branch')) {
+      res.status(400).json({ error: message });
+    } else {
+      res.status(500).json({ error: 'Failed to delete branch', message });
+    }
   }
 });
 

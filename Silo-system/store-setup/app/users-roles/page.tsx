@@ -158,7 +158,7 @@ export default function UsersRolesPage() {
   const getRoleIcon = (userRole: string) => {
     switch (userRole) {
       case 'owner': return <Crown className="w-4 h-4 text-amber-500" />;
-      case 'manager': return <Shield className="w-4 h-4 text-blue-500" />;
+      case 'manager': return <Shield className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />;
       case 'pos': return <Monitor className="w-4 h-4 text-emerald-500" />;
       default: return <User className="w-4 h-4 text-zinc-400" />;
     }
@@ -169,7 +169,7 @@ export default function UsersRolesPage() {
       case 'owner': 
         return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400';
       case 'manager': 
-        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400';
+        return 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300';
       case 'pos': 
         return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
       default: 

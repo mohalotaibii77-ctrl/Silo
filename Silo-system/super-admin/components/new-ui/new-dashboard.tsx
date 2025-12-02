@@ -26,8 +26,11 @@ import { NewViewBusinessModal } from "@/components/new-ui/modals/new-view-busine
 import { NewEditBusinessModal } from "@/components/new-ui/modals/new-edit-business-modal";
 import { NewDeleteConfirmationModal } from "@/components/new-ui/modals/new-delete-confirmation-modal";
 import { NotificationsPanel } from "@/components/new-ui/modals/notifications-panel";
+import { OwnerViewModal } from "@/components/new-ui/modals/owner-view-modal";
+import { OwnerCreateModal } from "@/components/new-ui/modals/owner-create-modal";
 import { useState as useStateNotif, useEffect as useEffectNotif } from "react";
-import api from "@/lib/api";
+import api, { ownerApi } from "@/lib/api";
+import type { Owner } from "@/types";
 
 type ActiveTab = 'dashboard' | 'businesses' | 'users' | 'settings';
 
@@ -53,6 +56,13 @@ export function NewDashboard() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [showNotifications, setShowNotifications] = useStateNotif(false);
   const [pendingCount, setPendingCount] = useStateNotif(0);
+  
+  // Owner state
+  const [owners, setOwners] = useState<Owner[]>([]);
+  const [ownersLoading, setOwnersLoading] = useState(false);
+  const [selectedOwner, setSelectedOwner] = useState<Owner | null>(null);
+  const [showOwnerViewModal, setShowOwnerViewModal] = useState(false);
+  const [showOwnerCreateModal, setShowOwnerCreateModal] = useState(false);
 
   // Fetch pending requests count
   useEffectNotif(() => {
@@ -66,6 +76,30 @@ export function NewDashboard() {
     };
     fetchPendingCount();
   }, []);
+
+  // Load owners when Users tab is active
+  const loadOwners = async () => {
+    setOwnersLoading(true);
+    try {
+      const data = await ownerApi.getAll();
+      setOwners(data);
+    } catch (err) {
+      console.error('Failed to fetch owners:', err);
+    } finally {
+      setOwnersLoading(false);
+    }
+  };
+
+  useEffectNotif(() => {
+    if (activeTab === 'users') {
+      loadOwners();
+    }
+  }, [activeTab]);
+
+  const handleViewOwner = (owner: Owner) => {
+    setSelectedOwner(owner);
+    setShowOwnerViewModal(true);
+  };
 
   const activeCount = businesses.filter(b => b.subscription_status === 'active').length;
   const suspendedCount = businesses.filter(b => b.subscription_status === 'suspended').length;
@@ -104,7 +138,7 @@ export function NewDashboard() {
       {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hidden md:flex flex-col sticky top-0 h-screen z-40">
         <div className="p-6 flex items-center gap-3">
-          <div className="h-8 w-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold shadow-indigo-500/20 shadow-lg">
+          <div className="h-8 w-8 rounded-lg bg-zinc-900 dark:bg-white flex items-center justify-center text-white dark:text-zinc-900 font-bold shadow-zinc-500/20 shadow-lg">
             S
           </div>
           <span className="font-bold text-lg tracking-tight text-zinc-900 dark:text-white">Silo Admin</span>
@@ -194,7 +228,7 @@ export function NewDashboard() {
               <input 
                 type="text" 
                 placeholder="Search businesses..." 
-                className="pl-9 pr-4 py-2 w-64 rounded-full bg-zinc-100 dark:bg-zinc-800 border-none text-sm focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all placeholder:text-zinc-500 text-zinc-900 dark:text-white"
+                className="pl-9 pr-4 py-2 w-64 rounded-full bg-zinc-100 dark:bg-zinc-800 border-none text-sm focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all placeholder:text-zinc-500 text-zinc-900 dark:text-white"
               />
             </div>
           </div>
@@ -291,8 +325,8 @@ export function NewDashboard() {
                 <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                        <TrendingUp className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                      <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                        <TrendingUp className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                       </div>
                       <div>
                         <p className="text-sm text-zinc-500">Trial Accounts</p>
@@ -317,8 +351,8 @@ export function NewDashboard() {
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                        <Users className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                      <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                        <Users className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                       </div>
                       <div>
                         <p className="text-sm text-zinc-500">Total Users</p>
@@ -460,14 +494,14 @@ export function NewDashboard() {
                                   business.subscription_status === 'active' 
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800'
                                     : business.subscription_status === 'trial'
-                                    ? 'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-800'
+                                    ? 'bg-zinc-100 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-600'
                                     : 'bg-zinc-50 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
                                 }`}>
                                   <span className={`w-1.5 h-1.5 rounded-full ${
                                     business.subscription_status === 'active' 
                                       ? 'bg-emerald-500'
                                       : business.subscription_status === 'trial'
-                                      ? 'bg-blue-500'
+                                      ? 'bg-zinc-500'
                                       : 'bg-zinc-500'
                                   }`}></span>
                                   {business.subscription_status}
@@ -505,20 +539,132 @@ export function NewDashboard() {
               </>
             )}
 
-            {/* Users Tab - Placeholder */}
+            {/* Users Tab - Owners Management */}
             {activeTab === 'users' && (
-              <motion.div variants={itemVariants}>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+              <>
+                <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">Users</h1>
-                    <p className="text-zinc-500 dark:text-zinc-400 mt-1">Manage platform administrators</p>
+                    <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">Owners</h1>
+                    <p className="text-zinc-500 dark:text-zinc-400 mt-1">Manage platform owners and their business assignments</p>
                   </div>
-                </div>
-                <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-12 text-center">
-                  <Users className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
-                  <p className="text-zinc-500 dark:text-zinc-400">Users management coming soon</p>
-                </div>
-              </motion.div>
+                  <button 
+                    onClick={() => setShowOwnerCreateModal(true)}
+                    className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 px-5 py-2.5 rounded-full font-medium hover:shadow-lg hover:shadow-zinc-500/20 transition-all active:scale-95"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add New Owner
+                  </button>
+                </motion.div>
+
+                {/* Owners Table */}
+                <motion.div variants={itemVariants} className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-sm overflow-hidden">
+                  {ownersLoading ? (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-600 dark:border-zinc-400"></div>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-zinc-50 dark:bg-zinc-900/50">
+                          <tr>
+                            <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Owner</th>
+                            <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Email</th>
+                            <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Businesses</th>
+                            <th className="px-6 py-4 text-left text-xs font-medium text-zinc-500 uppercase tracking-wider">Status</th>
+                            <th className="px-6 py-4 text-right text-xs font-medium text-zinc-500 uppercase tracking-wider">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                          {owners.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="px-6 py-12 text-center">
+                                <Users className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
+                                <p className="text-zinc-500 dark:text-zinc-400">No owners yet</p>
+                                <button 
+                                  onClick={() => setShowOwnerCreateModal(true)}
+                                  className="mt-4 inline-flex items-center gap-2 text-zinc-900 dark:text-white hover:underline"
+                                >
+                                  <Plus className="w-4 h-4" />
+                                  Add your first owner
+                                </button>
+                              </td>
+                            </tr>
+                          ) : (
+                            owners.map((owner, i) => {
+                              const fullName = [owner.first_name, owner.last_name].filter(Boolean).join(' ') || 'No name';
+                              const initials = fullName !== 'No name' 
+                                ? fullName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase()
+                                : owner.email.substring(0, 2).toUpperCase();
+                              
+                              return (
+                                <motion.tr 
+                                  key={owner.id}
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: i * 0.05 }}
+                                  className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors"
+                                >
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center gap-4">
+                                      <div className="h-10 w-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-400 font-bold text-sm">
+                                        {initials}
+                                      </div>
+                                      <div>
+                                        <div className="font-medium text-zinc-900 dark:text-white">{fullName}</div>
+                                        <div className="text-xs text-zinc-500">{owner.phone || 'No phone'}</div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className="text-sm text-zinc-600 dark:text-zinc-400">{owner.email}</span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <Building2 className="w-4 h-4 text-zinc-400" />
+                                      <span className="text-sm font-medium text-zinc-900 dark:text-white">
+                                        {owner.business_count || 0}
+                                      </span>
+                                      <span className="text-sm text-zinc-500">
+                                        {(owner.business_count || 0) === 1 ? 'business' : 'businesses'}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap">
+                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                                      owner.status === 'active' 
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800'
+                                        : owner.status === 'inactive'
+                                        ? 'bg-zinc-50 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
+                                        : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800'
+                                    }`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full ${
+                                        owner.status === 'active' 
+                                          ? 'bg-emerald-500'
+                                          : owner.status === 'inactive'
+                                          ? 'bg-zinc-500'
+                                          : 'bg-red-500'
+                                      }`}></span>
+                                      {owner.status}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4 whitespace-nowrap text-right">
+                                    <button 
+                                      onClick={() => handleViewOwner(owner)}
+                                      className="p-2 rounded-lg text-zinc-900 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-white dark:hover:bg-zinc-700 transition-all text-sm font-medium"
+                                    >
+                                      View
+                                    </button>
+                                  </td>
+                                </motion.tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </motion.div>
+              </>
             )}
 
             {/* Settings Tab - Placeholder */}
@@ -573,6 +719,19 @@ export function NewDashboard() {
             .catch(() => {});
           loadBusinesses();
         }}
+      />
+      
+      {/* Owner Modals */}
+      <OwnerViewModal
+        owner={selectedOwner}
+        isOpen={showOwnerViewModal}
+        onClose={() => { setShowOwnerViewModal(false); setSelectedOwner(null); }}
+        onUpdate={loadOwners}
+      />
+      <OwnerCreateModal
+        isOpen={showOwnerCreateModal}
+        onClose={() => setShowOwnerCreateModal(false)}
+        onSuccess={loadOwners}
       />
     </div>
   );

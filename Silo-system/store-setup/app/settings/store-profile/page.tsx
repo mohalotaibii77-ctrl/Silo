@@ -88,7 +88,7 @@ export default function StoreProfilePage() {
 
   const fetchRequests = async () => {
     try {
-      const response = await api.get('/api/business-settings/change-requests');
+      const response = await api.get('/business-settings/change-requests');
       setRequests(response.data.data || []);
     } catch (err) {
       console.error('Failed to fetch requests:', err);
@@ -108,7 +108,7 @@ export default function StoreProfilePage() {
     setMessage({ type: '', text: '' });
 
     try {
-      await api.post('/api/business-settings/change-requests', {
+      await api.post('/business-settings/change-requests', {
         request_type: 'profile',
         new_name: formData.name !== business?.name ? formData.name : undefined,
         new_email: formData.email !== business?.email ? formData.email : undefined,
@@ -136,7 +136,7 @@ export default function StoreProfilePage() {
       formData.append('file', file);
       formData.append('request_type', type);
 
-      await api.post('/api/business-settings/upload-request', formData, {
+      await api.post('/business-settings/upload-request', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
 
@@ -223,8 +223,8 @@ export default function StoreProfilePage() {
               </div>
             )}
 
-            <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-              <p className="text-sm text-blue-700 dark:text-blue-400">
+            <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+              <p className="text-sm text-zinc-700 dark:text-zinc-400">
                 {t('Changes to your store profile require admin approval. Submit a request and we\'ll review it shortly.', 'تتطلب التغييرات على ملف متجرك موافقة المسؤول. أرسل طلبًا وسنراجعه قريبًا.')}
               </p>
             </div>

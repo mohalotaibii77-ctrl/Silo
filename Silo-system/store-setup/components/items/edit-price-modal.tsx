@@ -135,7 +135,7 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'U
 
                 {/* Info for general items */}
                 {isGeneralItem && (
-                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-sm">
+                  <div className="p-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 text-sm">
                     {t(
                       'This is a general item. Setting a price here will create a custom price for your business only.',
                       'هذه مادة عامة. سيؤدي تعيين السعر هنا إلى إنشاء سعر مخصص لعملك فقط.'

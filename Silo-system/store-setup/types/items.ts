@@ -48,6 +48,7 @@ export interface Item {
   business_id: number | null;
   name: string;
   name_ar?: string | null;
+  sku?: string | null;
   category: ItemCategory;
   unit: ItemUnit;
   cost_per_unit: number; // Default price

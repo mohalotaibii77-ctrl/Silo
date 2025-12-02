@@ -24,11 +24,24 @@ const api = axios.create({
   },
 });
 
-// Request interceptor for auth tokens
+// Request interceptor for auth tokens and business context
 api.interceptors.request.use((config) => {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('setup_token') : null;
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('setup_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    
+    // Add current business ID from workspace selection
+    const storedBusiness = localStorage.getItem('setup_business');
+    if (storedBusiness) {
+      try {
+        const business = JSON.parse(storedBusiness);
+        if (business.id) {
+          config.headers['X-Business-Id'] = business.id.toString();
+        }
+      } catch {}
+    }
   }
   return config;
 });

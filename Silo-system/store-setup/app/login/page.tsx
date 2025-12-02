@@ -26,7 +26,7 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const response = await api.post('/api/business-auth/login', { email, password });
+      const response = await api.post('/business-auth/login', { email, password });
       const { token, user, business } = response.data;
 
       // Only allow owner and manager roles
@@ -46,8 +46,8 @@ export default function LoginPage() {
       document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
       document.documentElement.lang = lang;
 
-      // Navigate to setup dashboard
-      router.push('/');
+      // Navigate to Items page directly
+      router.push('/items');
     } catch (err: any) {
       console.error('Login error:', err);
       // Show actual error for debugging

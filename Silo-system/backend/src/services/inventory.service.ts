@@ -19,6 +19,7 @@ export interface Item {
   business_id: number | null;
   name: string;
   name_ar?: string | null;
+  sku?: string | null;
   category: ItemCategory;
   unit: ItemUnit;
   cost_per_unit: number;
@@ -41,6 +42,28 @@ export interface BusinessItemPrice {
 
 export class InventoryService {
   
+  /**
+   * Generate unique SKU for a new business item
+   */
+  private async generateItemSku(businessId: number): Promise<string> {
+    // Get the highest item ID for this business to generate next SKU
+    const { data, error } = await supabaseAdmin
+      .from('items')
+      .select('id')
+      .eq('business_id', businessId)
+      .order('id', { ascending: false })
+      .limit(1);
+    
+    // Get next sequence number based on count
+    const { count } = await supabaseAdmin
+      .from('items')
+      .select('*', { count: 'exact', head: true })
+      .eq('business_id', businessId);
+    
+    const sequence = String((count || 0) + 1).padStart(4, '0');
+    return `${businessId}-ITM-${sequence}`;
+  }
+
   /**
    * Get all items for a business with business-specific prices
    */
@@ -139,6 +162,9 @@ export class InventoryService {
     unit?: ItemUnit;
     cost_per_unit?: number;
   }): Promise<Item> {
+    // Generate unique SKU for this business item
+    const sku = await this.generateItemSku(data.business_id);
+    
     const { data: item, error } = await supabaseAdmin
       .from('items')
       .insert({
@@ -150,6 +176,7 @@ export class InventoryService {
         cost_per_unit: data.cost_per_unit || 0,
         is_system_item: false,
         status: 'active',
+        sku: sku,
       })
       .select()
       .single();
@@ -297,7 +324,7 @@ export class InventoryService {
     try {
       const { data: modifiers, error: modError } = await supabaseAdmin
         .from('product_modifiers')
-        .select('id, item_id, name, name_ar, removable, addable, extra_price, sort_order')
+        .select('id, item_id, name, name_ar, removable, addable, quantity, extra_price, sort_order')
         .eq('product_id', productId)
         .order('sort_order');
       
@@ -349,6 +376,7 @@ export class InventoryService {
         name_ar: mod.name_ar,
         removable: mod.removable || false,
         addable: mod.addable ?? true,
+        quantity: mod.quantity || 1,
         extra_price: mod.extra_price || 0,
       }));
 
@@ -400,7 +428,7 @@ export class InventoryService {
     has_variants: boolean;
     variants?: { name: string; name_ar?: string; price_adjustment?: number; ingredients: { item_id: number; quantity: number; removable?: boolean }[] }[];
     ingredients?: { item_id: number; quantity: number; removable?: boolean }[];
-    modifiers?: { item_id: number; name: string; name_ar?: string; extra_price: number }[];
+    modifiers?: { item_id: number; name: string; name_ar?: string; quantity?: number; extra_price: number }[];
   }): Promise<any> {
     // Update product has_variants flag
     const { error: updateError } = await supabaseAdmin
@@ -468,6 +496,7 @@ export class InventoryService {
         item_id: mod.item_id,
         name: mod.name,
         name_ar: mod.name_ar || null,
+        quantity: mod.quantity || 1,
         extra_price: mod.extra_price || 0,
         removable: false,
         addable: true,

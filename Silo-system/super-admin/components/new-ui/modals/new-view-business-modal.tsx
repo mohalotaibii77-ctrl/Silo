@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Building2, Mail, Phone, MapPin, FileText, Users, CreditCard, Calendar, ExternalLink, CheckCircle2, AlertCircle, Clock } from 'lucide-react';
+import { X, Building2, Mail, Phone, MapPin, FileText, Users, CreditCard, Calendar, ExternalLink, CheckCircle2, AlertCircle, Clock, Store } from 'lucide-react';
 import type { Business } from '@/types';
 import Image from 'next/image';
 
@@ -109,7 +109,7 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
               <div className="px-6 py-6 overflow-y-auto custom-scrollbar space-y-8">
                 
                 {/* Quick Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
                     <span className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Status</span>
                     <div className={`mt-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-lg text-sm font-medium border ${getStatusColor(business.subscription_status)}`}>
@@ -129,6 +129,13 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
                     <div className="mt-2 flex items-center gap-2 text-zinc-900 dark:text-white font-medium">
                       <Users className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
                       {business.user_count} / {business.max_users}
+                    </div>
+                  </div>
+                  <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                    <span className="text-xs text-zinc-500 font-semibold uppercase tracking-wider">Branches</span>
+                    <div className="mt-2 flex items-center gap-2 text-zinc-900 dark:text-white font-medium">
+                      <Store className="w-4 h-4 text-zinc-500 dark:text-zinc-400" />
+                      {business.branch_count || 1} {(business.branch_count || 1) === 1 ? 'Location' : 'Locations'}
                     </div>
                   </div>
                 </div>
@@ -170,6 +177,44 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
                     </div>
                   </div>
                 </div>
+
+                {/* Branches Section */}
+                {business.branches && business.branches.length > 0 && (
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-bold text-zinc-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
+                      <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></div>
+                      Branches
+                      <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></div>
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {business.branches.map((branch) => (
+                        <div 
+                          key={branch.id} 
+                          className={`p-4 rounded-xl border ${branch.is_main ? 'bg-zinc-100 dark:bg-zinc-800/80 border-zinc-300 dark:border-zinc-600' : 'bg-zinc-50 dark:bg-zinc-800/30 border-zinc-200 dark:border-zinc-700'}`}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-zinc-900 dark:text-white flex items-center gap-2">
+                              <Store className="w-4 h-4" />
+                              {branch.name}
+                            </span>
+                            {branch.is_main && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300">
+                                Main
+                              </span>
+                            )}
+                          </div>
+                          {branch.address && (
+                            <p className="text-sm text-zinc-500 mt-1">{branch.address}</p>
+                          )}
+                          <div className="flex items-center gap-3 mt-2 text-xs text-zinc-400">
+                            {branch.phone && <span>{branch.phone}</span>}
+                            {branch.email && <span>{branch.email}</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Additional Details */}
                 <div className="space-y-4">

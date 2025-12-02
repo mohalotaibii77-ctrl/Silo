@@ -48,6 +48,7 @@ export interface Item {
   business_id: number | null;
   name: string;
   name_ar?: string | null;
+  sku?: string | null;
   category: ItemCategory;
   unit: ItemUnit;
   cost_per_unit: number;
@@ -66,33 +67,381 @@ export interface Category extends BaseEntity {
   sort_order: number;
 }
 
-// Order (POS)
-export interface Order extends BaseEntity {
-  business_id: string;
+// =====================================================
+// ORDER TYPES
+// =====================================================
+
+// Order sources - where the order originated
+export type OrderSource = 
+  | 'pos'           // Direct POS terminal order
+  | 'talabat'       // Talabat delivery app
+  | 'jahez'         // Jahez delivery app
+  | 'hungerstation' // HungerStation
+  | 'careem'        // Careem Now
+  | 'toyou'         // ToYou
+  | 'mrsool'        // Mrsool
+  | 'deliveroo'     // Deliveroo
+  | 'ubereats'      // Uber Eats
+  | 'phone'         // Phone order
+  | 'website'       // Restaurant website
+  | 'mobile_app'    // Restaurant's own mobile app
+  | 'walk_in'       // Walk-in customer
+  | 'other';        // Other sources
+
+// Order types
+export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'drive_thru';
+
+// Order status
+export type OrderStatus = 
+  | 'pending'           // Order received, not yet confirmed
+  | 'confirmed'         // Order confirmed
+  | 'preparing'         // Kitchen is preparing
+  | 'ready'             // Ready for pickup/delivery
+  | 'out_for_delivery'  // Driver has the order
+  | 'completed'         // Order fulfilled
+  | 'cancelled'         // Order cancelled
+  | 'refunded'          // Order refunded
+  | 'failed';           // Order failed
+
+// Payment methods
+export type PaymentMethod = 
+  | 'cash'          // Cash
+  | 'card'          // Card at POS
+  | 'card_online'   // Online card payment
+  | 'apple_pay'     // Apple Pay
+  | 'stc_pay'       // STC Pay
+  | 'mada'          // Mada card
+  | 'visa'          // Visa
+  | 'mastercard'    // Mastercard
+  | 'wallet'        // Restaurant wallet/credits
+  | 'app_payment'   // Paid via delivery app
+  | 'bank_transfer' // Bank transfer
+  | 'split'         // Split payment
+  | 'other';        // Other
+
+// Payment status
+export type PaymentStatus = 
+  | 'pending'        // Payment not yet received
+  | 'paid'           // Fully paid
+  | 'partial'        // Partially paid
+  | 'refunded'       // Fully refunded
+  | 'partial_refund' // Partially refunded
+  | 'failed'         // Payment failed
+  | 'cancelled';     // Payment cancelled
+
+// Main Order interface
+export interface Order {
+  id: number;
+  
+  // Business & Location
+  business_id: number;
+  branch_id?: number;
+  
+  // Order Identification
   order_number: string;
+  external_order_id?: string;       // Order ID from delivery app
+  display_number?: string;          // Short number (#42)
+  
+  // Order Source & Type
+  order_source: OrderSource;
+  order_type: OrderType;
+  
+  // Status
   status: OrderStatus;
-  type: 'dine_in' | 'takeaway' | 'delivery';
-  table_number?: string;
+  order_status?: OrderStatus;  // Alias for existing database column
+  
+  // Timing
+  order_date: string;
+  order_time: string;
+  scheduled_time?: string;
+  estimated_ready_time?: string;
+  actual_ready_time?: string;
+  completed_at?: string;
+  
+  // Customer Information
+  customer_id?: number;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
+  customer_notes?: string;
+  
+  // Dine-in specific
+  table_number?: string;
+  zone_area?: string;
+  number_of_guests?: number;
+  server_id?: number;
+  
+  // Delivery specific
+  delivery_address?: string;
+  delivery_address_lat?: number;
+  delivery_address_lng?: number;
+  delivery_instructions?: string;
+  driver_name?: string;
+  driver_phone?: string;
+  driver_id?: string;
+  
+  // Pricing
   subtotal: number;
-  tax: number;
-  discount: number;
+  discount_amount: number;
+  discount_id?: number;
+  discount_code?: string;
+  discount_type?: string;
+  discount_reason?: string;
+  tax_amount: number;
+  tax_rate: number;
+  service_charge: number;
+  delivery_fee: number;
+  packaging_fee: number;
+  tip_amount: number;
   total: number;
-  payment_method?: string;
+  total_amount?: number;  // Alias for existing database column
+  
+  // Payment
+  payment_method?: PaymentMethod;
+  payment_status: PaymentStatus;
   paid_at?: string;
-  created_by: string;
+  payment_reference?: string;
+  is_split_payment: boolean;
+  split_payment_details?: Record<string, unknown>;
+  
+  // Cancellation/Refund
+  cancelled_at?: string;
+  cancelled_by?: number;
+  cancellation_reason?: string;
+  refund_amount: number;
+  refunded_at?: string;
+  refund_reference?: string;
+  
+  // POS Terminal Info
+  pos_terminal_id?: string;
+  pos_session_id?: number;
+  
+  // Staff
+  created_by: number;
+  updated_by?: number;
+  cashier_id?: number;
+  
+  // Additional
+  is_rush_order: boolean;
+  is_void: boolean;
+  void_reason?: string;
+  void_at?: string;
+  voided_by?: number;
+  internal_notes?: string;
+  external_metadata?: Record<string, unknown>;
+  
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+  
+  // Relations (populated)
+  items?: OrderItem[];
 }
 
-export type OrderStatus = 'pending' | 'preparing' | 'ready' | 'completed' | 'cancelled';
-
-export interface OrderItem extends BaseEntity {
-  order_id: string;
-  item_id: string;
+// Order Item interface
+export interface OrderItem {
+  id: number;
+  order_id: number;
+  
+  // Product reference
+  product_id?: number;
+  product_name: string;
+  product_name_ar?: string;
+  product_sku?: string;
+  product_category?: string;
+  
+  // Quantity & Pricing
   quantity: number;
   unit_price: number;
-  total_price: number;
-  notes?: string;
+  discount_amount: number;
+  discount_percentage: number;
+  subtotal: number;
+  total: number;
+  
+  // Modifiers
+  has_modifiers: boolean;
+  modifiers_total: number;
+  modifiers?: OrderItemModifier[];
+  
+  // Special Instructions
+  special_instructions?: string;
+  
+  // Status
+  item_status: string;
+  
+  // Combo/Bundle
+  is_combo: boolean;
+  combo_id?: number;
+  parent_item_id?: number;
+  
+  // Void
+  is_void: boolean;
+  void_reason?: string;
+  voided_by?: number;
+  voided_at?: string;
+  
+  // Timestamps
+  created_at: string;
+  updated_at: string;
+}
+
+// Order Item Modifier interface
+export interface OrderItemModifier {
+  id: number;
+  order_item_id: number;
+  
+  modifier_id?: number;
+  modifier_group_id?: number;
+  modifier_name: string;
+  modifier_name_ar?: string;
+  
+  quantity: number;
+  unit_price: number;
+  total: number;
+  
+  modifier_type?: string;  // add, remove, substitute
+  
+  created_at: string;
+}
+
+// Order Payment (for split payments)
+export interface OrderPayment {
+  id: number;
+  order_id: number;
+  
+  payment_method: PaymentMethod;
+  amount: number;
+  
+  payment_reference?: string;
+  payment_details?: Record<string, unknown>;
+  
+  status: PaymentStatus;
+  paid_at?: string;
+  
+  processed_by?: number;
+  
+  created_at: string;
+}
+
+// Order Status History (audit trail)
+export interface OrderStatusHistory {
+  id: number;
+  order_id: number;
+  
+  from_status?: OrderStatus;
+  to_status: OrderStatus;
+  
+  changed_by?: number;
+  change_reason?: string;
+  
+  created_at: string;
+}
+
+// Create Order Input
+export interface CreateOrderInput {
+  business_id: number;
+  branch_id?: number;
+  
+  order_source: OrderSource;
+  order_type: OrderType;
+  
+  // External order info (for delivery apps)
+  external_order_id?: string;
+  
+  // Customer
+  customer_id?: number;
+  customer_name?: string;
+  customer_phone?: string;
+  customer_email?: string;
+  customer_notes?: string;
+  
+  // Dine-in
+  table_number?: string;
+  zone_area?: string;
+  number_of_guests?: number;
+  server_id?: number;
+  
+  // Delivery
+  delivery_address?: string;
+  delivery_address_lat?: number;
+  delivery_address_lng?: number;
+  delivery_instructions?: string;
+  driver_name?: string;
+  driver_phone?: string;
+  driver_id?: string;
+  
+  // Items
+  items: CreateOrderItemInput[];
+  
+  // Discount
+  discount_id?: number;
+  discount_code?: string;
+  discount_amount?: number;
+  discount_type?: string;
+  discount_reason?: string;
+  
+  // Fees
+  delivery_fee?: number;
+  packaging_fee?: number;
+  service_charge?: number;
+  tip_amount?: number;
+  
+  // Payment
+  payment_method?: PaymentMethod;
+  payment_reference?: string;
+  
+  // Scheduling
+  scheduled_time?: string;
+  
+  // Staff
+  created_by: number;
+  cashier_id?: number;
+  pos_terminal_id?: string;
+  pos_session_id?: number;
+  
+  // Flags
+  is_rush_order?: boolean;
+  
+  // Notes
+  internal_notes?: string;
+  
+  // External metadata
+  external_metadata?: Record<string, unknown>;
+}
+
+// Create Order Item Input
+export interface CreateOrderItemInput {
+  product_id?: number;
+  product_name: string;
+  product_name_ar?: string;
+  product_sku?: string;
+  product_category?: string;
+  
+  quantity: number;
+  unit_price: number;
+  
+  discount_amount?: number;
+  discount_percentage?: number;
+  
+  special_instructions?: string;
+  
+  modifiers?: CreateOrderItemModifierInput[];
+  
+  is_combo?: boolean;
+  combo_id?: number;
+}
+
+// Create Order Item Modifier Input
+export interface CreateOrderItemModifierInput {
+  modifier_id?: number;
+  modifier_group_id?: number;
+  modifier_name: string;
+  modifier_name_ar?: string;
+  
+  quantity?: number;
+  unit_price: number;
+  
+  modifier_type?: string;
 }
 
 // Inventory

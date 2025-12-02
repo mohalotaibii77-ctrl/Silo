@@ -6,6 +6,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { authService } from '../services';
 import { AuthPayload, UserRole } from '../types';
+import { supabaseAdmin } from '../config/database';
 
 // Extend Express Request
 declare global {
@@ -68,10 +69,9 @@ export function requireRole(...roles: UserRole[]) {
 
 /**
  * Require same business access
+ * Supports workspace switching via X-Business-Id header for owners
  */
-export function requireBusinessAccess(req: Request, res: Response, next: NextFunction) {
-  const businessId = req.params.businessId || req.body.businessId || req.query.businessId;
-  
+export async function requireBusinessAccess(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({
       success: false,
@@ -84,7 +84,36 @@ export function requireBusinessAccess(req: Request, res: Response, next: NextFun
     return next();
   }
 
-  if (businessId && businessId !== req.user.businessId) {
+  // Check for workspace switching header (X-Business-Id)
+  const headerBusinessId = req.headers['x-business-id'] as string;
+  
+  if (headerBusinessId && headerBusinessId !== req.user.businessId) {
+    // Owner is trying to access a different business (workspace switching)
+    // Verify they have access via the business_owners table
+    if (req.user.role === 'owner') {
+      try {
+        const { data: ownerAccess } = await supabaseAdmin
+          .from('owners')
+          .select(`
+            id,
+            business_owners!inner (
+              business_id
+            )
+          `)
+          .ilike('username', req.user.username)
+          .eq('business_owners.business_id', parseInt(headerBusinessId))
+          .single();
+
+        if (ownerAccess) {
+          // Owner has access - update the businessId for this request (as number)
+          (req.user as any).businessId = parseInt(headerBusinessId);
+          return next();
+        }
+      } catch (err) {
+        console.error('Error checking owner business access:', err);
+      }
+    }
+    
     return res.status(403).json({
       success: false,
       error: 'Access denied to this business',

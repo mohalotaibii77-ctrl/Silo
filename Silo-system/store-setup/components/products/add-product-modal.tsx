@@ -28,6 +28,7 @@ interface ModifierEntry {
   id: string;
   item_id: number | null;
   item?: Item;
+  quantity: number; // Quantity of the add-on
   extra_price: number; // Extra charge for this add-on
 }
 
@@ -182,6 +183,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
               cost_per_unit: 0,
               category: 'other' as const,
             } : undefined),
+            quantity: m.quantity || 1,
             extra_price: m.extra_price || 0,
           };
         });
@@ -218,6 +220,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
     setModifiers([...modifiers, { 
       id: generateId(), 
       item_id: null,
+      quantity: 1,
       extra_price: 0
     }]);
   };
@@ -472,6 +475,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
             name_ar: m.item?.name_ar || undefined,
             removable: false, // Modifiers are always addable, not removable
             addable: true,    // Modifiers are always addable
+            quantity: m.quantity || 1,
             extra_price: m.extra_price || 0,
           }));
       }
@@ -495,6 +499,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
           item_id: m.item_id!,
           name: m.item?.name || '',
           name_ar: m.item?.name_ar || undefined,
+          quantity: m.quantity || 1,
           extra_price: m.extra_price || 0,
         }));
 
@@ -1106,6 +1111,22 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                         selectedItem={mod.item}
                         onSelect={(item) => selectItemForModifier(mod.id, item)}
                       />
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          value={mod.quantity ?? ''}
+                          onChange={(e) => updateModifier(mod.id, { quantity: e.target.value === '' ? 1 : parseFloat(e.target.value) })}
+                          placeholder={t('Qty', 'الكمية')}
+                          step="0.001"
+                          min="0"
+                          className="w-16 px-2 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                        />
+                        {mod.item && (
+                          <span className="text-xs text-zinc-500 w-12">
+                            {mod.item.unit}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-1">
                         <span className="text-sm text-zinc-500">+</span>
                         <input

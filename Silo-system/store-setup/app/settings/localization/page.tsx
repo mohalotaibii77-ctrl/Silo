@@ -107,7 +107,7 @@ export default function LocalizationPage() {
 
   const fetchLocalization = async () => {
     try {
-      const response = await api.get('/api/business-settings/localization');
+      const response = await api.get('/business-settings/localization');
       if (response.data.data) {
         setCountry(response.data.data.country || 'Kuwait');
         setCurrency(response.data.data.currency || 'KWD');
@@ -128,7 +128,7 @@ export default function LocalizationPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api.put('/api/business-settings/localization', {
+      await api.put('/business-settings/localization', {
         country,
         currency,
         language,

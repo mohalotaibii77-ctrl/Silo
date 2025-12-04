@@ -10,7 +10,7 @@ import { supabaseAdmin } from '../config/database';
 // Types matching the database schema
 export interface DBOwner {
   id: number;
-  email: string;
+  email: string | null;  // Email is optional - we use username for auth
   password_hash?: string; // Not returned in queries
   first_name: string | null;
   last_name: string | null;
@@ -43,7 +43,7 @@ export interface OwnerWithBusinesses extends DBOwner {
 }
 
 export interface CreateOwnerInput {
-  email: string;
+  email?: string;  // Email is optional - we use username for auth
   password: string;
   first_name?: string;
   last_name?: string;
@@ -196,10 +196,12 @@ export class OwnerService {
    * Create new owner
    */
   async createOwner(input: CreateOwnerInput): Promise<DBOwner> {
-    // Check if email already exists
-    const existing = await this.getOwnerByEmail(input.email);
-    if (existing) {
-      throw new Error('An owner with this email already exists');
+    // Check if email already exists (only if email is provided)
+    if (input.email) {
+      const existing = await this.getOwnerByEmail(input.email);
+      if (existing) {
+        throw new Error('An owner with this email already exists');
+      }
     }
 
     // Hash password
@@ -208,7 +210,7 @@ export class OwnerService {
     const { data, error } = await supabaseAdmin
       .from('owners')
       .insert({
-        email: input.email.toLowerCase(),
+        email: input.email ? input.email.toLowerCase() : null,
         password_hash: passwordHash,
         first_name: input.first_name || null,
         last_name: input.last_name || null,

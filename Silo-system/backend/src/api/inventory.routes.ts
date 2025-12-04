@@ -4,7 +4,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { inventoryService, ItemCategory } from '../services/inventory.service';
+import { inventoryService, ItemCategory, ItemUnit } from '../services/inventory.service';
 import { asyncHandler } from '../middleware/error.middleware';
 import { businessAuthService } from '../services/business-auth.service';
 
@@ -322,6 +322,158 @@ router.get('/products/:productId/cost', authenticateBusiness, asyncHandler(async
     req.businessUser!.business_id
   );
   res.json({ success: true, data: cost });
+}));
+
+// ============ COMPOSITE ITEMS ============
+
+/**
+ * GET /api/inventory/composite-items
+ * Get all composite items for the business
+ */
+router.get('/composite-items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const items = await inventoryService.getCompositeItems(req.businessUser!.business_id);
+  res.json({ success: true, data: items });
+}));
+
+/**
+ * GET /api/inventory/composite-items/:itemId
+ * Get a composite item with its components
+ */
+router.get('/composite-items/:itemId', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const item = await inventoryService.getCompositeItem(
+    parseInt(req.params.itemId),
+    req.businessUser!.business_id
+  );
+
+  if (!item) {
+    return res.status(404).json({ success: false, error: 'Composite item not found' });
+  }
+
+  res.json({ success: true, data: item });
+}));
+
+/**
+ * POST /api/inventory/composite-items
+ * Create a new composite item (item made from other items)
+ * Body: { 
+ *   name, name_ar?, category, unit, 
+ *   batch_quantity, batch_unit,  // How much this recipe produces
+ *   components: [{ item_id, quantity }] 
+ * }
+ * 
+ * Example: "Special Sauce" with batch_quantity=500, batch_unit='grams'
+ * means "this recipe produces 500 grams of sauce"
+ */
+router.post('/composite-items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const { name, name_ar, category, unit, batch_quantity, batch_unit, components } = req.body;
+
+  // Validate required fields
+  if (!name || !category || !unit) {
+    return res.status(400).json({
+      success: false,
+      error: 'Name, category, and unit are required',
+    });
+  }
+
+  // Validate batch tracking fields
+  if (!batch_quantity || batch_quantity <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Batch quantity is required and must be greater than 0',
+    });
+  }
+
+  const validUnits: ItemUnit[] = ['grams', 'mL', 'piece'];
+  if (!batch_unit || !validUnits.includes(batch_unit)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Batch unit is required and must be grams, mL, or piece',
+    });
+  }
+
+  if (!components || !Array.isArray(components) || components.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'At least one component is required for a composite item',
+    });
+  }
+
+  // Validate each component has item_id and quantity
+  for (const comp of components) {
+    if (!comp.item_id || !comp.quantity || comp.quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Each component must have item_id and quantity > 0',
+      });
+    }
+  }
+
+  const item = await inventoryService.createCompositeItem({
+    business_id: req.businessUser!.business_id,
+    name,
+    name_ar,
+    category,
+    unit: unit as ItemUnit,
+    batch_quantity: parseFloat(batch_quantity),
+    batch_unit: batch_unit as ItemUnit,
+    components,
+  });
+
+  res.status(201).json({ success: true, data: item });
+}));
+
+/**
+ * PUT /api/inventory/composite-items/:itemId/components
+ * Update components of a composite item
+ * Body: { components: [{ item_id, quantity }] }
+ */
+router.put('/composite-items/:itemId/components', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const itemId = parseInt(req.params.itemId);
+  const { components } = req.body;
+
+  if (!components || !Array.isArray(components)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Components array is required',
+    });
+  }
+
+  // Validate each component
+  for (const comp of components) {
+    if (!comp.item_id || !comp.quantity || comp.quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Each component must have item_id and quantity > 0',
+      });
+    }
+  }
+
+  const item = await inventoryService.updateCompositeItemComponents(
+    itemId,
+    req.businessUser!.business_id,
+    components
+  );
+
+  res.json({ success: true, data: item });
+}));
+
+/**
+ * POST /api/inventory/composite-items/:itemId/recalculate-cost
+ * Recalculate cost of a composite item based on current component prices
+ */
+router.post('/composite-items/:itemId/recalculate-cost', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const itemId = parseInt(req.params.itemId);
+  
+  const newCost = await inventoryService.recalculateCompositeItemCost(
+    itemId,
+    req.businessUser!.business_id
+  );
+
+  res.json({ 
+    success: true, 
+    data: { cost: newCost },
+    message: 'Cost recalculated successfully',
+  });
 }));
 
 export default router;

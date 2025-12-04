@@ -24,6 +24,10 @@ export interface Item {
   unit: ItemUnit;
   cost_per_unit: number;
   is_system_item: boolean;
+  is_composite: boolean;
+  // Batch tracking for composite items
+  batch_quantity?: number | null;
+  batch_unit?: ItemUnit | null;
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
@@ -38,6 +42,29 @@ export interface BusinessItemPrice {
   cost_per_unit: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CompositeItemComponent {
+  id: number;
+  composite_item_id: number;
+  component_item_id: number;
+  quantity: number;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  component_item?: Item;
+}
+
+export interface CreateCompositeItemInput {
+  business_id: number;
+  name: string;
+  name_ar?: string;
+  category: ItemCategory;
+  unit: ItemUnit;
+  // Batch tracking: how much this recipe produces
+  batch_quantity: number;
+  batch_unit: ItemUnit;
+  components: { item_id: number; quantity: number }[];
 }
 
 export class InventoryService {
@@ -531,6 +558,329 @@ export class InventoryService {
     } else {
       return { cost: product.total_cost || 0 };
     }
+  }
+
+  // ============ COMPOSITE ITEMS ============
+
+  /**
+   * Create a composite item (item made from other items)
+   * Example: "Special Sauce" made from "Tomato (50g)" + "Mayo (50mL)"
+   * 
+   * batch_quantity & batch_unit define how much this recipe produces
+   * e.g., batch_quantity=500, batch_unit='grams' means "this makes 500g"
+   * 
+   * cost_per_unit = batch_price / batch_quantity (unit price)
+   */
+  async createCompositeItem(input: CreateCompositeItemInput): Promise<Item & { components: CompositeItemComponent[]; batch_price: number; unit_price: number }> {
+    const { business_id, name, name_ar, category, unit, batch_quantity, batch_unit, components } = input;
+
+    // Validate batch_quantity
+    if (!batch_quantity || batch_quantity <= 0) {
+      throw new Error('Batch quantity must be greater than 0');
+    }
+
+    // Validate components exist and belong to this business or are system items
+    for (const comp of components) {
+      const item = await this.getItem(comp.item_id, business_id);
+      if (!item) {
+        throw new Error(`Component item ${comp.item_id} not found`);
+      }
+      // Check if item belongs to this business or is a system item
+      if (item.business_id !== null && item.business_id !== business_id) {
+        throw new Error(`Component item ${comp.item_id} does not belong to this business`);
+      }
+      // Prevent using composite items as components (avoid circular references)
+      const { data: isComposite } = await supabaseAdmin
+        .from('items')
+        .select('is_composite')
+        .eq('id', comp.item_id)
+        .single();
+      
+      if (isComposite?.is_composite) {
+        throw new Error(`Cannot use composite item ${comp.item_id} as a component. Only raw items allowed.`);
+      }
+    }
+
+    // Calculate batch cost from all components (total cost to make one batch)
+    const batchPrice = await this.calculateCompositeItemCost(components, business_id);
+    
+    // Calculate unit price (cost per unit of the composite item)
+    // e.g., if batch costs $10 and makes 500g, unit price = $10/500 = $0.02 per gram
+    const unitPrice = batchPrice / batch_quantity;
+
+    // Generate unique SKU
+    const sku = await this.generateItemSku(business_id);
+
+    // Create the composite item
+    // cost_per_unit stores the unit price for inventory calculations
+    const { data: item, error } = await supabaseAdmin
+      .from('items')
+      .insert({
+        business_id,
+        name,
+        name_ar: name_ar || null,
+        category,
+        unit, // The unit used for this item in recipes/inventory (e.g., grams)
+        cost_per_unit: unitPrice, // Cost per single unit (e.g., per gram)
+        batch_quantity, // How much one batch produces
+        batch_unit, // Unit of the batch quantity
+        is_system_item: false,
+        is_composite: true,
+        status: 'active',
+        sku,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to create composite item:', error);
+      throw new Error('Failed to create composite item');
+    }
+
+    // Insert components
+    const componentsToInsert = components.map(comp => ({
+      composite_item_id: item.id,
+      component_item_id: comp.item_id,
+      quantity: comp.quantity,
+    }));
+
+    const { error: compError } = await supabaseAdmin
+      .from('composite_item_components')
+      .insert(componentsToInsert);
+
+    if (compError) {
+      console.error('Failed to insert composite item components:', compError);
+      // Rollback: delete the item
+      await supabaseAdmin.from('items').delete().eq('id', item.id);
+      throw new Error('Failed to create composite item components');
+    }
+
+    // Return the item with components and calculated prices
+    const compositeItem = await this.getCompositeItem(item.id, business_id);
+    return {
+      ...compositeItem!,
+      batch_price: batchPrice,
+      unit_price: unitPrice,
+    };
+  }
+
+  /**
+   * Get a composite item with its components
+   */
+  async getCompositeItem(itemId: number, businessId: number): Promise<(Item & { components: CompositeItemComponent[] }) | null> {
+    // Get the item
+    const item = await this.getItem(itemId, businessId);
+    if (!item) return null;
+
+    // Get components with joined item data
+    const { data: components, error } = await supabaseAdmin
+      .from('composite_item_components')
+      .select(`
+        id,
+        composite_item_id,
+        component_item_id,
+        quantity,
+        created_at,
+        updated_at,
+        items:component_item_id (
+          id,
+          name,
+          name_ar,
+          unit,
+          cost_per_unit,
+          sku
+        )
+      `)
+      .eq('composite_item_id', itemId);
+
+    if (error) {
+      console.error('Failed to fetch composite item components:', error);
+      return { ...item, components: [] };
+    }
+
+    // Get business-specific prices for components
+    const componentItemIds = (components || []).map((c: any) => c.component_item_id);
+    const { data: businessPrices } = await supabaseAdmin
+      .from('business_item_prices')
+      .select('item_id, cost_per_unit')
+      .eq('business_id', businessId)
+      .in('item_id', componentItemIds);
+
+    const priceMap = new Map<number, number>();
+    if (businessPrices) {
+      businessPrices.forEach(bp => priceMap.set(bp.item_id, bp.cost_per_unit));
+    }
+
+    // Format components with effective prices
+    const formattedComponents = (components || []).map((comp: any) => {
+      const componentItem = comp.items;
+      const effectivePrice = priceMap.get(comp.component_item_id) ?? componentItem?.cost_per_unit ?? 0;
+      return {
+        id: comp.id,
+        composite_item_id: comp.composite_item_id,
+        component_item_id: comp.component_item_id,
+        quantity: comp.quantity,
+        created_at: comp.created_at,
+        updated_at: comp.updated_at,
+        component_item: componentItem ? {
+          ...componentItem,
+          effective_price: effectivePrice,
+          component_cost: comp.quantity * effectivePrice,
+        } : undefined,
+      };
+    });
+
+    return {
+      ...item,
+      components: formattedComponents,
+    };
+  }
+
+  /**
+   * Update composite item components
+   */
+  async updateCompositeItemComponents(
+    itemId: number,
+    businessId: number,
+    components: { item_id: number; quantity: number }[]
+  ): Promise<Item & { components: CompositeItemComponent[] }> {
+    // Verify the item exists and belongs to this business
+    const item = await this.getItem(itemId);
+    if (!item) {
+      throw new Error('Item not found');
+    }
+    if (item.business_id !== businessId) {
+      throw new Error('Item does not belong to this business');
+    }
+
+    // Validate components
+    for (const comp of components) {
+      const componentItem = await this.getItem(comp.item_id, businessId);
+      if (!componentItem) {
+        throw new Error(`Component item ${comp.item_id} not found`);
+      }
+      if (componentItem.business_id !== null && componentItem.business_id !== businessId) {
+        throw new Error(`Component item ${comp.item_id} does not belong to this business`);
+      }
+      // Check for circular reference
+      const { data: isComposite } = await supabaseAdmin
+        .from('items')
+        .select('is_composite')
+        .eq('id', comp.item_id)
+        .single();
+      
+      if (isComposite?.is_composite) {
+        throw new Error(`Cannot use composite item ${comp.item_id} as a component`);
+      }
+    }
+
+    // Delete existing components
+    await supabaseAdmin
+      .from('composite_item_components')
+      .delete()
+      .eq('composite_item_id', itemId);
+
+    // Insert new components
+    if (components.length > 0) {
+      const componentsToInsert = components.map(comp => ({
+        composite_item_id: itemId,
+        component_item_id: comp.item_id,
+        quantity: comp.quantity,
+      }));
+
+      const { error } = await supabaseAdmin
+        .from('composite_item_components')
+        .insert(componentsToInsert);
+
+      if (error) {
+        console.error('Failed to update composite item components:', error);
+        throw new Error('Failed to update components');
+      }
+    }
+
+    // Recalculate and update cost
+    const totalCost = await this.calculateCompositeItemCost(components, businessId);
+    await supabaseAdmin
+      .from('items')
+      .update({ 
+        cost_per_unit: totalCost, 
+        is_composite: components.length > 0,
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', itemId);
+
+    return this.getCompositeItem(itemId, businessId) as Promise<Item & { components: CompositeItemComponent[] }>;
+  }
+
+  /**
+   * Calculate total cost of a composite item from its components
+   */
+  private async calculateCompositeItemCost(
+    components: { item_id: number; quantity: number }[],
+    businessId: number
+  ): Promise<number> {
+    let totalCost = 0;
+
+    for (const comp of components) {
+      // Get the component item with business-specific price
+      const item = await this.getItem(comp.item_id, businessId);
+      if (item) {
+        const effectivePrice = item.business_price ?? item.cost_per_unit;
+        totalCost += comp.quantity * effectivePrice;
+      }
+    }
+
+    return totalCost;
+  }
+
+  /**
+   * Recalculate cost for all composite items (useful when component prices change)
+   */
+  async recalculateCompositeItemCost(itemId: number, businessId: number): Promise<number> {
+    // Get current components
+    const { data: components, error } = await supabaseAdmin
+      .from('composite_item_components')
+      .select('component_item_id, quantity')
+      .eq('composite_item_id', itemId);
+
+    if (error || !components) {
+      throw new Error('Failed to fetch components');
+    }
+
+    const componentsList = components.map((c: any) => ({
+      item_id: c.component_item_id,
+      quantity: c.quantity,
+    }));
+
+    const totalCost = await this.calculateCompositeItemCost(componentsList, businessId);
+
+    // Update the item cost
+    await supabaseAdmin
+      .from('items')
+      .update({ cost_per_unit: totalCost, updated_at: new Date().toISOString() })
+      .eq('id', itemId);
+
+    return totalCost;
+  }
+
+  /**
+   * Get all composite items for a business
+   */
+  async getCompositeItems(businessId: number): Promise<Item[]> {
+    const { data: items, error } = await supabaseAdmin
+      .from('items')
+      .select('*')
+      .eq('business_id', businessId)
+      .eq('is_composite', true)
+      .eq('status', 'active')
+      .order('name');
+
+    if (error) {
+      console.error('Failed to fetch composite items:', error);
+      throw new Error('Failed to fetch composite items');
+    }
+
+    return items as Item[];
   }
 }
 

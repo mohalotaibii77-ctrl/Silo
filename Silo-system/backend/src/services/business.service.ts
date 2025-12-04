@@ -351,7 +351,7 @@ export class BusinessService {
           if (user.role === 'owner') {
             await this.createPlatformOwner({
               username: user.username,
-              email: user.email || `${user.username}@business.local`,
+              email: user.email || null,  // Email is optional, don't auto-generate
               passwordHash,
               firstName: user.first_name,
               lastName: user.last_name,
@@ -371,7 +371,7 @@ export class BusinessService {
    */
   private async createPlatformOwner(data: {
     username: string;
-    email: string;
+    email: string | null;  // Email is optional
     passwordHash: string;
     firstName?: string;
     lastName?: string;
@@ -380,7 +380,7 @@ export class BusinessService {
   }): Promise<void> {
     try {
       const username = data.username.trim();
-      const email = data.email.toLowerCase();
+      const email = data.email ? data.email.toLowerCase() : null;
       
       // Check if owner already exists by username
       const { data: existingOwner } = await supabaseAdmin

@@ -195,9 +195,9 @@ export default function TaxSettingsPage() {
                   {t('Quick Select', 'اختيار سريع')}
                 </label>
                 <div className="flex flex-wrap gap-2">
-                  {commonRates.map((rate) => (
+                  {commonRates.map((rate, index) => (
                     <button
-                      key={rate.value}
+                      key={`${rate.label}-${index}`}
                       type="button"
                       onClick={() => setSettings({ ...settings, tax_rate: rate.value })}
                       className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${

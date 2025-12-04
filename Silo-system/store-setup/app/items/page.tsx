@@ -1,16 +1,22 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
-import { Package, LogOut, User, Command, Bell, Search, Plus, MoreVertical, Edit, Trash2, DollarSign } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Package, LogOut, User, Command, Bell, Search, Plus, Edit, Trash2, DollarSign, ChevronDown, Building2, Check, Factory, Eye } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
 import { AddItemModal } from '@/components/items/add-item-modal';
+import { AddCompositeItemModal } from '@/components/items/add-composite-item-modal';
 import { EditPriceModal } from '@/components/items/edit-price-modal';
-import { motion } from 'framer-motion';
-import { Item, ITEM_CATEGORIES, ItemCategory, CATEGORY_TRANSLATIONS } from '@/types/items';
-import { getItems, deleteItem } from '@/lib/items-api';
+import { ViewItemModal } from '@/components/items/view-item-modal';
+import { EditItemModal } from '@/components/items/edit-item-modal';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Item, ITEM_CATEGORIES, ItemCategory, CATEGORY_TRANSLATIONS, CompositeItem } from '@/types/items';
+import { getItems, deleteItem, getCompositeItem } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import api from '@/lib/api';
+
+type ItemTab = 'raw' | 'production';
 
 interface User {
   id: number;
@@ -27,6 +33,10 @@ interface Business {
   logo_url?: string | null;
   currency?: string;
   language?: string;
+}
+
+interface WorkspaceBusiness extends Business {
+  role?: string;
 }
 
 // Currency symbols map
@@ -82,18 +92,36 @@ const categoryColors: Record<ItemCategory, string> = {
 
 export default function ItemsPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { language, isRTL, t } = useLanguage();
   const [user, setUser] = useState<User | null>(null);
   const [business, setBusiness] = useState<Business | null>(null);
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Item[]>([]);
+  const [compositeDetails, setCompositeDetails] = useState<Map<number, CompositeItem>>(new Map());
   const [itemsLoading, setItemsLoading] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showCompositeModal, setShowCompositeModal] = useState(false);
   const [showPriceModal, setShowPriceModal] = useState(false);
+  const [showViewModal, setShowViewModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [activeMenu, setActiveMenu] = useState<number | null>(null);
+  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceBusiness[]>([]);
+  
+  // Read initial tab from URL params
+  const tabParam = searchParams.get('tab');
+  const initialTab: ItemTab = tabParam === 'production' ? 'production' : 'raw';
+  const [activeTab, setActiveTab] = useState<ItemTab>(initialTab);
+  
+  // Update tab when URL params change
+  useEffect(() => {
+    const newTab: ItemTab = tabParam === 'production' ? 'production' : 'raw';
+    setActiveTab(newTab);
+  }, [tabParam]);
 
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
@@ -115,6 +143,11 @@ export default function ItemsPage() {
       if (storedBusiness) {
         setBusiness(JSON.parse(storedBusiness));
       }
+
+      // Fetch workspaces if user is an owner
+      if (parsedUser.role === 'owner' && parsedUser.username) {
+        fetchWorkspaces(parsedUser.username);
+      }
     } catch {
       router.push('/login');
       return;
@@ -123,12 +156,54 @@ export default function ItemsPage() {
     setLoading(false);
   }, [router]);
 
+  const fetchWorkspaces = async (username: string) => {
+    try {
+      const response = await api.get(`/owners/businesses-by-username?username=${encodeURIComponent(username)}`);
+      if (response.data.businesses && response.data.businesses.length > 0) {
+        setWorkspaces(response.data.businesses);
+      }
+    } catch (err) {
+      console.error('Failed to fetch workspaces:', err);
+    }
+  };
+
+  const switchWorkspace = (newBusiness: WorkspaceBusiness) => {
+    localStorage.setItem('setup_business', JSON.stringify(newBusiness));
+    setBusiness(newBusiness);
+    setShowWorkspaceDropdown(false);
+
+    const lang = newBusiness.language || 'en';
+    document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.lang = lang;
+
+    window.location.reload();
+  };
+
   const fetchItems = useCallback(async () => {
     setItemsLoading(true);
     try {
       const filters = filterCategory !== 'all' ? { category: filterCategory as ItemCategory } : undefined;
       const data = await getItems(filters);
       setItems(data);
+
+      // Pre-fetch composite item details in the background
+      const compositeItems = data.filter(item => item.is_composite);
+      if (compositeItems.length > 0) {
+        const detailsMap = new Map<number, CompositeItem>();
+        
+        // Fetch all composite details in parallel
+        const detailsPromises = compositeItems.map(async (item) => {
+          try {
+            const details = await getCompositeItem(item.id);
+            detailsMap.set(item.id, details);
+          } catch (err) {
+            console.error(`Failed to fetch composite details for item ${item.id}:`, err);
+          }
+        });
+        
+        await Promise.all(detailsPromises);
+        setCompositeDetails(detailsMap);
+      }
     } catch (err) {
       console.error('Failed to fetch items:', err);
     } finally {
@@ -167,12 +242,17 @@ export default function ItemsPage() {
     setActiveMenu(null);
   };
 
-  // Filter items by search query (show all items - both general and business-specific)
-  const filteredItems = items.filter(item =>
-    item.status === 'active' &&
-    (item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    item.name_ar?.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  // Filter items by search query and tab (raw vs composite)
+  const filteredItems = items.filter(item => {
+    const matchesSearch = item.status === 'active' &&
+      (item.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.name_ar?.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    // Filter by tab - raw items vs composite (production) items
+    const matchesTab = activeTab === 'raw' ? !item.is_composite : item.is_composite;
+    
+    return matchesSearch && matchesTab;
+  });
 
   const formatCategoryLabel = (category: string) => {
     const cat = category as ItemCategory;
@@ -233,18 +313,77 @@ export default function ItemsPage() {
             <div className="h-6 w-px bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
             <ModeToggle />
             <div className="h-6 w-px bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
-            <div className="flex items-center gap-3">
-              <div className={`hidden sm:block ${isRTL ? 'text-left' : 'text-right'}`}>
-                <p className="font-semibold text-sm text-zinc-900 dark:text-white">
-                  {user?.first_name || user?.username}
-                </p>
-                <p className="text-xs capitalize text-zinc-500 dark:text-zinc-400">
-                  {user?.role}
-                </p>
-              </div>
-              <div className="w-9 h-9 rounded-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
-                <User size={16} className="text-zinc-600 dark:text-zinc-400" />
-              </div>
+            {/* Workspace Switcher & User Profile */}
+            <div 
+              className="relative"
+              onMouseEnter={() => workspaces.length > 1 && setShowWorkspaceDropdown(true)}
+              onMouseLeave={() => setShowWorkspaceDropdown(false)}
+            >
+              <button className={`flex items-center gap-3 ${workspaces.length > 1 ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 -mx-2 px-2 py-1.5 rounded-lg transition-colors' : ''}`}>
+                <div className={`hidden sm:block ${isRTL ? 'text-left' : 'text-right'}`}>
+                  <p className="font-semibold text-sm text-zinc-900 dark:text-white">
+                    {user?.first_name || user?.username}
+                  </p>
+                  <p className="text-xs capitalize text-zinc-500 dark:text-zinc-400">
+                    {user?.role}
+                  </p>
+                </div>
+                <div className="w-9 h-9 rounded-full flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                  <User size={16} className="text-zinc-600 dark:text-zinc-400" />
+                </div>
+                {workspaces.length > 1 && (
+                  <ChevronDown size={14} className={`text-zinc-400 transition-transform ${showWorkspaceDropdown ? 'rotate-180' : ''}`} />
+                )}
+              </button>
+
+              {/* Workspace Dropdown */}
+              <AnimatePresence>
+                {showWorkspaceDropdown && workspaces.length > 1 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className={`absolute top-full mt-2 ${isRTL ? 'left-0' : 'right-0'} w-72 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xl z-50 overflow-hidden`}
+                  >
+                    <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+                      <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                        {t('Switch Workspace', 'تبديل مساحة العمل')}
+                      </p>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto py-2">
+                      {workspaces.map((ws) => (
+                        <button
+                          key={ws.id}
+                          onClick={() => switchWorkspace(ws)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ${
+                            business?.id === ws.id ? 'bg-zinc-50 dark:bg-zinc-800/50' : ''
+                          }`}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 border border-zinc-200 dark:border-zinc-700">
+                            {ws.logo_url ? (
+                              <img src={ws.logo_url} alt={ws.name} className="w-full h-full object-cover rounded-lg" />
+                            ) : (
+                              <Building2 size={18} className="text-zinc-500 dark:text-zinc-400" />
+                            )}
+                          </div>
+                          <div className={`flex-1 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            <p className="font-medium text-sm text-zinc-900 dark:text-white truncate">
+                              {ws.name}
+                            </p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                              @{ws.slug}
+                            </p>
+                          </div>
+                          {business?.id === ws.id && (
+                            <Check size={16} className="text-emerald-500 flex-shrink-0" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             <button
               onClick={handleLogout}
@@ -271,17 +410,58 @@ export default function ItemsPage() {
                   {t('Manage raw materials and ingredients', 'إدارة المواد الخام والمكونات')}
                 </p>
               </div>
+              {/* Add button - context-aware based on active tab */}
               <button 
-                onClick={() => setShowAddModal(true)}
+                onClick={() => activeTab === 'raw' ? setShowAddModal(true) : setShowCompositeModal(true)}
                 className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
               >
                 <Plus className="w-4 h-4" />
-                {t('Add Item', 'إضافة مادة')}
+                {activeTab === 'raw' ? t('Add Item', 'إضافة مادة') : t('Add Composite', 'إضافة مادة مركبة')}
               </button>
             </div>
 
-            {/* Category Filter Tabs */}
-            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+            {/* Tab Navigation with Search */}
+            <div className={`flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
+              <div className="flex gap-1 p-1 bg-zinc-100 dark:bg-zinc-800/50 rounded-xl w-fit">
+                <button
+                  onClick={() => router.push('/items?tab=raw')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'raw'
+                      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm'
+                      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Package className="w-4 h-4" />
+                  {t('Raw Items', 'المواد الخام')}
+                </button>
+                <button
+                  onClick={() => router.push('/items?tab=production')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === 'production'
+                      ? 'bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white shadow-sm'
+                      : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Factory className="w-4 h-4" />
+                  {t('Composite Items', 'المواد المركبة')}
+                </button>
+              </div>
+              
+              {/* Search */}
+              <div className="relative">
+                <Search className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-zinc-400`} />
+                <input 
+                  type="text" 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('Search items...', 'البحث عن مواد...')}
+                  className={`${isRTL ? 'pr-9 pl-4' : 'pl-9 pr-4'} py-2 w-64 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all placeholder:text-zinc-500 text-zinc-900 dark:text-white`}
+                />
+              </div>
+            </div>
+
+            {/* Category Filter Tabs - Two lines, wrap naturally */}
+            <div className={`flex flex-wrap gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
               <button
                 onClick={() => setFilterCategory('all')}
                 className={`px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
@@ -290,9 +470,9 @@ export default function ItemsPage() {
                     : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
                 }`}
               >
-                {t('All Items', 'جميع المواد')}
+                {t('All', 'الكل')}
               </button>
-              {ITEM_CATEGORIES.slice(0, 8).map((category) => (
+              {ITEM_CATEGORIES.map((category) => (
                 <button
                   key={category}
                   onClick={() => setFilterCategory(category)}
@@ -305,17 +485,6 @@ export default function ItemsPage() {
                   {formatCategoryLabel(category)}
                 </button>
               ))}
-              {/* More dropdown for additional categories */}
-              <select
-                value={filterCategory}
-                onChange={(e) => setFilterCategory(e.target.value)}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border-none outline-none cursor-pointer"
-              >
-                <option value="all">{t('...More', '...المزيد')}</option>
-                {ITEM_CATEGORIES.slice(8).map((category) => (
-                  <option key={category} value={category}>{formatCategoryLabel(category)}</option>
-                ))}
-              </select>
             </div>
 
             {/* Items List */}
@@ -325,29 +494,50 @@ export default function ItemsPage() {
               </div>
             ) : filteredItems.length === 0 ? (
               <div className="p-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 border-dashed text-center">
-                <Package className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
-                <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">
-                  {t('No items yet', 'لا توجد مواد بعد')}
-                </h3>
-                <p className="text-zinc-500 dark:text-zinc-400 mb-4">
-                  {t('Get started by adding your first ingredient or raw material', 'ابدأ بإضافة المكون أو المادة الخام الأولى')}
-                </p>
-                <button 
-                  onClick={() => setShowAddModal(true)}
-                  className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
-                >
-                  <Plus className="w-4 h-4" />
-                  {t('Add Item', 'إضافة مادة')}
-                </button>
+                {activeTab === 'raw' ? (
+                  <>
+                    <Package className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
+                    <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">
+                      {t('No items yet', 'لا توجد مواد بعد')}
+                    </h3>
+                    <p className="text-zinc-500 dark:text-zinc-400 mb-4">
+                      {t('Get started by adding your first ingredient or raw material', 'ابدأ بإضافة المكون أو المادة الخام الأولى')}
+                    </p>
+                    <button 
+                      onClick={() => setShowAddModal(true)}
+                      className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t('Add Item', 'إضافة مادة')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <Factory className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
+                    <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">
+                      {t('No composite items yet', 'لا توجد مواد مركبة بعد')}
+                    </h3>
+                    <p className="text-zinc-500 dark:text-zinc-400 mb-4">
+                      {t('Create composite items by combining raw materials (e.g., sauces, marinades, premixes)', 'أنشئ مواد مركبة عن طريق دمج المواد الخام (مثل الصلصات والتتبيلات والخلطات)')}
+                    </p>
+                    <button 
+                      onClick={() => setShowCompositeModal(true)}
+                      className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
+                    >
+                      <Plus className="w-4 h-4" />
+                      {t('Add Composite Item', 'إضافة مادة مركبة')}
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden" dir={isRTL ? 'rtl' : 'ltr'}>
                 {/* Table Header */}
                 <div className={`grid grid-cols-12 gap-4 px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider`}>
-                  <div className="col-span-4">{t('Item', 'المادة')}</div>
+                  <div className="col-span-4">{activeTab === 'raw' ? t('Item', 'المادة') : t('Composite Item', 'المادة المركبة')}</div>
                   <div className="col-span-2">{t('Category', 'الفئة')}</div>
-                  <div className="col-span-2">{t('Unit', 'الوحدة')}</div>
-                  <div className="col-span-2">{t('Your Price', 'السعر')}</div>
+                  <div className="col-span-2">{activeTab === 'raw' ? t('Unit', 'الوحدة') : t('Yield Unit', 'وحدة الإنتاج')}</div>
+                  <div className="col-span-2">{activeTab === 'raw' ? t('Your Price', 'السعر') : t('Cost', 'التكلفة')}</div>
                   <div className={`col-span-2 ${isRTL ? 'text-left' : 'text-right'}`}>{t('Actions', 'إجراءات')}</div>
                 </div>
 
@@ -363,8 +553,16 @@ export default function ItemsPage() {
                     >
                       <div className="col-span-4">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                            <Package className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
+                          <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                            activeTab === 'production' 
+                              ? 'bg-zinc-200 dark:bg-zinc-700' 
+                              : 'bg-zinc-100 dark:bg-zinc-800'
+                          }`}>
+                            {activeTab === 'production' ? (
+                              <Factory className="w-5 h-5 text-zinc-600 dark:text-zinc-300" />
+                            ) : (
+                              <Package className="w-5 h-5 text-zinc-500 dark:text-zinc-400" />
+                            )}
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
@@ -408,47 +606,27 @@ export default function ItemsPage() {
                           <Edit className="w-3 h-3 text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                         </button>
                       </div>
-                      <div className={`col-span-2 relative ${isRTL ? 'text-left' : 'text-right'}`}>
+                      <div className={`col-span-2 flex items-center gap-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
                         <button
-                          onClick={() => setActiveMenu(activeMenu === item.id ? null : item.id)}
-                          className="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-500 transition-colors"
+                          onClick={() => {
+                            setSelectedItem(item);
+                            setShowViewModal(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                         >
-                          <MoreVertical className="w-4 h-4" />
+                          <Eye className="w-4 h-4" />
+                          {t('View', 'عرض')}
                         </button>
-                        
-                        {activeMenu === item.id && (
-                          <div className={`absolute ${isRTL ? 'left-0' : 'right-0'} top-10 w-44 bg-white dark:bg-zinc-800 rounded-xl shadow-lg border border-zinc-200 dark:border-zinc-700 py-1 z-10`} dir={isRTL ? 'rtl' : 'ltr'}>
-                            <button
-                              onClick={() => handleEditPrice(item)}
-                              className="w-full flex items-center gap-2 px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                            >
-                              <DollarSign className="w-4 h-4" />
-                              {t('Edit Price', 'تعديل السعر')}
-                            </button>
-                            {/* Only show edit/delete for business-owned items */}
-                            {item.business_id && (
-                              <>
-                                <button
-                                  onClick={() => {
-                                    // TODO: Open full edit modal
-                                    setActiveMenu(null);
-                                  }}
-                                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                  {t('Edit Item', 'تعديل المادة')}
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteItem(item.id)}
-                                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                  {t('Delete', 'حذف')}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        )}
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item);
+                            setShowEditModal(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                        >
+                          <Edit className="w-4 h-4" />
+                          {t('Edit', 'تعديل')}
+                        </button>
                       </div>
                     </motion.div>
                   ))}
@@ -479,6 +657,41 @@ export default function ItemsPage() {
         onSuccess={fetchItems}
         currency={business?.currency}
       />
+
+      {/* Add Composite Item Modal */}
+      <AddCompositeItemModal
+        isOpen={showCompositeModal}
+        onClose={() => setShowCompositeModal(false)}
+        onSuccess={fetchItems}
+        language={business?.language}
+        currency={business?.currency}
+      />
+
+      {/* View Item Modal */}
+      <ViewItemModal
+        isOpen={showViewModal}
+        item={selectedItem}
+        compositeDetails={selectedItem?.is_composite ? compositeDetails.get(selectedItem.id) : undefined}
+        onClose={() => {
+          setShowViewModal(false);
+          setSelectedItem(null);
+        }}
+        currency={business?.currency}
+      />
+
+      {/* Edit Item Modal */}
+      <EditItemModal
+        isOpen={showEditModal}
+        item={selectedItem}
+        compositeDetails={selectedItem?.is_composite ? compositeDetails.get(selectedItem.id) : undefined}
+        onClose={() => {
+          setShowEditModal(false);
+          setSelectedItem(null);
+        }}
+        onSuccess={fetchItems}
+        currency={business?.currency}
+      />
+
     </div>
   );
 }

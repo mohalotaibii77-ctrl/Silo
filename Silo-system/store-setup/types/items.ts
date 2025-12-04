@@ -51,13 +51,38 @@ export interface Item {
   sku?: string | null;
   category: ItemCategory;
   unit: ItemUnit;
-  cost_per_unit: number; // Default price
+  cost_per_unit: number; // Default price (for composite: unit price = batch_price / batch_quantity)
   business_price?: number | null; // Business-specific price (if set)
   effective_price?: number; // The price to use (business_price or cost_per_unit)
   is_system_item: boolean;
+  is_composite: boolean; // TRUE if this item is made from other items
+  // Batch tracking for composite items
+  batch_quantity?: number | null; // How much this recipe produces (e.g., 500)
+  batch_unit?: ItemUnit | null; // Unit for batch quantity (e.g., 'grams')
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
+}
+
+// Component of a composite item
+export interface CompositeItemComponent {
+  id: number;
+  composite_item_id: number;
+  component_item_id: number;
+  quantity: number;
+  created_at: string;
+  updated_at: string;
+  component_item?: Item & { 
+    effective_price?: number;
+    component_cost?: number; // quantity * effective_price
+  };
+}
+
+// Composite item with its components
+export interface CompositeItem extends Item {
+  components: CompositeItemComponent[];
+  batch_price?: number; // Total cost to make one batch
+  unit_price?: number; // Cost per unit (batch_price / batch_quantity)
 }
 
 export interface CreateItemData {
@@ -66,6 +91,17 @@ export interface CreateItemData {
   category: ItemCategory;
   unit?: ItemUnit;
   cost_per_unit?: number;
+}
+
+export interface CreateCompositeItemData {
+  name: string;
+  name_ar?: string;
+  category: ItemCategory;
+  unit: ItemUnit;
+  // Batch tracking: how much this recipe produces
+  batch_quantity: number; // e.g., 500 (makes 500 grams)
+  batch_unit: ItemUnit; // e.g., 'grams'
+  components: { item_id: number; quantity: number }[];
 }
 
 export interface UpdateItemData extends Partial<CreateItemData> {

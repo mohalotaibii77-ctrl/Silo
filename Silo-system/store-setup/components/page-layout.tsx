@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState, ReactNode, useRef } from 'react';
+import { useEffect, useState, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { LogOut, User, Command, Bell, Search, ChevronDown, Building2, Check } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
 import { useLanguage } from '@/lib/language-context';
+import { motion, AnimatePresence } from 'framer-motion';
 import api from '@/lib/api';
 
 interface UserData {
@@ -45,18 +46,6 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
   const [loading, setLoading] = useState(true);
   const [workspaces, setWorkspaces] = useState<WorkspaceBusiness[]>([]);
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowWorkspaceDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
@@ -159,11 +148,12 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
             <ModeToggle />
             <div className="h-6 w-px bg-zinc-200 dark:bg-zinc-800 mx-1"></div>
             {/* Workspace Switcher & User Profile */}
-            <div className="relative" ref={dropdownRef}>
-              <button
-                onClick={() => workspaces.length > 1 && setShowWorkspaceDropdown(!showWorkspaceDropdown)}
-                className={`flex items-center gap-3 ${workspaces.length > 1 ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 -mx-2 px-2 py-1.5 rounded-lg transition-colors' : ''}`}
-              >
+            <div 
+              className="relative"
+              onMouseEnter={() => workspaces.length > 1 && setShowWorkspaceDropdown(true)}
+              onMouseLeave={() => setShowWorkspaceDropdown(false)}
+            >
+              <button className={`flex items-center gap-3 ${workspaces.length > 1 ? 'cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 -mx-2 px-2 py-1.5 rounded-lg transition-colors' : ''}`}>
                 <div className={`hidden sm:block ${isRTL ? 'text-left' : 'text-right'}`}>
                   <p className="font-semibold text-sm text-zinc-900 dark:text-white">
                     {user?.first_name || user?.username}
@@ -181,45 +171,53 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
               </button>
 
               {/* Workspace Dropdown */}
-              {showWorkspaceDropdown && workspaces.length > 1 && (
-                <div className={`absolute top-full mt-2 ${isRTL ? 'left-0' : 'right-0'} w-72 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xl z-50 overflow-hidden`}>
-                  <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
-                    <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
-                      {t('Switch Workspace', 'تبديل مساحة العمل')}
-                    </p>
-                  </div>
-                  <div className="max-h-64 overflow-y-auto py-2">
-                    {workspaces.map((ws) => (
-                      <button
-                        key={ws.id}
-                        onClick={() => switchWorkspace(ws)}
-                        className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ${
-                          business?.id === ws.id ? 'bg-zinc-50 dark:bg-zinc-800/50' : ''
-                        }`}
-                      >
-                        <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 border border-zinc-200 dark:border-zinc-700">
-                          {ws.logo_url ? (
-                            <img src={ws.logo_url} alt={ws.name} className="w-full h-full object-cover rounded-lg" />
-                          ) : (
-                            <Building2 size={18} className="text-zinc-500 dark:text-zinc-400" />
+              <AnimatePresence>
+                {showWorkspaceDropdown && workspaces.length > 1 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                    transition={{ duration: 0.15 }}
+                    className={`absolute top-full mt-2 ${isRTL ? 'left-0' : 'right-0'} w-72 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-xl z-50 overflow-hidden`}
+                  >
+                    <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+                      <p className="text-xs font-semibold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">
+                        {t('Switch Workspace', 'تبديل مساحة العمل')}
+                      </p>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto py-2">
+                      {workspaces.map((ws) => (
+                        <button
+                          key={ws.id}
+                          onClick={() => switchWorkspace(ws)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors ${
+                            business?.id === ws.id ? 'bg-zinc-50 dark:bg-zinc-800/50' : ''
+                          }`}
+                        >
+                          <div className="w-10 h-10 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0 border border-zinc-200 dark:border-zinc-700">
+                            {ws.logo_url ? (
+                              <img src={ws.logo_url} alt={ws.name} className="w-full h-full object-cover rounded-lg" />
+                            ) : (
+                              <Building2 size={18} className="text-zinc-500 dark:text-zinc-400" />
+                            )}
+                          </div>
+                          <div className={`flex-1 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            <p className="font-medium text-sm text-zinc-900 dark:text-white truncate">
+                              {ws.name}
+                            </p>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                              @{ws.slug}
+                            </p>
+                          </div>
+                          {business?.id === ws.id && (
+                            <Check size={16} className="text-emerald-500 flex-shrink-0" />
                           )}
-                        </div>
-                        <div className={`flex-1 ${isRTL ? 'text-right' : 'text-left'}`}>
-                          <p className="font-medium text-sm text-zinc-900 dark:text-white truncate">
-                            {ws.name}
-                          </p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                            @{ws.slug}
-                          </p>
-                        </div>
-                        {business?.id === ws.id && (
-                          <Check size={16} className="text-emerald-500 flex-shrink-0" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+                        </button>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             <button
               onClick={handleLogout}

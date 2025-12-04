@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FolderTree, Plus, Edit2, Trash2, Globe, Building2, GripVertical, X } from 'lucide-react';
+import { FolderTree, Plus, Edit2, Trash2, Globe, Building2, GripVertical, X, Search } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
@@ -14,6 +14,7 @@ export default function CategoriesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [filter, setFilter] = useState<'all' | 'system' | 'custom'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Form state
   const [name, setName] = useState('');
@@ -115,8 +116,19 @@ export default function CategoriesPage() {
 
   // Filter categories
   const filteredCategories = categories.filter(cat => {
-    if (filter === 'system') return cat.is_system;
-    if (filter === 'custom') return !cat.is_system;
+    // Filter by type
+    if (filter === 'system' && !cat.is_system) return false;
+    if (filter === 'custom' && cat.is_system) return false;
+    
+    // Filter by search query
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      return (
+        cat.name.toLowerCase().includes(query) ||
+        cat.name_ar?.toLowerCase().includes(query) ||
+        cat.description?.toLowerCase().includes(query)
+      );
+    }
     return true;
   });
 
@@ -148,25 +160,39 @@ export default function CategoriesPage() {
           </button>
         </div>
 
-        {/* Filter Tabs */}
-        <div className={`flex gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
-          {[
-            { key: 'all', label: t('All', 'الكل'), count: categories.length },
-            { key: 'system', label: t('General', 'عامة'), count: categories.filter(c => c.is_system).length },
-            { key: 'custom', label: t('Custom', 'مخصصة'), count: categories.filter(c => !c.is_system).length },
-          ].map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setFilter(tab.key as any)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                filter === tab.key
-                  ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
-              }`}
-            >
-              {tab.label} ({tab.count})
-            </button>
-          ))}
+        {/* Filter Tabs & Search */}
+        <div className={`flex flex-col sm:flex-row gap-4 justify-between ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
+          <div className={`flex gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            {[
+              { key: 'all', label: t('All', 'الكل'), count: categories.length },
+              { key: 'system', label: t('General', 'عامة'), count: categories.filter(c => c.is_system).length },
+              { key: 'custom', label: t('Custom', 'مخصصة'), count: categories.filter(c => !c.is_system).length },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setFilter(tab.key as any)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  filter === tab.key
+                    ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                    : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                }`}
+              >
+                {tab.label} ({tab.count})
+              </button>
+            ))}
+          </div>
+          
+          {/* Search */}
+          <div className="relative">
+            <Search className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-zinc-400`} />
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('Search categories...', 'البحث عن فئات...')}
+              className={`${isRTL ? 'pr-9 pl-4' : 'pl-9 pr-4'} py-2 w-64 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all placeholder:text-zinc-500 text-zinc-900 dark:text-white`}
+            />
+          </div>
         </div>
 
         {isLoading ? (

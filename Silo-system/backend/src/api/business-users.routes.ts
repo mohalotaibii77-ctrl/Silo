@@ -91,25 +91,25 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
     const businessId = req.businessUser?.business_id;
     const ownerUsername = req.businessUser?.username;
 
-    // Ensure owner has a business_users record in this workspace
-    // This handles workspace switching where owner was linked but not created as a business_user
+    // Sync owner data from owners table to ensure consistency across workspaces
     if (ownerUsername) {
-      const { data: ownerUserRecord } = await supabase
-        .from('business_users')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('username', ownerUsername)
+      // Get owner details from owners table (source of truth)
+      const { data: owner } = await supabase
+        .from('owners')
+        .select('username, email, first_name, last_name, phone, password_hash')
+        .ilike('username', ownerUsername)
         .single();
 
-      if (!ownerUserRecord) {
-        // Get owner details from owners table
-        const { data: owner } = await supabase
-          .from('owners')
-          .select('username, email, first_name, last_name, phone, password_hash')
+      if (owner) {
+        const { data: ownerUserRecord } = await supabase
+          .from('business_users')
+          .select('id')
+          .eq('business_id', businessId)
           .ilike('username', ownerUsername)
           .single();
 
-        if (owner) {
+        if (!ownerUserRecord) {
+          // Create missing business_users record
           console.log(`[business-users] Creating missing business_users record for owner ${ownerUsername} in business ${businessId}`);
           await supabase
             .from('business_users')
@@ -124,6 +124,19 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
               phone: owner.phone,
               status: 'active'
             });
+        } else {
+          // Update existing record to sync with owners table
+          console.log(`[business-users] Syncing owner data for ${ownerUsername} in business ${businessId}`);
+          await supabase
+            .from('business_users')
+            .update({
+              first_name: owner.first_name,
+              last_name: owner.last_name,
+              email: owner.email,
+              phone: owner.phone,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', ownerUserRecord.id);
         }
       }
     }
@@ -265,15 +278,15 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
       return res.status(400).json({ error: 'Cannot change owner role' });
     }
 
-    // Cannot demote the only owner
-    if (user.role === 'owner') {
+    // Cannot demote the only owner (only check if role is explicitly being changed)
+    if (user.role === 'owner' && role !== undefined && role !== 'owner') {
       const { count } = await supabase
         .from('business_users')
         .select('*', { count: 'exact', head: true })
         .eq('business_id', businessId)
         .eq('role', 'owner');
 
-      if (count === 1 && role !== 'owner') {
+      if (count === 1) {
         return res.status(400).json({ error: 'Cannot remove the only owner' });
       }
     }
@@ -295,6 +308,23 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
       .single();
 
     if (error) throw error;
+
+    // If updating an owner, also update the owners table (source of truth)
+    // This ensures owner data stays consistent across all workspaces
+    if (user.role === 'owner') {
+      const ownerUpdateData: any = { updated_at: new Date().toISOString() };
+      if (first_name !== undefined) ownerUpdateData.first_name = first_name?.trim() || null;
+      if (last_name !== undefined) ownerUpdateData.last_name = last_name?.trim() || null;
+      if (email !== undefined) ownerUpdateData.email = email?.trim() || null;
+      if (phone !== undefined) ownerUpdateData.phone = phone?.trim() || null;
+      
+      await supabase
+        .from('owners')
+        .update(ownerUpdateData)
+        .ilike('username', user.username);
+      
+      console.log(`[business-users] Updated owners table for ${user.username}`);
+    }
 
     res.json({ data, message: 'User updated successfully' });
   } catch (error: any) {

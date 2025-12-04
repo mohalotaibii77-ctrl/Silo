@@ -72,6 +72,11 @@ export default function LoginScreen({ navigation }: any) {
         await AsyncStorage.setItem('business', JSON.stringify(response.data.business));
       }
       
+      // Save all businesses for workspace switching (owners only)
+      if (response.data.businesses && response.data.businesses.length > 0) {
+        await AsyncStorage.setItem('businesses', JSON.stringify(response.data.businesses));
+      }
+      
       const role = response.data.user.role;
       
       if (role === 'owner') {

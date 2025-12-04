@@ -33,6 +33,7 @@ export interface BusinessUser {
 export interface Branch {
   id: number;
   business_id: number;
+  branch_code: string;
   name: string;
   slug: string;
   address: string | null;

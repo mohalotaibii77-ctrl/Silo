@@ -8,10 +8,17 @@
  */
 
 import api from './api';
-import { Item, CreateItemData, UpdateItemData, ItemCategory } from '@/types/items';
+import { 
+  Item, 
+  CreateItemData, 
+  UpdateItemData, 
+  ItemCategory, 
+  CompositeItem,
+  CreateCompositeItemData 
+} from '@/types/items';
 
 // Re-export types for convenience
-export type { Item, CreateItemData, UpdateItemData, ItemCategory };
+export type { Item, CreateItemData, UpdateItemData, ItemCategory, CompositeItem, CreateCompositeItemData };
 
 // Get all items for the current business
 export async function getItems(filters?: {
@@ -56,5 +63,40 @@ export async function setItemPrice(itemId: number, price: number): Promise<void>
 // Reset item price to default (remove business-specific price)
 export async function resetItemPrice(itemId: number): Promise<void> {
   await api.delete(`/inventory/items/${itemId}/price`);
+}
+
+// ============ COMPOSITE ITEMS ============
+
+// Get all composite items
+export async function getCompositeItems(): Promise<Item[]> {
+  const response = await api.get('/inventory/composite-items');
+  return response.data.data;
+}
+
+// Get a composite item with its components
+export async function getCompositeItem(itemId: number): Promise<CompositeItem> {
+  const response = await api.get(`/inventory/composite-items/${itemId}`);
+  return response.data.data;
+}
+
+// Create a new composite item
+export async function createCompositeItem(data: CreateCompositeItemData): Promise<CompositeItem> {
+  const response = await api.post('/inventory/composite-items', data);
+  return response.data.data;
+}
+
+// Update components of a composite item
+export async function updateCompositeItemComponents(
+  itemId: number, 
+  components: { item_id: number; quantity: number }[]
+): Promise<CompositeItem> {
+  const response = await api.put(`/inventory/composite-items/${itemId}/components`, { components });
+  return response.data.data;
+}
+
+// Recalculate cost of a composite item
+export async function recalculateCompositeItemCost(itemId: number): Promise<number> {
+  const response = await api.post(`/inventory/composite-items/${itemId}/recalculate-cost`);
+  return response.data.data.cost;
 }
 

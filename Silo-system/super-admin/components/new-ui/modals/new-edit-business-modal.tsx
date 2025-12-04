@@ -691,6 +691,9 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                                             {branch.is_main && (
                                               <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-600 text-zinc-600 dark:text-zinc-300">Main</span>
                                             )}
+                                            {branch.branch_code && (
+                                              <span className="text-xs px-2 py-0.5 rounded font-mono bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">{branch.branch_code}</span>
+                                            )}
                                           </div>
                                           {branch.address && (
                                             <p className="text-xs text-zinc-500 mt-1">{branch.address}</p>

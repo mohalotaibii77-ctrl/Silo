@@ -34,6 +34,7 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       token: result.token,
       user: result.user,
       business: result.business,
+      businesses: result.businesses,  // All businesses for workspace switching (owners only)
     });
   } catch (error) {
     console.error('Business auth login error:', error);

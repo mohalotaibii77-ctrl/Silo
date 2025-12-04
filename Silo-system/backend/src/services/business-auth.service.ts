@@ -41,20 +41,23 @@ export interface BusinessAuthPayload {
   branchId?: string;
 }
 
+export interface BusinessInfo {
+  id: number;
+  name: string;
+  slug: string;
+  currency?: string;
+  tax_rate?: number;
+  language?: string;
+  logo_url?: string;
+  branch_count?: number;
+}
+
 export interface BusinessLoginResponse {
   token: string;
   user: Omit<BusinessUser, 'password_hash'>;
-  business: {
-    id: number;
-    name: string;
-    slug: string;
-    currency?: string;
-    tax_rate?: number;
-    language?: string;
-    logo_url?: string;
-    branch_count?: number;
-  } | null;
+  business: BusinessInfo | null;
   branch: Branch | null;
+  businesses?: BusinessInfo[];  // All businesses user can access (for workspace switching)
 }
 
 export class BusinessAuthService {
@@ -65,37 +68,42 @@ export class BusinessAuthService {
   async login(username: string, password: string): Promise<BusinessLoginResponse> {
     console.log('Business user login attempt for:', username);
     
-    // Get user from business_users table (case-insensitive username match)
-    const { data: user, error } = await supabaseAdmin
+    // Get users from business_users table (case-insensitive username match)
+    // Handle case where multiple users might have same username across different businesses
+    const { data: users, error } = await supabaseAdmin
       .from('business_users')
       .select('*')
       .ilike('username', username.trim())
-      .single();
+      .eq('status', 'active');
 
-    console.log('DB query result - error:', error, 'user found:', !!user);
+    console.log('DB query result - error:', error, 'users found:', users?.length || 0);
 
-    if (error || !user) {
+    if (error || !users || users.length === 0) {
       console.log('Business user not found or DB error');
       throw new Error('Invalid username or password');
     }
 
-    console.log('Business user found, checking password...');
+    console.log('Business user(s) found, checking password...');
 
-    // Verify password
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    console.log('Password valid:', isValidPassword);
+    // Find a user with matching password (handles duplicate usernames across businesses)
+    let user = null;
+    for (const u of users) {
+      const isValidPassword = await bcrypt.compare(password, u.password_hash);
+      if (isValidPassword) {
+        user = u;
+        break;
+      }
+    }
     
-    if (!isValidPassword) {
+    if (!user) {
+      console.log('Password did not match any user');
       throw new Error('Invalid username or password');
     }
 
-    // Check if user is active
-    if (user.status !== 'active') {
-      throw new Error('Account is disabled');
-    }
+    console.log('Password valid for user:', user.id);
 
     // Get business info including settings
-    let business = null;
+    let business: BusinessInfo | null = null;
     if (user.business_id) {
       const { data: bizData } = await supabaseAdmin
         .from('businesses')
@@ -114,6 +122,39 @@ export class BusinessAuthService {
         .eq('id', user.branch_id)
         .single();
       branch = branchData;
+    }
+
+    // For owners, get all businesses they have access to (for workspace switching)
+    let businesses: BusinessInfo[] = [];
+    if (user.role === 'owner') {
+      // Find owner record by username
+      const { data: ownerData } = await supabaseAdmin
+        .from('owners')
+        .select('id')
+        .eq('username', user.username)
+        .single();
+      
+      if (ownerData) {
+        // Get all business IDs linked to this owner
+        const { data: businessOwnerLinks } = await supabaseAdmin
+          .from('business_owners')
+          .select('business_id')
+          .eq('owner_id', ownerData.id);
+        
+        if (businessOwnerLinks && businessOwnerLinks.length > 0) {
+          const businessIds = businessOwnerLinks.map((bo: any) => bo.business_id);
+          
+          // Fetch all businesses
+          const { data: businessList } = await supabaseAdmin
+            .from('businesses')
+            .select('id, name, slug, currency, tax_rate, language, logo_url, branch_count')
+            .in('id', businessIds);
+          
+          if (businessList) {
+            businesses = businessList;
+          }
+        }
+      }
     }
 
     // Generate JWT token with branch info
@@ -139,6 +180,7 @@ export class BusinessAuthService {
       user: safeUser,
       business,
       branch,
+      businesses: businesses.length > 0 ? businesses : undefined,
     };
   }
 

@@ -36,7 +36,12 @@ export default function UsersRolesPage() {
     try {
       setIsLoading(true);
       const response = await getUsers();
-      setUsers(response.data);
+      // Sort users: owner first, then managers, then employees/pos
+      const sortedUsers = [...response.data].sort((a, b) => {
+        const roleOrder: Record<string, number> = { owner: 0, manager: 1, employee: 2, pos: 3 };
+        return (roleOrder[a.role] ?? 99) - (roleOrder[b.role] ?? 99);
+      });
+      setUsers(sortedUsers);
       setMaxUsers(response.max_users);
       setCurrentUserId(response.current_user_id);
     } catch (err: any) {
@@ -95,10 +100,10 @@ export default function UsersRolesPage() {
         await updateUser(editingUser.id, {
           username: username.trim(),
           role: editingUser.role === 'owner' ? undefined : role,
-          first_name: firstName.trim() || undefined,
-          last_name: lastName.trim() || undefined,
-          email: email.trim() || undefined,
-          phone: phone.trim() || undefined,
+          first_name: firstName.trim() || null,
+          last_name: lastName.trim() || null,
+          email: email.trim() || null,
+          phone: phone.trim() || null,
           status: editingUser.role === 'owner' ? undefined : status,
         });
         setSuccessMessage(t('User updated successfully', 'تم تحديث المستخدم بنجاح'));

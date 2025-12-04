@@ -196,6 +196,9 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
                             <span className="font-medium text-zinc-900 dark:text-white flex items-center gap-2">
                               <Store className="w-4 h-4" />
                               {branch.name}
+                              {branch.branch_code && (
+                                <span className="text-xs px-2 py-0.5 rounded font-mono bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800">{branch.branch_code}</span>
+                              )}
                             </span>
                             {branch.is_main && (
                               <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300">

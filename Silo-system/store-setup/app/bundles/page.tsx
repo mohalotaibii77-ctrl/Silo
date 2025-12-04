@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Boxes, Plus, Trash2, Edit2, Package, ChevronDown, ChevronUp } from 'lucide-react';
+import { Boxes, Plus, Trash2, Edit2, Package, ChevronDown, ChevronUp, Search } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
@@ -15,6 +15,7 @@ export default function BundlesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingBundle, setEditingBundle] = useState<Bundle | null>(null);
   const [expandedBundle, setExpandedBundle] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadBundles();
@@ -82,8 +83,8 @@ export default function BundlesPage() {
         animate={{ opacity: 1, y: 0 }}
         className="max-w-6xl mx-auto space-y-6"
       >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
+          <div className={isRTL ? 'text-right' : ''}>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
               {t('Bundles', 'الباقات')}
             </h1>
@@ -93,18 +94,39 @@ export default function BundlesPage() {
           </div>
           <button 
             onClick={() => setIsModalOpen(true)}
-            className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
+            className={`inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors ${isRTL ? 'flex-row-reverse' : ''}`}
           >
             <Plus className="w-4 h-4" />
             {t('Create Bundle', 'إنشاء باقة')}
           </button>
         </div>
 
+        {/* Search */}
+        <div className={`flex ${isRTL ? 'justify-start' : 'justify-end'}`}>
+          <div className="relative">
+            <Search className={`w-4 h-4 absolute ${isRTL ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 text-zinc-400`} />
+            <input 
+              type="text" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('Search bundles...', 'البحث عن باقات...')}
+              className={`${isRTL ? 'pr-9 pl-4' : 'pl-9 pr-4'} py-2 w-64 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all placeholder:text-zinc-500 text-zinc-900 dark:text-white`}
+            />
+          </div>
+        </div>
+
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-8 h-8 border-2 border-zinc-300 border-t-zinc-900 dark:border-zinc-700 dark:border-t-white rounded-full animate-spin" />
           </div>
-        ) : bundles.length === 0 ? (
+        ) : bundles.filter(bundle => {
+          if (!searchQuery) return true;
+          const query = searchQuery.toLowerCase();
+          return (
+            bundle.name.toLowerCase().includes(query) ||
+            bundle.name_ar?.toLowerCase().includes(query)
+          );
+        }).length === 0 ? (
           <div className="p-12 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 border-dashed text-center">
             <Boxes className="w-12 h-12 mx-auto text-zinc-300 dark:text-zinc-600 mb-4" />
             <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">
@@ -123,7 +145,14 @@ export default function BundlesPage() {
           </div>
         ) : (
           <div className="grid gap-4">
-            {bundles.map((bundle) => {
+            {bundles.filter(bundle => {
+              if (!searchQuery) return true;
+              const query = searchQuery.toLowerCase();
+              return (
+                bundle.name.toLowerCase().includes(query) ||
+                bundle.name_ar?.toLowerCase().includes(query)
+              );
+            }).map((bundle) => {
               const isExpanded = expandedBundle === bundle.id;
               const originalPrice = calculateOriginalPrice(bundle);
               const savings = originalPrice - bundle.price;

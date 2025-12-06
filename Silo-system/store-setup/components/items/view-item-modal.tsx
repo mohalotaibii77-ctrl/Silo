@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Package, Layers, Calculator, Info } from 'lucide-react';
-import { Item, ItemUnit, CATEGORY_TRANSLATIONS, ItemCategory } from '@/types/items';
+import { Item, ItemUnit, StorageUnit, CATEGORY_TRANSLATIONS, ItemCategory } from '@/types/items';
 import { getCompositeItem } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
 
@@ -25,6 +25,14 @@ const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
+  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
+  grams: { en: 'Grams', ar: 'جرام' },
+  L: { en: 'Liter', ar: 'لتر' },
+  mL: { en: 'Milliliters', ar: 'مل' },
+  piece: { en: 'Piece', ar: 'قطعة' },
+};
+
 interface CompositeItemDetails extends Item {
   components?: {
     id: number;
@@ -33,7 +41,7 @@ interface CompositeItemDetails extends Item {
     component_item?: {
       id: number;
       name: string;
-      name_ar?: string;
+      name_ar?: string | null;
       unit: ItemUnit;
       cost_per_unit: number;
       effective_price?: number;
@@ -56,6 +64,18 @@ export function ViewItemModal({
 
   // Use pre-loaded details if available, otherwise use fetched details
   const compositeDetails = preloadedDetails || fetchedDetails;
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     // Only fetch if no pre-loaded details and item is composite
@@ -81,6 +101,10 @@ export function ViewItemModal({
 
   const formatUnitLabel = (unit: ItemUnit) => {
     return isRTL ? UNIT_TRANSLATIONS[unit]?.ar : UNIT_TRANSLATIONS[unit]?.en;
+  };
+
+  const formatStorageUnitLabel = (unit: StorageUnit) => {
+    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit]?.ar : STORAGE_UNIT_TRANSLATIONS[unit]?.en;
   };
 
   const formatCategoryLabel = (category: ItemCategory) => {
@@ -155,7 +179,7 @@ export function ViewItemModal({
               </div>
 
               {/* Content */}
-              <div className="p-6 space-y-5 overflow-y-auto flex-1">
+              <div className="p-6 space-y-5 overflow-y-auto flex-1 overscroll-contain">
                 {/* Basic Info */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
@@ -163,10 +187,21 @@ export function ViewItemModal({
                     <p className="font-medium text-zinc-900 dark:text-white">{formatCategoryLabel(item.category)}</p>
                   </div>
                   <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
-                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('Unit', 'الوحدة')}</p>
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('Serving Unit', 'وحدة التقديم')}</p>
                     <p className="font-medium text-zinc-900 dark:text-white">{formatUnitLabel(item.unit)}</p>
                   </div>
                 </div>
+
+                {/* Storage Unit */}
+                {item.storage_unit && (
+                  <div className="p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('Storage Unit', 'وحدة التخزين')}</p>
+                    <p className="font-medium text-zinc-900 dark:text-white">{formatStorageUnitLabel(item.storage_unit as StorageUnit)}</p>
+                    <p className="text-[10px] text-zinc-400 mt-0.5">
+                      {t('Stored in', 'يتم تخزينه بـ')} {formatStorageUnitLabel(item.storage_unit as StorageUnit)}, {t('used in products as', 'يُستخدم في المنتجات بـ')} {formatUnitLabel(item.unit)}
+                    </p>
+                  </div>
+                )}
 
                 {/* Price Info */}
                 <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
@@ -179,7 +214,7 @@ export function ViewItemModal({
                   <div className="space-y-2">
                     <div className="flex justify-between items-center">
                       <span className="text-sm text-zinc-600 dark:text-zinc-400">
-                        {t('Cost per Unit', 'التكلفة لكل وحدة')}
+                        {t('Cost per Serving Unit', 'تكلفة وحدة التقديم')}
                       </span>
                       <span className="font-semibold text-zinc-900 dark:text-white">
                         {formatPrice((item as any).effective_price || item.cost_per_unit)} / {formatUnitLabel(item.unit)}
@@ -201,13 +236,13 @@ export function ViewItemModal({
                 {/* Composite Item Details */}
                 {item.is_composite && (
                   <>
-                    {/* Batch Yield */}
+                    {/* Batch Yield & Serving Unit */}
                     {(item.batch_quantity && item.batch_unit) && (
                       <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50">
                         <div className="flex items-center gap-2 mb-3">
                           <Info className="w-4 h-4 text-zinc-500" />
                           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                            {t('Batch Yield', 'كمية الدفعة')}
+                            {t('Batch Yield (Storage)', 'كمية الدفعة (التخزين)')}
                           </span>
                         </div>
                         <p className="text-lg font-semibold text-zinc-900 dark:text-white">
@@ -216,6 +251,13 @@ export function ViewItemModal({
                         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                           {t('This recipe produces this amount per batch', 'هذه الوصفة تنتج هذه الكمية لكل دفعة')}
                         </p>
+                        <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700">
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">{t('Serving Unit', 'وحدة التقديم')}</p>
+                          <p className="font-medium text-zinc-900 dark:text-white">{formatUnitLabel(item.unit)}</p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5">
+                            {t('Cost is calculated per serving unit', 'يتم حساب التكلفة لكل وحدة تقديم')}
+                          </p>
+                        </div>
                       </div>
                     )}
 

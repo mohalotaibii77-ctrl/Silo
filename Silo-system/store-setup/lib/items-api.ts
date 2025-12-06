@@ -14,11 +14,13 @@ import {
   UpdateItemData, 
   ItemCategory, 
   CompositeItem,
-  CreateCompositeItemData 
+  CreateCompositeItemData,
+  StorageUnit,
+  ItemUnit
 } from '@/types/items';
 
 // Re-export types for convenience
-export type { Item, CreateItemData, UpdateItemData, ItemCategory, CompositeItem, CreateCompositeItemData };
+export type { Item, CreateItemData, UpdateItemData, ItemCategory, CompositeItem, CreateCompositeItemData, StorageUnit, ItemUnit };
 
 // Get all items for the current business
 export async function getItems(filters?: {

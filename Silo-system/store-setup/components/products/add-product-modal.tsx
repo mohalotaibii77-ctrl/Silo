@@ -70,6 +70,18 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
   const [isLoadingIngredients, setIsLoadingIngredients] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   // Fetch items and categories on mount
   useEffect(() => {
     if (isOpen) {
@@ -650,7 +662,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
           </div>
 
           {/* Content */}
-          <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)] space-y-6">
+          <div className="p-6 overflow-y-auto max-h-[calc(90vh-180px)] space-y-6 overscroll-contain">
             {error && (
               <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
                 {error}

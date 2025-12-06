@@ -239,6 +239,77 @@ router.post('/change-requests', authenticateBusinessToken, async (req: Authentic
   }
 });
 
+// ============================================
+// USER SETTINGS ENDPOINTS
+// ============================================
+
+// Get current user's settings
+router.get('/user-settings', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.businessUser?.id;
+    
+    const { data, error } = await supabase
+      .from('business_users')
+      .select('preferred_language, preferred_theme, settings')
+      .eq('id', userId)
+      .single();
+
+    if (error) throw error;
+
+    // Return with defaults if null
+    res.json({
+      success: true,
+      data: {
+        preferred_language: data.preferred_language || 'en',
+        preferred_theme: data.preferred_theme || 'system',
+        settings: data.settings || {},
+      }
+    });
+  } catch (error: any) {
+    console.error('Error fetching user settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update current user's settings
+router.put('/user-settings', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.businessUser?.id;
+    const { preferred_language, preferred_theme, settings } = req.body;
+
+    const updateData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Only update fields that are provided
+    if (preferred_language !== undefined) updateData.preferred_language = preferred_language;
+    if (preferred_theme !== undefined) updateData.preferred_theme = preferred_theme;
+    if (settings !== undefined) updateData.settings = settings;
+
+    const { data, error } = await supabase
+      .from('business_users')
+      .update(updateData)
+      .eq('id', userId)
+      .select('preferred_language, preferred_theme, settings')
+      .single();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: {
+        preferred_language: data.preferred_language || 'en',
+        preferred_theme: data.preferred_theme || 'system',
+        settings: data.settings || {},
+      },
+      message: 'User settings updated successfully'
+    });
+  } catch (error: any) {
+    console.error('Error updating user settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Upload file and create change request (using base64 for now)
 router.post('/upload-request', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
   try {

@@ -7,10 +7,15 @@ import {
   Item, 
   ItemCategory, 
   ItemUnit, 
+  StorageUnit,
   ITEM_CATEGORIES, 
   ITEM_UNITS, 
+  STORAGE_UNITS,
   CATEGORY_TRANSLATIONS,
-  CompositeItem
+  CompositeItem,
+  getDefaultStorageUnit,
+  getCompatibleStorageUnits,
+  areUnitsCompatible
 } from '@/types/items';
 import { updateItem, getItems, getCompositeItem, updateCompositeItemComponents, setItemPrice } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
@@ -50,6 +55,14 @@ const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
+  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
+  grams: { en: 'Grams', ar: 'جرام' },
+  L: { en: 'Liter', ar: 'لتر' },
+  mL: { en: 'Milliliters', ar: 'مل' },
+  piece: { en: 'Piece', ar: 'قطعة' },
+};
+
 export function EditItemModal({ 
   isOpen, 
   item,
@@ -69,10 +82,11 @@ export function EditItemModal({
     name: '',
     name_ar: '',
     category: 'other' as ItemCategory,
-    unit: 'grams' as ItemUnit,
+    unit: 'grams' as ItemUnit, // Serving unit
+    storage_unit: 'Kg' as StorageUnit,
     cost_per_unit: '' as string | number,
     batch_quantity: '' as string | number,
-    batch_unit: 'grams' as ItemUnit,
+    batch_unit: 'grams' as StorageUnit, // Batch/storage unit
   });
   
   const [components, setComponents] = useState<ComponentEntry[]>([]);
@@ -80,6 +94,18 @@ export function EditItemModal({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
 
   const generateId = () => Math.random().toString(36).substring(7);
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
 
   // Fetch available items for composite item components
   const fetchAvailableItems = useCallback(async () => {
@@ -99,14 +125,18 @@ export function EditItemModal({
   // Load item data when modal opens
   useEffect(() => {
     if (isOpen && item) {
+      const storageUnit = (item.storage_unit as StorageUnit) || getDefaultStorageUnit(item.unit);
+      // For composite items, batch_unit is the storage unit
+      const batchUnit = (item.batch_unit as StorageUnit) || 'grams';
       setFormData({
         name: item.name,
         name_ar: item.name_ar || '',
         category: item.category,
         unit: item.unit,
+        storage_unit: storageUnit,
         cost_per_unit: item.cost_per_unit || '',
         batch_quantity: item.batch_quantity || '',
-        batch_unit: (item.batch_unit as ItemUnit) || 'grams',
+        batch_unit: batchUnit,
       });
       setError('');
       setActiveDropdown(null);
@@ -148,16 +178,53 @@ export function EditItemModal({
     }
   };
 
+  // Get compatible serving units based on storage/batch unit
+  const getCompatibleServingUnitsForStorage = (storageUnit: StorageUnit): ItemUnit[] => {
+    switch (storageUnit) {
+      case 'Kg':
+      case 'grams':
+        return ['grams'];
+      case 'L':
+      case 'mL':
+        return ['mL'];
+      case 'piece':
+        return ['piece'];
+      default:
+        return ['grams'];
+    }
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => {
       const updated = { ...prev, [name]: value };
-      if (name === 'batch_unit') {
-        updated.unit = value as ItemUnit;
+      // When serving unit changes for raw items, auto-update storage unit to compatible default if needed
+      if (name === 'unit' && !item?.is_composite) {
+        const newServingUnit = value as ItemUnit;
+        const currentStorageUnit = prev.storage_unit;
+        // Check if current storage unit is still compatible
+        if (!areUnitsCompatible(currentStorageUnit, newServingUnit)) {
+          updated.storage_unit = getDefaultStorageUnit(newServingUnit);
+        }
+      }
+      // When batch_unit (storage) changes for composite items, update serving unit if incompatible
+      if (name === 'batch_unit' && item?.is_composite) {
+        const newBatchUnit = value as StorageUnit;
+        const compatible = getCompatibleServingUnitsForStorage(newBatchUnit);
+        if (!compatible.includes(prev.unit)) {
+          updated.unit = compatible[0];
+        }
       }
       return updated;
     });
   };
+
+  const formatStorageUnitLabel = (unit: StorageUnit) => {
+    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit].ar : STORAGE_UNIT_TRANSLATIONS[unit].en;
+  };
+
+  // Get compatible storage units for current serving unit
+  const compatibleStorageUnits = getCompatibleStorageUnits(formData.unit);
 
   // Component management for composite items
   const addComponent = () => {
@@ -200,13 +267,29 @@ export function EditItemModal({
     }, 0);
   };
 
+  // Conversion factors to base unit (grams for weight, mL for volume, 1 for piece)
+  const CONVERSION_TO_BASE: Record<StorageUnit, number> = {
+    'Kg': 1000,    // 1 Kg = 1000 grams
+    'grams': 1,
+    'L': 1000,     // 1 L = 1000 mL
+    'mL': 1,
+    'piece': 1,
+  };
+
   const calculateUnitPrice = () => {
     const batchCost = calculateBatchCost();
     const batchQty = typeof formData.batch_quantity === 'string' 
       ? parseFloat(formData.batch_quantity) 
       : formData.batch_quantity;
     if (!batchQty || batchQty <= 0) return 0;
-    return batchCost / batchQty;
+    
+    // Convert batch quantity to serving units
+    // e.g., 10 Kg -> 10 * 1000 = 10,000 grams
+    const conversionFactor = CONVERSION_TO_BASE[formData.batch_unit] || 1;
+    const batchQtyInServingUnits = batchQty * conversionFactor;
+    
+    // Cost per serving unit = Batch Cost ÷ Batch Quantity (in serving units)
+    return batchCost / batchQtyInServingUnits;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -265,11 +348,13 @@ export function EditItemModal({
           name_ar: formData.name_ar || undefined,
           category: formData.category,
           unit: formData.unit,
+          storage_unit: formData.storage_unit,
           cost_per_unit: costValue || undefined,
         });
 
-        // If cost changed, also update the business price
-        if (costValue && costValue > 0) {
+        // If cost changed and it's not a default item, also update the business price
+        // Note: For default items, the edit endpoint will clone the item automatically
+        if (costValue && costValue > 0 && item.business_id !== null) {
           await setItemPrice(item.id, costValue);
         }
       }
@@ -432,7 +517,7 @@ export function EditItemModal({
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto flex-1">
+              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto flex-1 overscroll-contain">
                 {error && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
                     {error}
@@ -489,27 +574,55 @@ export function EditItemModal({
                 {/* Raw Item Fields */}
                 {!item.is_composite && (
                   <>
-                    {/* Unit */}
-                    <div>
-                      <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                        {t('Unit *', 'الوحدة *')}
-                      </label>
-                      <select
-                        name="unit"
-                        value={formData.unit}
-                        onChange={handleChange}
-                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                      >
-                        {ITEM_UNITS.map(unit => (
-                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                        ))}
-                      </select>
+                    {/* Storage Unit and Serving Unit Row */}
+                    <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                      <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                        {t('Unit Configuration', 'إعدادات الوحدات')}
+                      </p>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
+                            {t('Storage Unit *', 'وحدة التخزين *')}
+                          </label>
+                          <select
+                            name="storage_unit"
+                            value={formData.storage_unit}
+                            onChange={handleChange}
+                            className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
+                          >
+                            {compatibleStorageUnits.map(unit => (
+                              <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-zinc-500 mt-1">
+                            {t('How this item is stored', 'كيف يتم التخزين')}
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
+                            {t('Serving Unit *', 'وحدة التقديم *')}
+                          </label>
+                          <select
+                            name="unit"
+                            value={formData.unit}
+                            onChange={handleChange}
+                            className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
+                          >
+                            {ITEM_UNITS.map(unit => (
+                              <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-zinc-500 mt-1">
+                            {t('How this item is used', 'كيف يتم الاستخدام')}
+                          </p>
+                        </div>
+                      </div>
                     </div>
 
-                    {/* Cost per Unit */}
+                    {/* Cost per Serving Unit */}
                     <div>
                       <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                        {t('Cost per Unit', 'التكلفة لكل وحدة')} ({currencySymbol})
+                        {t('Cost per Serving Unit', 'التكلفة لكل وحدة تقديم')} ({currencySymbol} / {formatUnitLabel(formData.unit)})
                       </label>
                       <input
                         type="number"
@@ -528,14 +641,17 @@ export function EditItemModal({
                 {/* Composite Item Fields */}
                 {item.is_composite && (
                   <>
-                    {/* Batch Yield Section */}
+                    {/* Batch Yield Section (Storage) */}
                     <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
                       <div className="flex items-center gap-2 mb-3">
                         <Calculator className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
                         <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                          {t('Batch Yield *', 'كمية الدفعة *')}
+                          {t('Batch Yield (Storage) *', 'كمية الدفعة (التخزين) *')}
                         </span>
                       </div>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                        {t('How much does this recipe produce?', 'كم تنتج هذه الوصفة؟')}
+                      </p>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
@@ -554,7 +670,7 @@ export function EditItemModal({
                         </div>
                         <div>
                           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                            {t('Unit', 'الوحدة')}
+                            {t('Storage Unit', 'وحدة التخزين')}
                           </label>
                           <select
                             name="batch_unit"
@@ -562,12 +678,40 @@ export function EditItemModal({
                             onChange={handleChange}
                             className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
                           >
-                            {ITEM_UNITS.map(unit => (
-                              <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                            {STORAGE_UNITS.map(unit => (
+                              <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
                             ))}
                           </select>
                         </div>
                       </div>
+                    </div>
+
+                    {/* Serving Unit Section */}
+                    <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                      <div className="flex items-center gap-2 mb-3">
+                        <Package className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                        <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                          {t('Serving Unit *', 'وحدة التقديم *')}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                        {t('How is this item measured when used in products? Cost is calculated per this unit.', 
+                           'كيف يتم قياس هذا العنصر عند استخدامه في المنتجات؟ يتم حساب التكلفة لكل وحدة.')}
+                      </p>
+                      <select
+                        name="unit"
+                        value={formData.unit}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                      >
+                        {getCompatibleServingUnitsForStorage(formData.batch_unit).map(unit => (
+                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-500 mt-2">
+                        {t(`Cost per ${formData.unit} = Batch Cost ÷ ${formData.batch_quantity || '?'} ${formData.batch_unit}`,
+                           `التكلفة لكل ${formData.unit} = تكلفة الدفعة ÷ ${formData.batch_quantity || '?'} ${formData.batch_unit}`)}
+                      </p>
                     </div>
 
                     {/* Components Section */}
@@ -641,10 +785,10 @@ export function EditItemModal({
                             {formData.batch_quantity && parseFloat(String(formData.batch_quantity)) > 0 && (
                               <div className="flex justify-between items-center bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded-lg">
                                 <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                                  {t('Unit Price:', 'سعر الوحدة:')}
+                                  {t('Cost per Serving Unit:', 'تكلفة وحدة التقديم:')}
                                 </span>
                                 <span className="font-semibold text-zinc-900 dark:text-white">
-                                  {currencySymbol} {calculateUnitPrice().toFixed(6)} / {formatUnitLabel(formData.batch_unit)}
+                                  {currencySymbol} {calculateUnitPrice().toFixed(6)} / {formatUnitLabel(formData.unit)}
                                 </span>
                               </div>
                             )}

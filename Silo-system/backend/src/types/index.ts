@@ -40,7 +40,14 @@ export type ItemCategory =
   | 'dairy' | 'grain' | 'bread' | 'sauce' | 'condiment' 
   | 'spice' | 'oil' | 'beverage' | 'sweetener' | 'other';
 
+// Serving units (how items are used in products/recipes)
 export type ItemUnit = 'grams' | 'mL' | 'piece';
+
+// Storage units (how items are stored in inventory)
+export type StorageUnit = 'Kg' | 'grams' | 'L' | 'mL' | 'piece';
+
+// Unit categories for validation
+export type UnitCategory = 'weight' | 'volume' | 'count';
 
 // Items (Raw Materials / Ingredients)
 export interface Item {
@@ -50,10 +57,18 @@ export interface Item {
   name_ar?: string | null;
   sku?: string | null;
   category: ItemCategory;
-  unit: ItemUnit;
-  cost_per_unit: number;
+  unit: ItemUnit;              // Serving unit (for products/recipes)
+  storage_unit: StorageUnit;   // Storage unit (for inventory)
+  cost_per_unit: number;       // Weighted Average Cost (WAC)
   is_system_item: boolean;
   status: 'active' | 'inactive';
+  
+  // Inventory Value Tracking (for WAC calculations)
+  total_stock_quantity?: number;   // Total stock across all branches
+  total_stock_value?: number;      // Total inventory value
+  last_purchase_cost?: number;     // Last purchase price (for reference)
+  last_purchase_date?: string;     // Date of last purchase
+  
   created_at: string;
   updated_at: string;
 }
@@ -257,6 +272,12 @@ export interface OrderItem {
   discount_percentage: number;
   subtotal: number;
   total: number;
+  
+  // Cost Snapshot at Time of Sale (for accurate profit calculations)
+  unit_cost_at_sale: number;     // Product cost at time of sale
+  total_cost: number;            // Total cost (unit_cost_at_sale × quantity)
+  profit: number;                // Profit (total - total_cost)
+  profit_margin: number;         // Profit margin percentage
   
   // Modifiers
   has_modifiers: boolean;
@@ -526,6 +547,7 @@ export interface PaginatedResponse<T> extends ApiResponse<T[]> {
 export interface AuthPayload {
   userId: string;
   email: string;
+  username?: string;
   role: UserRole;
   businessId: string;
 }

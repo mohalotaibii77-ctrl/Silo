@@ -17,7 +17,11 @@ import {
   ChevronRight,
   ChevronDown,
   Layers,
-  Command
+  Command,
+  Truck,
+  FileText,
+  ArrowLeftRight,
+  ClipboardList
 } from 'lucide-react';
 import { useLanguage } from '@/lib/language-context';
 
@@ -61,7 +65,18 @@ const navItems: NavItem[] = [
   { name: 'Products', nameAr: 'المنتجات', href: '/products', icon: ShoppingBag },
   { name: 'Bundles', nameAr: 'الباقات', href: '/bundles', icon: Boxes },
   { name: 'Categories', nameAr: 'الفئات', href: '/categories', icon: FolderTree },
-  { name: 'Inventory', nameAr: 'المخزون', href: '/inventory', icon: Warehouse },
+  { 
+    name: 'Inventory', 
+    nameAr: 'المخزون', 
+    href: '/inventory', 
+    icon: Warehouse,
+    subItems: [
+      { name: 'Vendors', nameAr: 'الموردين', href: '/inventory?tab=vendors', icon: Truck },
+      { name: 'Purchase Orders', nameAr: 'أوامر الشراء', href: '/inventory?tab=purchase-orders', icon: FileText },
+      { name: 'Transfers', nameAr: 'التحويلات', href: '/inventory?tab=transfers', icon: ArrowLeftRight },
+      { name: 'Inventory Counts', nameAr: 'جرد المخزون', href: '/inventory?tab=counts', icon: ClipboardList },
+    ]
+  },
   { name: 'Discounts', nameAr: 'الخصومات', href: '/discounts', icon: Percent },
   { name: 'Users-Roles', nameAr: 'المستخدمين', href: '/users-roles', icon: UserCog },
   { name: 'Settings', nameAr: 'الإعدادات', href: '/settings', icon: Settings },
@@ -96,11 +111,12 @@ export function Sidebar({ business }: SidebarProps) {
 
   return (
     <aside 
+      dir="ltr"
       className={`${
         collapsed ? 'w-20' : 'w-64'
       } ${isRTL ? 'border-l' : 'border-r'} border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hidden md:flex flex-col sticky top-0 h-screen z-40 transition-all duration-300`}
     >
-      {/* Wasal Logo */}
+      {/* Logo */}
       <div className={`p-6 flex items-center gap-3 border-b border-zinc-200 dark:border-zinc-800 ${isRTL ? 'flex-row-reverse' : ''}`}>
         <div className="h-10 w-10 rounded-xl bg-zinc-900 dark:bg-white flex items-center justify-center shadow-zinc-500/20 shadow-lg flex-shrink-0">
           <Command className="w-5 h-5 text-white dark:text-zinc-900" />
@@ -111,7 +127,7 @@ export function Sidebar({ business }: SidebarProps) {
             animate={{ opacity: 1, x: 0 }}
             className="font-bold text-lg tracking-tight text-zinc-900 dark:text-white whitespace-nowrap"
           >
-            Wasal
+            Sylo System
           </motion.span>
         )}
       </div>
@@ -125,24 +141,21 @@ export function Sidebar({ business }: SidebarProps) {
         {navItems.map((item) => {
           const hasSubItems = item.subItems && item.subItems.length > 0;
           const isSubActive = hasSubItems && item.subItems?.some(sub => isLinkActive(sub.href));
-          // Expand on hover OR if a sub-item is active
           const isExpanded = hoveredItem === item.name || isSubActive;
-          // Parent is active only if path matches and no sub-item is active
           const isActive = !isSubActive && (pathname === item.href || (pathname === '/' && item.href === '/items'));
           const Icon = item.icon;
           const displayName = isRTL ? item.nameAr : item.name;
           
           return (
             <div key={item.name}>
-              {/* Main nav item */}
               {hasSubItems ? (
-                // Item with sub-items - expands on hover
                 <div 
                   className="flex flex-col"
                   onMouseEnter={() => !collapsed && setHoveredItem(item.name)}
                   onMouseLeave={() => !collapsed && setHoveredItem(null)}
                 >
-                  <div className={`flex items-center ${isRTL ? 'flex-row-reverse' : ''}`}>
+                  {/* Parent item row */}
+                  <div className="flex items-center">
                     <div
                       className={`flex-1 flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group relative cursor-pointer ${
                         isActive || isSubActive
@@ -161,7 +174,7 @@ export function Sidebar({ business }: SidebarProps) {
                           <motion.span
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
-                            className="whitespace-nowrap flex-1"
+                            className={`whitespace-nowrap flex-1 ${isRTL ? 'text-right' : 'text-left'}`}
                           >
                             {displayName}
                           </motion.span>
@@ -215,18 +228,18 @@ export function Sidebar({ business }: SidebarProps) {
                               <Link
                                 key={subItem.name}
                                 href={subItem.href}
-                                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative ${
+                                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative ${isRTL ? 'flex-row-reverse' : ''} ${
                                   isSubItemActive 
                                     ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white font-medium' 
                                     : 'text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-900 dark:hover:text-white'
-                                } ${isRTL ? 'flex-row-reverse' : ''}`}
+                                }`}
                               >
                                 <SubIcon className={`w-4 h-4 flex-shrink-0 ${
                                   isSubItemActive 
                                     ? 'text-zinc-900 dark:text-white' 
                                     : 'group-hover:text-zinc-900 dark:group-hover:text-white'
                                 }`} />
-                                <span className="whitespace-nowrap text-sm">
+                                <span className={`whitespace-nowrap text-sm ${isRTL ? 'text-right' : 'text-left'}`}>
                                   {subDisplayName}
                                 </span>
                               </Link>
@@ -241,11 +254,11 @@ export function Sidebar({ business }: SidebarProps) {
                 // Regular item without sub-items
                 <Link
                   href={item.href}
-                  className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group relative ${
+                  className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group relative ${isRTL ? 'flex-row-reverse' : ''} ${
                     isActive 
                       ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white font-medium' 
                       : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-                  } ${collapsed ? 'justify-center' : ''} ${isRTL ? 'flex-row-reverse' : ''}`}
+                  } ${collapsed ? 'justify-center' : ''}`}
                 >
                   <Icon className={`w-5 h-5 flex-shrink-0 ${
                     isActive 
@@ -257,7 +270,7 @@ export function Sidebar({ business }: SidebarProps) {
                     <motion.span
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="whitespace-nowrap"
+                      className={`whitespace-nowrap ${isRTL ? 'text-right' : 'text-left'}`}
                     >
                       {displayName}
                     </motion.span>
@@ -289,9 +302,7 @@ export function Sidebar({ business }: SidebarProps) {
       <div className="p-4 border-t border-zinc-200 dark:border-zinc-800">
         <button
           onClick={() => setCollapsed(!collapsed)}
-          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all ${
-            collapsed ? 'justify-center' : ''
-          } ${isRTL ? 'flex-row-reverse' : ''}`}
+          className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-all ${collapsed ? 'justify-center' : ''} ${isRTL ? 'flex-row-reverse' : ''}`}
         >
           {collapsed ? (
             isRTL ? <ChevronLeft className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />

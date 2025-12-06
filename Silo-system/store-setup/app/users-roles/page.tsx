@@ -100,10 +100,10 @@ export default function UsersRolesPage() {
         await updateUser(editingUser.id, {
           username: username.trim(),
           role: editingUser.role === 'owner' ? undefined : role,
-          first_name: firstName.trim() || null,
-          last_name: lastName.trim() || null,
-          email: email.trim() || null,
-          phone: phone.trim() || null,
+          first_name: firstName.trim() || undefined,
+          last_name: lastName.trim() || undefined,
+          email: email.trim() || undefined,
+          phone: phone.trim() || undefined,
           status: editingUser.role === 'owner' ? undefined : status,
         });
         setSuccessMessage(t('User updated successfully', 'تم تحديث المستخدم بنجاح'));
@@ -349,7 +349,7 @@ export default function UsersRolesPage() {
               dir={isRTL ? 'rtl' : 'ltr'}
             >
               {/* Header */}
-              <div className={`flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800 ${isRTL ? 'flex-row-reverse' : ''}`}>
+              <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
                 <h2 className="text-xl font-bold text-zinc-900 dark:text-white">
                   {editingUser ? t('Edit User', 'تعديل المستخدم') : t('Add User', 'إضافة مستخدم')}
                 </h2>

@@ -7,7 +7,7 @@ import { Router } from 'express';
 import { posService } from '../services';
 import { asyncHandler } from '../middleware/error.middleware';
 import { authenticate, requireBusinessAccess } from '../middleware/auth.middleware';
-import { OrderSource, CreateOrderInput, CreateOrderItemInput } from '../types';
+import { OrderSource, OrderStatus, CreateOrderInput, CreateOrderItemInput } from '../types';
 
 const router = Router();
 
@@ -219,7 +219,7 @@ router.get('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
 
   const orders = await posService.getOrders(parseInt(req.user!.businessId), {
     branch_id: branch_id ? parseInt(branch_id as string) : undefined,
-    status: status as string | undefined,
+    status: status as OrderStatus | OrderStatus[] | undefined,
     order_source: order_source as OrderSource | undefined,
     order_type: order_type as string | undefined,
     date: date as string | undefined,

@@ -24,7 +24,7 @@ const api = axios.create({
   },
 });
 
-// Request interceptor for auth tokens and business context
+// Request interceptor for auth tokens and business/branch context
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('setup_token');
@@ -42,6 +42,17 @@ api.interceptors.request.use((config) => {
         }
       } catch {}
     }
+    
+    // Add current branch ID from branch selection
+    const storedBranch = localStorage.getItem('setup_branch');
+    if (storedBranch) {
+      try {
+        const branch = JSON.parse(storedBranch);
+        if (branch.id) {
+          config.headers['X-Branch-Id'] = branch.id.toString();
+        }
+      } catch {}
+    }
   }
   return config;
 });
@@ -50,9 +61,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Log errors for debugging but don't auto-logout
-    // Let individual pages handle 401 errors appropriately
-    console.error('API Error:', error.response?.status, error.response?.data);
+    // Don't log 404 errors - they're often expected (e.g., product without ingredients)
+    // Let individual pages handle errors appropriately
+    if (error.response?.status !== 404) {
+      console.error('API Error:', error.response?.status, error.response?.data);
+    }
     return Promise.reject(error);
   }
 );

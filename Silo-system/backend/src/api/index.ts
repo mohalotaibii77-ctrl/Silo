@@ -17,6 +17,7 @@ import bundlesRoutes from './bundles.routes';
 import businessUsersRoutes from './business-users.routes';
 import ownerRoutes from './owner.routes';
 import analyticsRoutes from './analytics.routes';
+import inventoryStockRoutes from './inventory-stock.routes';
 
 const router = Router();
 
@@ -43,6 +44,7 @@ router.use('/bundles', bundlesRoutes);  // Product bundles (2+ products sold as 
 router.use('/business-users', businessUsersRoutes);  // Business users management (for store-setup)
 router.use('/owners', ownerRoutes);  // Platform-level owner management (SuperAdmin)
 router.use('/analytics', analyticsRoutes);  // Dashboard analytics for business owners
+router.use('/inventory-stock', inventoryStockRoutes);  // Vendors, Purchase Orders, Transfers, Counts
 
 // TODO: Add more routes as services are implemented
 // router.use('/hr', hrRoutes);

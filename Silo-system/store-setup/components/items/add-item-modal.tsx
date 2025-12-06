@@ -1,9 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Package, Loader2 } from 'lucide-react';
-import { CreateItemData, ITEM_CATEGORIES, ITEM_UNITS, ItemCategory, ItemUnit, CATEGORY_TRANSLATIONS } from '@/types/items';
+import { 
+  CreateItemData, 
+  ITEM_CATEGORIES, 
+  ITEM_UNITS, 
+  STORAGE_UNITS,
+  ItemCategory, 
+  ItemUnit, 
+  StorageUnit,
+  CATEGORY_TRANSLATIONS,
+  getDefaultStorageUnit,
+  getCompatibleStorageUnits,
+  areUnitsCompatible
+} from '@/types/items';
 import { createItem } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
 
@@ -25,26 +37,71 @@ const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
+  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
+  grams: { en: 'Grams', ar: 'جرام' },
+  L: { en: 'Liter', ar: 'لتر' },
+  mL: { en: 'Milliliters', ar: 'مل' },
+  piece: { en: 'Piece', ar: 'قطعة' },
+};
+
 export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: AddItemModalProps) {
   const { isRTL, t } = useLanguage();
   const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   const [formData, setFormData] = useState<CreateItemData>({
     name: '',
     name_ar: '',
     category: 'vegetable',
     unit: 'grams',
+    storage_unit: 'Kg',
     cost_per_unit: 0,
   });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'number' ? parseFloat(value) || 0 : value,
-    }));
+    
+    setFormData(prev => {
+      const updated = {
+        ...prev,
+        [name]: type === 'number' ? parseFloat(value) || 0 : value,
+      };
+      
+      // When serving unit changes, auto-update storage unit to compatible default
+      if (name === 'unit') {
+        const newServingUnit = value as ItemUnit;
+        const currentStorageUnit = prev.storage_unit as StorageUnit;
+        
+        // Check if current storage unit is still compatible
+        if (!areUnitsCompatible(currentStorageUnit, newServingUnit)) {
+          updated.storage_unit = getDefaultStorageUnit(newServingUnit);
+        }
+      }
+      
+      return updated;
+    });
   };
+
+  const formatStorageUnitLabel = (unit: StorageUnit) => {
+    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit].ar : STORAGE_UNIT_TRANSLATIONS[unit].en;
+  };
+
+  // Get compatible storage units for current serving unit
+  const compatibleStorageUnits = getCompatibleStorageUnits(formData.unit || 'grams');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,6 +122,7 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
         name_ar: '',
         category: 'vegetable',
         unit: 'grams',
+        storage_unit: 'Kg',
         cost_per_unit: 0,
       });
     } catch (err: any) {
@@ -128,7 +186,7 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-180px)]">
+              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-180px)] overscroll-contain">
                 {error && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
                     {error}
@@ -167,44 +225,72 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
                   />
                 </div>
 
-                {/* Category and Unit Row */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                      {t('Category *', 'الفئة *')}
-                    </label>
-                    <select
-                      name="category"
-                      value={formData.category}
-                      onChange={handleChange}
-                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                    >
-                      {ITEM_CATEGORIES.map(cat => (
-                        <option key={cat} value={cat}>{formatCategoryLabel(cat)}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                      {t('Unit *', 'الوحدة *')}
-                    </label>
-                    <select
-                      name="unit"
-                      value={formData.unit}
-                      onChange={handleChange}
-                      className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                    >
-                      {ITEM_UNITS.map(unit => (
-                        <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                      ))}
-                    </select>
+                {/* Category */}
+                <div>
+                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                    {t('Category *', 'الفئة *')}
+                  </label>
+                  <select
+                    name="category"
+                    value={formData.category}
+                    onChange={handleChange}
+                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                  >
+                    {ITEM_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{formatCategoryLabel(cat)}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Storage Unit and Serving Unit Row */}
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                  <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                    {t('Unit Configuration', 'إعدادات الوحدات')}
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
+                        {t('Storage Unit *', 'وحدة التخزين *')}
+                      </label>
+                      <select
+                        name="storage_unit"
+                        value={formData.storage_unit}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
+                      >
+                        {compatibleStorageUnits.map(unit => (
+                          <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-500 mt-1">
+                        {t('How this item is stored in inventory', 'كيف يتم تخزين هذه المادة في المخزون')}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
+                        {t('Serving Unit *', 'وحدة التقديم *')}
+                      </label>
+                      <select
+                        name="unit"
+                        value={formData.unit}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
+                      >
+                        {ITEM_UNITS.map(unit => (
+                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-500 mt-1">
+                        {t('How this item is used in products', 'كيف يتم استخدام هذه المادة في المنتجات')}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Cost per Unit */}
+                {/* Cost per Serving Unit */}
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                    {t('Cost per Unit', 'التكلفة لكل وحدة')}
+                    {t('Cost per Serving Unit', 'التكلفة لكل وحدة تقديم')}
                   </label>
                   <div className="relative">
                     <span className={`absolute ${isRTL ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 text-zinc-400`}>{currencySymbol}</span>
@@ -220,7 +306,7 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
                     />
                   </div>
                   <p className="text-xs text-zinc-500 mt-1.5">
-                    {t(`Cost per ${formatUnitLabel(formData.unit)}`, `التكلفة لكل ${formatUnitLabel(formData.unit)}`)}
+                    {t(`Cost per ${formatUnitLabel(formData.unit || 'grams')} (serving unit)`, `التكلفة لكل ${formatUnitLabel(formData.unit || 'grams')} (وحدة التقديم)`)}
                   </p>
                 </div>
               </form>

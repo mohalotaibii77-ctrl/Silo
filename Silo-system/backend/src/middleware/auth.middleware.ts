@@ -100,7 +100,7 @@ export async function requireBusinessAccess(req: Request, res: Response, next: N
               business_id
             )
           `)
-          .ilike('username', req.user.username)
+          .ilike('username', req.user.username || '')
           .eq('business_owners.business_id', parseInt(headerBusinessId))
           .single();
 

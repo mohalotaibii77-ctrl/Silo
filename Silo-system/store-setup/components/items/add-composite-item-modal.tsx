@@ -2,15 +2,20 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Package, Loader2, Plus, Trash2, Layers, Calculator, Search, ChevronDown } from 'lucide-react';
+import { X, Package, Loader2, Plus, Trash2, Layers, Calculator, Search, ChevronDown, Calendar, Clock } from 'lucide-react';
 import { 
   CreateCompositeItemData, 
   Item, 
   ITEM_CATEGORIES, 
   ITEM_UNITS, 
+  STORAGE_UNITS,
   ItemCategory, 
   ItemUnit, 
-  CATEGORY_TRANSLATIONS 
+  StorageUnit,
+  CATEGORY_TRANSLATIONS,
+  getDefaultStorageUnit,
+  getCompatibleStorageUnits,
+  areUnitsCompatible
 } from '@/types/items';
 import { createCompositeItem, getItems } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
@@ -40,6 +45,14 @@ const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
+  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
+  grams: { en: 'Grams', ar: 'جرام' },
+  L: { en: 'Liter', ar: 'لتر' },
+  mL: { en: 'Milliliters', ar: 'مل' },
+  piece: { en: 'Piece', ar: 'قطعة' },
+};
+
 export function AddCompositeItemModal({ 
   isOpen, 
   onClose, 
@@ -58,10 +71,16 @@ export function AddCompositeItemModal({
     name: '',
     name_ar: '',
     category: 'sauce' as ItemCategory,
-    unit: 'grams' as ItemUnit,
-    // Batch tracking: how much this recipe produces
+    unit: 'grams' as ItemUnit, // Serving unit
+    storage_unit: 'Kg' as StorageUnit,
+    // Batch tracking: how much this recipe produces (storage)
     batch_quantity: '' as string | number,
-    batch_unit: 'grams' as ItemUnit,
+    batch_unit: 'grams' as StorageUnit, // Storage unit for batch
+    // Production rate
+    production_rate_type: '' as '' | 'daily' | 'weekly' | 'monthly' | 'custom',
+    production_rate_weekly_day: '' as string | number,
+    production_rate_monthly_day: '' as string | number,
+    production_rate_custom_dates: [] as string[],
   });
   
   const [components, setComponents] = useState<ComponentEntry[]>([]);
@@ -85,6 +104,18 @@ export function AddCompositeItemModal({
     }
   }, []);
 
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     if (isOpen) {
       fetchAvailableItems();
@@ -93,9 +124,14 @@ export function AddCompositeItemModal({
         name: '',
         name_ar: '',
         category: 'sauce',
-        unit: 'grams',
+        unit: 'grams' as ItemUnit, // Serving unit
+        storage_unit: 'Kg' as StorageUnit,
         batch_quantity: '',
-        batch_unit: 'grams',
+        batch_unit: 'grams' as StorageUnit, // Batch/storage unit
+        production_rate_type: '',
+        production_rate_weekly_day: '',
+        production_rate_monthly_day: '',
+        production_rate_custom_dates: [],
       });
       setComponents([]);
       setError('');
@@ -108,13 +144,36 @@ export function AddCompositeItemModal({
     const { name, value } = e.target;
     setFormData(prev => {
       const updated = { ...prev, [name]: value };
-      // Sync unit with batch_unit for consistency
+      // When batch_unit (storage) changes, update serving unit to match if incompatible
       if (name === 'batch_unit') {
-        updated.unit = value as ItemUnit;
+        const newBatchUnit = value as StorageUnit;
+        // Get compatible serving units for the new batch unit
+        const compatible = getCompatibleServingUnitsForStorage(newBatchUnit);
+        if (!compatible.includes(prev.unit)) {
+          updated.unit = compatible[0]; // Default to first compatible
+        }
       }
       return updated;
     });
   };
+
+  // Get compatible serving units based on storage/batch unit
+  const getCompatibleServingUnitsForStorage = (storageUnit: StorageUnit): ItemUnit[] => {
+    switch (storageUnit) {
+      case 'Kg':
+      case 'grams':
+        return ['grams'];
+      case 'L':
+      case 'mL':
+        return ['mL'];
+      case 'piece':
+        return ['piece'];
+      default:
+        return ['grams'];
+    }
+  };
+
+  const compatibleServingUnits = getCompatibleServingUnitsForStorage(formData.batch_unit as StorageUnit);
 
   // Add new component entry
   const addComponent = () => {
@@ -158,7 +217,16 @@ export function AddCompositeItemModal({
     }, 0);
   };
 
-  // Calculate unit price (cost per unit of the composite item)
+  // Conversion factors to base unit (grams for weight, mL for volume, 1 for piece)
+  const CONVERSION_TO_BASE: Record<StorageUnit, number> = {
+    'Kg': 1000,    // 1 Kg = 1000 grams
+    'grams': 1,
+    'L': 1000,     // 1 L = 1000 mL
+    'mL': 1,
+    'piece': 1,
+  };
+
+  // Calculate unit price (cost per serving unit of the composite item)
   const calculateUnitPrice = () => {
     const batchCost = calculateBatchCost();
     const batchQty = typeof formData.batch_quantity === 'string' 
@@ -166,7 +234,14 @@ export function AddCompositeItemModal({
       : formData.batch_quantity;
     
     if (!batchQty || batchQty <= 0) return 0;
-    return batchCost / batchQty;
+    
+    // Convert batch quantity to serving units
+    // e.g., 10 Kg -> 10 * 1000 = 10,000 grams
+    const conversionFactor = CONVERSION_TO_BASE[formData.batch_unit] || 1;
+    const batchQtyInServingUnits = batchQty * conversionFactor;
+    
+    // Cost per serving unit = Batch Cost ÷ Batch Quantity (in serving units)
+    return batchCost / batchQtyInServingUnits;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -189,6 +264,36 @@ export function AddCompositeItemModal({
       return;
     }
 
+    // Validate production rate fields
+    if (formData.production_rate_type === 'weekly') {
+      if (formData.production_rate_weekly_day === '' || formData.production_rate_weekly_day === null || formData.production_rate_weekly_day === undefined) {
+        setError(t('Please select a day of the week', 'يرجى اختيار يوم من الأسبوع'));
+        return;
+      }
+    }
+    if (formData.production_rate_type === 'monthly') {
+      if (formData.production_rate_monthly_day === '' || formData.production_rate_monthly_day === null || formData.production_rate_monthly_day === undefined) {
+        setError(t('Please select a day of the month', 'يرجى اختيار يوم من الشهر'));
+        return;
+      }
+    }
+    if (formData.production_rate_type === 'custom') {
+      const validDates = formData.production_rate_custom_dates.filter(d => d.trim() !== '');
+      if (validDates.length === 0) {
+        setError(t('Please add at least one production date', 'يرجى إضافة تاريخ إنتاج واحد على الأقل'));
+        return;
+      }
+      // Validate dates are in ISO format
+      const invalidDates = validDates.filter(d => {
+        const date = new Date(d);
+        return isNaN(date.getTime());
+      });
+      if (invalidDates.length > 0) {
+        setError(t('Please ensure all dates are valid', 'يرجى التأكد من أن جميع التواريخ صحيحة'));
+        return;
+      }
+    }
+
     // Filter valid components
     const validComponents = components.filter(c => c.item_id && c.item_id > 0 && c.quantity > 0);
     
@@ -203,13 +308,28 @@ export function AddCompositeItemModal({
         name: formData.name,
         name_ar: formData.name_ar || undefined,
         category: formData.category,
-        unit: formData.unit,
+        unit: formData.unit, // Serving unit
+        storage_unit: formData.batch_unit, // Storage unit = batch unit
         batch_quantity: batchQty,
-        batch_unit: formData.batch_unit,
+        batch_unit: formData.batch_unit as ItemUnit, // Cast for API compatibility
         components: validComponents.map(c => ({
           item_id: c.item_id!,
           quantity: c.quantity,
         })),
+        production_rate_type: formData.production_rate_type || undefined,
+        production_rate_weekly_day: formData.production_rate_type === 'weekly' && formData.production_rate_weekly_day !== '' 
+          ? (typeof formData.production_rate_weekly_day === 'string' ? parseInt(formData.production_rate_weekly_day) : formData.production_rate_weekly_day)
+          : undefined,
+        production_rate_monthly_day: formData.production_rate_type === 'monthly' && formData.production_rate_monthly_day !== ''
+          ? (typeof formData.production_rate_monthly_day === 'string' ? parseInt(formData.production_rate_monthly_day) : formData.production_rate_monthly_day)
+          : undefined,
+        production_rate_custom_dates: formData.production_rate_type === 'custom' && formData.production_rate_custom_dates.length > 0
+          ? formData.production_rate_custom_dates.filter(d => d.trim() !== '').map(d => {
+              // Ensure dates are in ISO format (YYYY-MM-DD)
+              const date = new Date(d);
+              return date.toISOString().split('T')[0];
+            })
+          : undefined,
       };
 
       await createCompositeItem(data);
@@ -231,6 +351,10 @@ export function AddCompositeItemModal({
 
   const formatUnitLabel = (unit: ItemUnit) => {
     return isRTL ? UNIT_TRANSLATIONS[unit].ar : UNIT_TRANSLATIONS[unit].en;
+  };
+
+  const formatStorageUnitLabel = (unit: StorageUnit) => {
+    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit].ar : STORAGE_UNIT_TRANSLATIONS[unit].en;
   };
 
   // Item Dropdown Component
@@ -361,7 +485,7 @@ export function AddCompositeItemModal({
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-200px)]">
+              <form onSubmit={handleSubmit} className="p-6 space-y-5 overflow-y-auto max-h-[calc(90vh-200px)] overscroll-contain">
                 {error && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
                     {error}
@@ -448,7 +572,7 @@ export function AddCompositeItemModal({
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                        {t('Unit', 'الوحدة')}
+                        {t('Storage Unit', 'وحدة التخزين')}
                       </label>
                       <select
                         name="batch_unit"
@@ -456,14 +580,188 @@ export function AddCompositeItemModal({
                         onChange={handleChange}
                         className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
                       >
-                        {ITEM_UNITS.map(unit => (
-                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                        {STORAGE_UNITS.map(unit => (
+                          <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
                         ))}
                       </select>
                     </div>
                   </div>
                 </div>
 
+                {/* Serving Unit Section */}
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Package className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                    <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      {t('Serving Unit (How is this item used in products?) *', 'وحدة التقديم (كيف يُستخدم هذا العنصر في المنتجات؟) *')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                    {t('This determines the unit cost calculation. Must match the batch yield unit category.', 
+                       'هذا يحدد حساب تكلفة الوحدة. يجب أن يتطابق مع فئة وحدة الدفعة.')}
+                  </p>
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                      {t('Serving Unit', 'وحدة التقديم')}
+                    </label>
+                    <select
+                      name="unit"
+                      value={formData.unit}
+                      onChange={handleChange}
+                      className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                    >
+                      {compatibleServingUnits.map(unit => (
+                        <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-zinc-500 mt-1">
+                      {t(`Unit cost will be calculated as: Batch Cost ÷ Batch Quantity (per ${formData.unit})`, 
+                         `سيتم حساب تكلفة الوحدة كـ: تكلفة الدفعة ÷ كمية الدفعة (لكل ${formData.unit})`)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Production Rate Section */}
+                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Clock className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />
+                    <span className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                      {t('Production Rate', 'معدل الإنتاج')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
+                    {t('Set when this composite item should be produced', 'حدد متى يجب إنتاج هذه المادة المركبة')}
+                  </p>
+
+                  {/* Production Rate Type */}
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                      {t('Frequency', 'التكرار')}
+                    </label>
+                    <select
+                      name="production_rate_type"
+                      value={formData.production_rate_type}
+                      onChange={(e) => {
+                        const value = e.target.value as '' | 'daily' | 'weekly' | 'monthly' | 'custom';
+                        setFormData(prev => ({
+                          ...prev,
+                          production_rate_type: value,
+                          // Reset dependent fields when changing type
+                          production_rate_weekly_day: value === 'weekly' ? prev.production_rate_weekly_day : '',
+                          production_rate_monthly_day: value === 'monthly' ? prev.production_rate_monthly_day : '',
+                          production_rate_custom_dates: value === 'custom' ? prev.production_rate_custom_dates : [],
+                        }));
+                      }}
+                      className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                    >
+                      <option value="">{t('None', 'لا شيء')}</option>
+                      <option value="daily">{t('Daily', 'يومي')}</option>
+                      <option value="weekly">{t('Weekly', 'أسبوعي')}</option>
+                      <option value="monthly">{t('Monthly', 'شهري')}</option>
+                      <option value="custom">{t('Custom', 'مخصص')}</option>
+                    </select>
+                  </div>
+
+                  {/* Weekly Day Selection */}
+                  {formData.production_rate_type === 'weekly' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                        {t('Day of Week', 'يوم الأسبوع')} *
+                      </label>
+                      <select
+                        name="production_rate_weekly_day"
+                        value={formData.production_rate_weekly_day}
+                        onChange={(e) => setFormData(prev => ({ ...prev, production_rate_weekly_day: e.target.value }))}
+                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                      >
+                        <option value="">{t('Select day', 'اختر اليوم')}</option>
+                        <option value="0">{t('Sunday', 'الأحد')}</option>
+                        <option value="1">{t('Monday', 'الإثنين')}</option>
+                        <option value="2">{t('Tuesday', 'الثلاثاء')}</option>
+                        <option value="3">{t('Wednesday', 'الأربعاء')}</option>
+                        <option value="4">{t('Thursday', 'الخميس')}</option>
+                        <option value="5">{t('Friday', 'الجمعة')}</option>
+                        <option value="6">{t('Saturday', 'السبت')}</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Monthly Day Selection */}
+                  {formData.production_rate_type === 'monthly' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                        {t('Day of Month', 'يوم الشهر')} *
+                      </label>
+                      <select
+                        name="production_rate_monthly_day"
+                        value={formData.production_rate_monthly_day}
+                        onChange={(e) => setFormData(prev => ({ ...prev, production_rate_monthly_day: e.target.value }))}
+                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                      >
+                        <option value="">{t('Select day', 'اختر اليوم')}</option>
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
+                          <option key={day} value={day}>{day}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                        {t('This will occur on this day every month', 'سيحدث هذا في هذا اليوم من كل شهر')}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Custom Dates Selection */}
+                  {formData.production_rate_type === 'custom' && (
+                    <div className="mb-3">
+                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                        {t('Production Dates', 'تواريخ الإنتاج')} *
+                      </label>
+                      <div className="space-y-2">
+                        {formData.production_rate_custom_dates.map((date, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <input
+                              type="date"
+                              value={date}
+                              onChange={(e) => {
+                                const newDates = [...formData.production_rate_custom_dates];
+                                newDates[index] = e.target.value;
+                                setFormData(prev => ({ ...prev, production_rate_custom_dates: newDates }));
+                              }}
+                              className="flex-1 px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newDates = formData.production_rate_custom_dates.filter((_, i) => i !== index);
+                                setFormData(prev => ({ ...prev, production_rate_custom_dates: newDates }));
+                              }}
+                              className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFormData(prev => ({
+                              ...prev,
+                              production_rate_custom_dates: [...prev.production_rate_custom_dates, '']
+                            }));
+                          }}
+                          className="flex items-center gap-2 px-4 py-2 text-sm text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-white dark:hover:bg-zinc-800 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 transition-colors w-full justify-center"
+                        >
+                          <Plus className="w-4 h-4" />
+                          {t('Add Date', 'إضافة تاريخ')}
+                        </button>
+                      </div>
+                      {formData.production_rate_custom_dates.length === 0 && (
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                          {t('Add at least one production date', 'أضف تاريخ إنتاج واحد على الأقل')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Components Section */}
                 <div className="pt-4 border-t border-zinc-200 dark:border-zinc-800">
@@ -535,14 +833,14 @@ export function AddCompositeItemModal({
                           </span>
                         </div>
                         
-                        {/* Unit Price */}
+                        {/* Cost per Serving Unit */}
                         {formData.batch_quantity && parseFloat(String(formData.batch_quantity)) > 0 && (
                           <div className="flex justify-between items-center bg-zinc-100 dark:bg-zinc-800 px-3 py-2 rounded-lg">
                             <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                              {t('Unit Price:', 'سعر الوحدة:')}
+                              {t('Cost per Serving Unit:', 'تكلفة وحدة التقديم:')}
                             </span>
                             <span className="font-semibold text-zinc-900 dark:text-white">
-                              {currencySymbol} {calculateUnitPrice().toFixed(6)} / {formatUnitLabel(formData.batch_unit)}
+                              {currencySymbol} {calculateUnitPrice().toFixed(6)} / {formatUnitLabel(formData.unit)}
                             </span>
                           </div>
                         )}

@@ -9,6 +9,12 @@ import jwt from 'jsonwebtoken';
 import { supabaseAdmin } from '../config/database';
 import { env } from '../config/env';
 
+export interface UserSettings {
+  preferred_language: string;
+  preferred_theme: 'light' | 'dark' | 'system';
+  settings: Record<string, any>;
+}
+
 export interface BusinessUser {
   id: number;
   business_id: number;
@@ -23,6 +29,10 @@ export interface BusinessUser {
   last_login: string | null;
   created_at: string;
   updated_at: string;
+  // User settings
+  preferred_language: string | null;
+  preferred_theme: string | null;
+  settings: Record<string, any> | null;
 }
 
 export interface Branch {
@@ -45,9 +55,16 @@ export interface BusinessInfo {
   id: number;
   name: string;
   slug: string;
+  // Localization settings
+  country?: string;
   currency?: string;
-  tax_rate?: number;
+  timezone?: string;
   language?: string;
+  // Tax/VAT settings
+  tax_rate?: number;
+  vat_enabled?: boolean;
+  tax_number?: string;
+  // Other
   logo_url?: string;
   branch_count?: number;
 }
@@ -58,6 +75,7 @@ export interface BusinessLoginResponse {
   business: BusinessInfo | null;
   branch: Branch | null;
   businesses?: BusinessInfo[];  // All businesses user can access (for workspace switching)
+  userSettings: UserSettings;  // User-specific settings (language, theme, etc.)
 }
 
 export class BusinessAuthService {
@@ -102,12 +120,12 @@ export class BusinessAuthService {
 
     console.log('Password valid for user:', user.id);
 
-    // Get business info including settings
+    // Get business info including ALL settings (localization, tax, etc.)
     let business: BusinessInfo | null = null;
     if (user.business_id) {
       const { data: bizData } = await supabaseAdmin
         .from('businesses')
-        .select('id, name, slug, currency, tax_rate, language, logo_url, branch_count')
+        .select('id, name, slug, country, currency, timezone, language, tax_rate, vat_enabled, tax_number, logo_url, branch_count')
         .eq('id', user.business_id)
         .single();
       business = bizData;
@@ -144,10 +162,10 @@ export class BusinessAuthService {
         if (businessOwnerLinks && businessOwnerLinks.length > 0) {
           const businessIds = businessOwnerLinks.map((bo: any) => bo.business_id);
           
-          // Fetch all businesses
+          // Fetch all businesses with full settings
           const { data: businessList } = await supabaseAdmin
             .from('businesses')
-            .select('id, name, slug, currency, tax_rate, language, logo_url, branch_count')
+            .select('id, name, slug, country, currency, timezone, language, tax_rate, vat_enabled, tax_number, logo_url, branch_count')
             .in('id', businessIds);
           
           if (businessList) {
@@ -175,12 +193,20 @@ export class BusinessAuthService {
     // Remove password hash from response
     const { password_hash, ...safeUser } = user;
 
+    // Build user settings object (with defaults for new users)
+    const userSettings: UserSettings = {
+      preferred_language: user.preferred_language || business?.language || 'en',
+      preferred_theme: (user.preferred_theme as 'light' | 'dark' | 'system') || 'system',
+      settings: user.settings || {},
+    };
+
     return {
       token,
       user: safeUser,
       business,
       branch,
       businesses: businesses.length > 0 ? businesses : undefined,
+      userSettings,
     };
   }
 
@@ -189,8 +215,8 @@ export class BusinessAuthService {
    */
   generateToken(payload: BusinessAuthPayload): string {
     return jwt.sign(payload, env.JWT_SECRET, {
-      expiresIn: env.JWT_EXPIRES_IN,
-    });
+      expiresIn: env.JWT_EXPIRES_IN as string,
+    } as jwt.SignOptions);
   }
 
   /**
@@ -218,6 +244,36 @@ export class BusinessAuthService {
     
     const { password_hash, ...safeUser } = data;
     return safeUser;
+  }
+
+  /**
+   * Check if owner has access to a specific business
+   * Used for workspace switching validation
+   */
+  async checkOwnerBusinessAccess(username: string, businessId: number): Promise<boolean> {
+    try {
+      // Check if the owner has a record in the owners table that links to this business
+      const { data: ownerAccess, error } = await supabaseAdmin
+        .from('owners')
+        .select(`
+          id,
+          business_owners!inner (
+            business_id
+          )
+        `)
+        .ilike('username', username)
+        .eq('business_owners.business_id', businessId);
+
+      if (error) {
+        console.error('Error checking owner business access:', error);
+        return false;
+      }
+
+      return ownerAccess && ownerAccess.length > 0;
+    } catch (err) {
+      console.error('Exception checking owner business access:', err);
+      return false;
+    }
   }
 }
 

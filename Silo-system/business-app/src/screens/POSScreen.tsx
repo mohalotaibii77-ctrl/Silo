@@ -206,16 +206,23 @@ export default function POSScreen({ navigation }: any) {
       setLoadingProducts(true);
       const token = await AsyncStorage.getItem('token');
       
+      console.log('[POS] Loading products...');
+      console.log('[POS] Token exists:', !!token);
+      console.log('[POS] API_URL:', API_URL);
+      
       if (token && API_URL) {
         let posProducts: Product[] = [];
         let posBundles: Product[] = [];
 
         // Fetch products from store-products endpoint
         try {
+          console.log('[POS] Fetching from:', `${API_URL}/store-products`);
           const response = await fetch(`${API_URL}/store-products`, {
             headers: { Authorization: `Bearer ${token}` }
           });
+          console.log('[POS] Response status:', response.status);
           const result = await response.json();
+          console.log('[POS] Products result:', result);
           if (result.success && result.data) {
             // Transform products to POS format
             posProducts = result.data.map((p: any) => ({
@@ -265,15 +272,18 @@ export default function POSScreen({ navigation }: any) {
             }));
           }
         } catch (apiError) {
-          console.log('Products API error:', apiError);
+          console.log('[POS] Products API error:', apiError);
         }
 
         // Fetch bundles from bundles endpoint
         try {
+          console.log('[POS] Fetching bundles from:', `${API_URL}/bundles`);
           const bundlesResponse = await fetch(`${API_URL}/bundles`, {
             headers: { Authorization: `Bearer ${token}` }
           });
+          console.log('[POS] Bundles response status:', bundlesResponse.status);
           const bundlesResult = await bundlesResponse.json();
+          console.log('[POS] Bundles result:', bundlesResult);
           if (bundlesResult.success && bundlesResult.data) {
             // Transform bundles to POS format (bundles are simple - no variants/modifiers)
             posBundles = bundlesResult.data
@@ -293,11 +303,14 @@ export default function POSScreen({ navigation }: any) {
               }));
           }
         } catch (bundlesError) {
-          console.log('Bundles API error:', bundlesError);
+          console.log('[POS] Bundles API error:', bundlesError);
         }
 
         // Combine products and bundles
         const allItems = [...posProducts, ...posBundles];
+        console.log('[POS] Total products loaded:', posProducts.length);
+        console.log('[POS] Total bundles loaded:', posBundles.length);
+        console.log('[POS] All items:', allItems.length);
         setProducts(allItems);
         
         // Build categories from products + add Bundles category if there are bundles
@@ -315,6 +328,8 @@ export default function POSScreen({ navigation }: any) {
         }
         setCategories(categoryList);
         return;
+      } else {
+        console.log('[POS] No token or API_URL - cannot load products');
       }
       
       // No products found - show empty state
@@ -329,21 +344,30 @@ export default function POSScreen({ navigation }: any) {
   };
 
   const handleLogout = async () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Logout',
-          style: 'destructive',
-          onPress: async () => {
-            await AsyncStorage.clear();
-            navigation.replace('Login');
+    // On web, Alert.alert doesn't work, so use window.confirm
+    if (Platform.OS === 'web') {
+      const confirmed = window.confirm('Are you sure you want to logout?');
+      if (confirmed) {
+        await AsyncStorage.clear();
+        navigation.replace('Login');
+      }
+    } else {
+      Alert.alert(
+        'Logout',
+        'Are you sure you want to logout?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Logout',
+            style: 'destructive',
+            onPress: async () => {
+              await AsyncStorage.clear();
+              navigation.replace('Login');
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
 
   const filteredProducts = products.filter(product => {

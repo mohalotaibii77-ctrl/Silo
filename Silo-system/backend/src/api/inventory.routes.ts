@@ -96,7 +96,7 @@ router.get('/items/:itemId', authenticateBusiness, asyncHandler(async (req: Auth
  * Create new item (business-specific)
  */
 router.post('/items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { name, name_ar, category, unit, cost_per_unit } = req.body;
+  const { name, name_ar, category, unit, storage_unit, cost_per_unit } = req.body;
 
   if (!name || !category) {
     return res.status(400).json({
@@ -105,30 +105,43 @@ router.post('/items', authenticateBusiness, asyncHandler(async (req: Authenticat
     });
   }
 
-  const item = await inventoryService.createItem({
-    business_id: req.businessUser!.business_id,
-    name,
-    name_ar,
-    category,
-    unit,
-    cost_per_unit,
-  });
+  try {
+    const item = await inventoryService.createItem({
+      business_id: req.businessUser!.business_id,
+      name,
+      name_ar,
+      category,
+      unit,
+      storage_unit,
+      cost_per_unit,
+    });
 
-  res.status(201).json({
-    success: true,
-    data: item,
-  });
+    res.status(201).json({
+      success: true,
+      data: item,
+    });
+  } catch (err: any) {
+    // Handle unit validation errors
+    if (err.message && err.message.includes('Storage unit')) {
+      return res.status(400).json({
+        success: false,
+        error: err.message,
+      });
+    }
+    throw err;
+  }
 }));
 
 /**
  * PUT /api/inventory/items/:itemId
- * Update item (only for business-owned items)
+ * Update item - works for both default items (clones them) and business items (updates them)
+ * When editing a default item, it creates a business-specific copy
  */
 router.put('/items/:itemId', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { name, name_ar, category, unit, cost_per_unit, status } = req.body;
+  const { name, name_ar, category, unit, storage_unit, cost_per_unit, status } = req.body;
   const itemId = parseInt(req.params.itemId);
 
-  // First check if this item belongs to the business
+  // First check if this item exists
   const existingItem = await inventoryService.getItem(itemId);
   
   if (!existingItem) {
@@ -138,35 +151,43 @@ router.put('/items/:itemId', authenticateBusiness, asyncHandler(async (req: Auth
     });
   }
 
-  // If it's a general item (business_id is null), can only update price via the price endpoint
-  if (existingItem.business_id === null) {
-    return res.status(403).json({
-      success: false,
-      error: 'Cannot modify general items. Use the price endpoint to set your business price.',
+  try {
+    // Use the new editItem method which handles both default and business items
+    const item = await inventoryService.editItem(
+      itemId,
+      req.businessUser!.business_id,
+      {
+        name,
+        name_ar,
+        category,
+        unit,
+        storage_unit,
+        cost_per_unit,
+        status,
+      }
+    );
+
+    // If the original was a default item, it was cloned
+    const wasCloned = existingItem.business_id === null;
+
+    res.json({
+      success: true,
+      data: item,
+      message: wasCloned 
+        ? 'Default item was customized for your business' 
+        : 'Item updated successfully',
+      cloned: wasCloned,
     });
+  } catch (err: any) {
+    // Handle specific errors
+    if (err.message && (err.message.includes('Storage unit') || err.message.includes('only edit your own'))) {
+      return res.status(400).json({
+        success: false,
+        error: err.message,
+      });
+    }
+    throw err;
   }
-
-  // If it belongs to a different business, deny
-  if (existingItem.business_id !== req.businessUser!.business_id) {
-    return res.status(403).json({
-      success: false,
-      error: 'You can only modify your own items',
-    });
-  }
-
-  const item = await inventoryService.updateItem(itemId, {
-    name,
-    name_ar,
-    category,
-    unit,
-    cost_per_unit,
-    status,
-  });
-
-  res.json({
-    success: true,
-    data: item,
-  });
 }));
 
 /**
@@ -356,7 +377,7 @@ router.get('/composite-items/:itemId', authenticateBusiness, asyncHandler(async 
  * POST /api/inventory/composite-items
  * Create a new composite item (item made from other items)
  * Body: { 
- *   name, name_ar?, category, unit, 
+ *   name, name_ar?, category, unit, storage_unit?,
  *   batch_quantity, batch_unit,  // How much this recipe produces
  *   components: [{ item_id, quantity }] 
  * }
@@ -365,7 +386,7 @@ router.get('/composite-items/:itemId', authenticateBusiness, asyncHandler(async 
  * means "this recipe produces 500 grams of sauce"
  */
 router.post('/composite-items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
-  const { name, name_ar, category, unit, batch_quantity, batch_unit, components } = req.body;
+  const { name, name_ar, category, unit, storage_unit, batch_quantity, batch_unit, components } = req.body;
 
   // Validate required fields
   if (!name || !category || !unit) {
@@ -408,18 +429,34 @@ router.post('/composite-items', authenticateBusiness, asyncHandler(async (req: A
     }
   }
 
-  const item = await inventoryService.createCompositeItem({
-    business_id: req.businessUser!.business_id,
-    name,
-    name_ar,
-    category,
-    unit: unit as ItemUnit,
-    batch_quantity: parseFloat(batch_quantity),
-    batch_unit: batch_unit as ItemUnit,
-    components,
-  });
+  try {
+    const item = await inventoryService.createCompositeItem({
+      business_id: req.businessUser!.business_id,
+      name,
+      name_ar,
+      category,
+      unit: unit as ItemUnit,
+      storage_unit: storage_unit,
+      batch_quantity: parseFloat(batch_quantity),
+      batch_unit: batch_unit as ItemUnit,
+      components,
+      production_rate_type: req.body.production_rate_type,
+      production_rate_weekly_day: req.body.production_rate_weekly_day !== undefined ? parseInt(req.body.production_rate_weekly_day) : undefined,
+      production_rate_monthly_day: req.body.production_rate_monthly_day !== undefined ? parseInt(req.body.production_rate_monthly_day) : undefined,
+      production_rate_custom_dates: req.body.production_rate_custom_dates,
+    });
 
-  res.status(201).json({ success: true, data: item });
+    res.status(201).json({ success: true, data: item });
+  } catch (err: any) {
+    // Handle unit validation errors
+    if (err.message && err.message.includes('Storage unit')) {
+      return res.status(400).json({
+        success: false,
+        error: err.message,
+      });
+    }
+    throw err;
+  }
 }));
 
 /**

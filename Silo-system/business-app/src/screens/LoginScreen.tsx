@@ -57,13 +57,20 @@ export default function LoginScreen({ navigation }: any) {
 
   const handleLogin = async () => {
     if (!email || !password) {
-      Alert.alert('Error', 'Please enter email and password');
+      if (Platform.OS === 'web') {
+        window.alert('Please enter email and password');
+      } else {
+        Alert.alert('Error', 'Please enter email and password');
+      }
       return;
     }
 
     setLoading(true);
     try {
+      console.log('[Login] Attempting login with:', email);
+      console.log('[Login] API baseURL:', api.defaults.baseURL);
       const response = await api.post('/business-auth/login', { email, password });
+      console.log('[Login] Response:', response.data);
       await AsyncStorage.setItem('token', response.data.token);
       await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
       
@@ -77,7 +84,13 @@ export default function LoginScreen({ navigation }: any) {
         await AsyncStorage.setItem('businesses', JSON.stringify(response.data.businesses));
       }
       
+      // Save user settings (persisted from database)
+      if (response.data.userSettings) {
+        await AsyncStorage.setItem('userSettings', JSON.stringify(response.data.userSettings));
+      }
+      
       const role = response.data.user.role;
+      console.log('[Login] User role:', role);
       
       if (role === 'owner') {
         navigation.replace('OwnerDashboard');
@@ -91,7 +104,14 @@ export default function LoginScreen({ navigation }: any) {
         navigation.replace('EmployeePOS');
       }
     } catch (error: any) {
-      Alert.alert('Login Failed', error.response?.data?.error || 'Invalid credentials');
+      console.error('[Login] Error:', error);
+      console.error('[Login] Error response:', error.response?.data);
+      const errorMessage = error.response?.data?.error || error.message || 'Invalid credentials';
+      if (Platform.OS === 'web') {
+        window.alert('Login Failed: ' + errorMessage);
+      } else {
+        Alert.alert('Login Failed', errorMessage);
+      }
     } finally {
       setLoading(false);
     }

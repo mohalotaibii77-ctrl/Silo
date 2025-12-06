@@ -3,13 +3,22 @@
 import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
+import { useLanguage } from "@/lib/language-context"
 
 export function ModeToggle() {
-  const { theme, setTheme } = useTheme()
+  const { theme, setTheme: setNextTheme } = useTheme()
+  const { setTheme: syncThemeToDB } = useLanguage()
+
+  const handleThemeToggle = () => {
+    const newTheme = theme === "dark" ? "light" : "dark"
+    setNextTheme(newTheme)
+    // Sync theme preference to database
+    syncThemeToDB(newTheme as 'light' | 'dark' | 'system')
+  }
 
   return (
     <button
-      onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+      onClick={handleThemeToggle}
       className="p-2 rounded-md hover:bg-secondary transition-colors relative"
       aria-label="Toggle theme"
     >

@@ -28,6 +28,18 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'U
 
   const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
 
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     if (item) {
       const currentPrice = item.business_price ?? item.cost_per_unit;

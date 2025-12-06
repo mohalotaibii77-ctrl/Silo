@@ -34,6 +34,18 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
   const [error, setError] = useState('');
 
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   // Load products on mount
   useEffect(() => {
     if (isOpen) {
@@ -209,6 +221,7 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
           className="relative w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl"
+          dir={isRTL ? 'rtl' : 'ltr'}
         >
           {/* Header */}
           <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
@@ -234,7 +247,7 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
           </div>
 
           {/* Body */}
-          <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[calc(90vh-180px)]">
+          <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[calc(90vh-180px)] overscroll-contain">
             <div className="p-6 space-y-6">
               {/* Error Message */}
               {error && (

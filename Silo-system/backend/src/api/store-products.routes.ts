@@ -18,7 +18,7 @@ router.use(authenticate);
  * Get all products for business
  */
 router.get('/', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const products = await storeProductsService.getProducts(req.user!.businessId);
+  const products = await storeProductsService.getProducts(parseInt(req.user!.businessId));
   
   res.json({
     success: true,
@@ -33,7 +33,7 @@ router.get('/', requireBusinessAccess, asyncHandler(async (req, res) => {
 router.get('/:id', requireBusinessAccess, asyncHandler(async (req, res) => {
   const product = await storeProductsService.getProduct(
     parseInt(req.params.id),
-    req.user!.businessId
+    parseInt(req.user!.businessId)
   );
   
   if (!product) {
@@ -63,7 +63,7 @@ router.post('/', requireBusinessAccess, asyncHandler(async (req, res) => {
     });
   }
 
-  const product = await storeProductsService.createProduct(req.user!.businessId, {
+  const product = await storeProductsService.createProduct(parseInt(req.user!.businessId), {
     name,
     name_ar,
     description,
@@ -91,7 +91,7 @@ router.put('/:id', requireBusinessAccess, asyncHandler(async (req, res) => {
 
   const product = await storeProductsService.updateProduct(
     parseInt(req.params.id),
-    req.user!.businessId,
+    parseInt(req.user!.businessId),
     { name, name_ar, description, description_ar, sku, category_id, price, tax_rate, has_variants, image_url, is_active }
   );
 
@@ -108,7 +108,7 @@ router.put('/:id', requireBusinessAccess, asyncHandler(async (req, res) => {
 router.delete('/:id', requireBusinessAccess, asyncHandler(async (req, res) => {
   await storeProductsService.deleteProduct(
     parseInt(req.params.id),
-    req.user!.businessId
+    parseInt(req.user!.businessId)
   );
   
   res.json({

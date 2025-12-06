@@ -27,7 +27,7 @@ export default function LoginPage() {
 
     try {
       const response = await api.post('/business-auth/login', { email, password });
-      const { token, user, business } = response.data;
+      const { token, user, business, userSettings } = response.data;
 
       // Only allow owner and manager roles
       if (user.role !== 'owner' && user.role !== 'manager') {
@@ -40,9 +40,21 @@ export default function LoginPage() {
       localStorage.setItem('setup_token', token);
       localStorage.setItem('setup_user', JSON.stringify(user));
       localStorage.setItem('setup_business', JSON.stringify(business));
+      
+      // Store user settings (persisted from database)
+      if (userSettings) {
+        localStorage.setItem('setup_user_settings', JSON.stringify(userSettings));
+        
+        // Apply theme from user settings
+        if (userSettings.preferred_theme && userSettings.preferred_theme !== 'system') {
+          document.documentElement.classList.remove('light', 'dark');
+          document.documentElement.classList.add(userSettings.preferred_theme);
+          localStorage.setItem('theme', userSettings.preferred_theme);
+        }
+      }
 
-      // Apply language direction immediately before navigation
-      const lang = business?.language || 'en';
+      // Apply language direction immediately before navigation (user setting takes priority)
+      const lang = userSettings?.preferred_language || business?.language || 'en';
       document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
       document.documentElement.lang = lang;
 

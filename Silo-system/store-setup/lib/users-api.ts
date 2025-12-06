@@ -12,7 +12,7 @@ import api from './api';
 export interface BusinessUser {
   id: number;
   username: string;
-  role: 'owner' | 'manager' | 'employee';
+  role: 'owner' | 'manager' | 'employee' | 'pos';
   first_name?: string;
   last_name?: string;
   email?: string;

@@ -157,9 +157,26 @@ export class POSService {
       throw new Error(`Failed to create order: ${error.message}`);
     }
 
-    // Create order items
+    // Create order items with cost snapshot for accurate profit tracking
     const orderItems: OrderItem[] = [];
     for (const { item, itemSubtotal, itemTotal, modifiersTotal } of processedItems) {
+      // Get product's current cost for profit calculation
+      let unitCostAtSale = 0;
+      if (item.product_id) {
+        const { data: product } = await supabaseAdmin
+          .from('products')
+          .select('total_cost')
+          .eq('id', item.product_id)
+          .single();
+        
+        unitCostAtSale = product?.total_cost || 0;
+      }
+
+      // Calculate cost-related metrics
+      const totalCost = unitCostAtSale * item.quantity;
+      const profit = itemTotal - totalCost;
+      const profitMargin = itemTotal > 0 ? (profit / itemTotal) * 100 : 0;
+
       const { data: orderItem, error: itemError } = await supabaseAdmin
         .from('order_items')
         .insert({
@@ -174,6 +191,12 @@ export class POSService {
           
           quantity: item.quantity,
           unit_price: item.unit_price,
+          
+          // Cost snapshot at time of sale
+          unit_cost_at_sale: unitCostAtSale,
+          total_cost: totalCost,
+          profit: profit,
+          profit_margin: Math.round(profitMargin * 100) / 100, // Round to 2 decimal places
           
           discount_amount: item.discount_amount || 0,
           discount_percentage: item.discount_percentage || 0,

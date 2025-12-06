@@ -307,7 +307,7 @@ export default function CategoriesPage() {
             )}
 
             {/* Empty custom categories message */}
-            {(filter === 'all' || filter === 'custom') && customCategories.length === 0 && filter !== 'system' && (
+            {(filter === 'all' || filter === 'custom') && customCategories.length === 0 && (
               <div className="p-6 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-dashed border-zinc-300 dark:border-zinc-700 text-center">
                 <p className="text-zinc-500 dark:text-zinc-400 text-sm">
                   {t('No custom categories yet. Create your own categories specific to your business.', 'لا توجد فئات مخصصة بعد. أنشئ فئاتك الخاصة بنشاطك التجاري.')}
@@ -336,7 +336,7 @@ export default function CategoriesPage() {
               dir={isRTL ? 'rtl' : 'ltr'}
             >
               {/* Header */}
-              <div className={`flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800 ${isRTL ? 'flex-row-reverse' : ''}`}>
+              <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
                 <h2 className="text-xl font-bold text-zinc-900 dark:text-white">
                   {editingCategory ? t('Edit Category', 'تعديل الفئة') : t('Add Category', 'إضافة فئة')}
                 </h2>
@@ -398,7 +398,7 @@ export default function CategoriesPage() {
               </div>
 
               {/* Footer */}
-              <div className={`flex items-center justify-end gap-3 p-6 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 rounded-b-2xl ${isRTL ? 'flex-row-reverse' : ''}`}>
+              <div className="flex items-center justify-end gap-3 p-6 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 rounded-b-2xl">
                 <button
                   onClick={handleCloseModal}
                   className="px-5 py-2.5 rounded-xl text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium transition-colors"

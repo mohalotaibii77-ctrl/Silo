@@ -4,6 +4,12 @@
  */
 
 import { supabaseAdmin } from '../config/database';
+import { 
+  validateUnitPairing, 
+  getDefaultStorageUnit,
+  StorageUnit,
+  ServingUnit 
+} from '../utils/unit-conversion';
 
 // Item categories as defined in database
 export type ItemCategory = 
@@ -11,8 +17,11 @@ export type ItemCategory =
   | 'dairy' | 'grain' | 'bread' | 'sauce' | 'condiment' 
   | 'spice' | 'oil' | 'beverage' | 'sweetener' | 'other';
 
-// Item units (simplified)
+// Item units (simplified) - serving units
 export type ItemUnit = 'grams' | 'mL' | 'piece';
+
+// Storage units (for inventory storage)
+export type { StorageUnit };
 
 export interface Item {
   id: number;
@@ -21,13 +30,19 @@ export interface Item {
   name_ar?: string | null;
   sku?: string | null;
   category: ItemCategory;
-  unit: ItemUnit;
+  unit: ItemUnit;                    // Serving unit (for recipes/products)
+  storage_unit: StorageUnit;         // Storage unit (for inventory)
   cost_per_unit: number;
   is_system_item: boolean;
   is_composite: boolean;
   // Batch tracking for composite items
   batch_quantity?: number | null;
   batch_unit?: ItemUnit | null;
+  // Production rate for composite items
+  production_rate_type?: 'daily' | 'weekly' | 'monthly' | 'custom' | null;
+  production_rate_weekly_day?: number | null; // 0=Sunday, 1=Monday, ..., 6=Saturday
+  production_rate_monthly_day?: number | null; // 1-31
+  production_rate_custom_dates?: string[] | null; // ISO date strings
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
@@ -61,10 +76,16 @@ export interface CreateCompositeItemInput {
   name_ar?: string;
   category: ItemCategory;
   unit: ItemUnit;
+  storage_unit?: StorageUnit;   // Storage unit for inventory
   // Batch tracking: how much this recipe produces
   batch_quantity: number;
   batch_unit: ItemUnit;
   components: { item_id: number; quantity: number }[];
+  // Production rate for composite items
+  production_rate_type?: 'daily' | 'weekly' | 'monthly' | 'custom';
+  production_rate_weekly_day?: number; // 0=Sunday, 1=Monday, ..., 6=Saturday
+  production_rate_monthly_day?: number; // 1-31
+  production_rate_custom_dates?: string[]; // ISO date strings
 }
 
 export class InventoryService {
@@ -137,13 +158,27 @@ export class InventoryService {
       });
     }
 
-    // Merge business prices with items
-    const itemsWithPrices = (items || []).map(item => ({
-      ...item,
-      business_price: priceMap.get(item.id) ?? null,
-      // Use business price if available, otherwise use default
-      effective_price: priceMap.get(item.id) ?? item.cost_per_unit,
-    }));
+    // Merge business prices with items and parse production_rate_custom_dates
+    const itemsWithPrices = (items || []).map(item => {
+      let parsedItem = { ...item };
+      // Parse production_rate_custom_dates from JSONB if present
+      if (item.production_rate_custom_dates) {
+        try {
+          parsedItem.production_rate_custom_dates = typeof item.production_rate_custom_dates === 'string' 
+            ? JSON.parse(item.production_rate_custom_dates)
+            : item.production_rate_custom_dates;
+        } catch (e) {
+          console.error('Failed to parse production_rate_custom_dates:', e);
+          parsedItem.production_rate_custom_dates = null;
+        }
+      }
+      return {
+        ...parsedItem,
+        business_price: priceMap.get(item.id) ?? null,
+        // Use business price if available, otherwise use default
+        effective_price: priceMap.get(item.id) ?? item.cost_per_unit,
+      };
+    });
     
     return itemsWithPrices as Item[];
   }
@@ -160,6 +195,19 @@ export class InventoryService {
 
     if (error) return null;
 
+    // Parse production_rate_custom_dates from JSONB if present
+    let parsedData = { ...data };
+    if (data.production_rate_custom_dates) {
+      try {
+        parsedData.production_rate_custom_dates = typeof data.production_rate_custom_dates === 'string' 
+          ? JSON.parse(data.production_rate_custom_dates)
+          : data.production_rate_custom_dates;
+      } catch (e) {
+        console.error('Failed to parse production_rate_custom_dates:', e);
+        parsedData.production_rate_custom_dates = null;
+      }
+    }
+
     // Get business-specific price if businessId provided
     if (businessId) {
       const { data: businessPrice } = await supabaseAdmin
@@ -170,12 +218,12 @@ export class InventoryService {
         .single();
 
       return {
-        ...data,
+        ...parsedData,
         business_price: businessPrice?.cost_per_unit ?? null,
       } as Item;
     }
 
-    return data as Item;
+    return parsedData as Item;
   }
 
   /**
@@ -187,8 +235,18 @@ export class InventoryService {
     name_ar?: string;
     category: ItemCategory;
     unit?: ItemUnit;
+    storage_unit?: StorageUnit;
     cost_per_unit?: number;
   }): Promise<Item> {
+    const servingUnit = data.unit || 'grams';
+    const storageUnit = data.storage_unit || getDefaultStorageUnit(servingUnit as ServingUnit);
+    
+    // Validate unit pairing
+    const validationError = validateUnitPairing(storageUnit, servingUnit as ServingUnit);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+    
     // Generate unique SKU for this business item
     const sku = await this.generateItemSku(data.business_id);
     
@@ -199,7 +257,8 @@ export class InventoryService {
         name: data.name,
         name_ar: data.name_ar || null,
         category: data.category,
-        unit: data.unit || 'grams',
+        unit: servingUnit,
+        storage_unit: storageUnit,
         cost_per_unit: data.cost_per_unit || 0,
         is_system_item: false,
         status: 'active',
@@ -223,9 +282,18 @@ export class InventoryService {
     name_ar: string;
     category: ItemCategory;
     unit: ItemUnit;
+    storage_unit: StorageUnit;
     cost_per_unit: number;
     status: 'active' | 'inactive';
   }>): Promise<Item> {
+    // If both unit and storage_unit are being updated, validate pairing
+    if (data.unit && data.storage_unit) {
+      const validationError = validateUnitPairing(data.storage_unit, data.unit as ServingUnit);
+      if (validationError) {
+        throw new Error(validationError);
+      }
+    }
+    
     const { data: item, error } = await supabaseAdmin
       .from('items')
       .update({ ...data, updated_at: new Date().toISOString() })
@@ -238,6 +306,114 @@ export class InventoryService {
       throw new Error('Failed to update item');
     }
     return item as Item;
+  }
+
+  /**
+   * Clone a default item to create a business-specific version
+   * This is called when a business wants to edit a default item
+   * The default item is copied and linked to the business
+   */
+  async cloneDefaultItemForBusiness(itemId: number, businessId: number, updates: Partial<{
+    name: string;
+    name_ar: string;
+    category: ItemCategory;
+    unit: ItemUnit;
+    storage_unit: StorageUnit;
+    cost_per_unit: number;
+  }>): Promise<Item> {
+    // Get the original default item
+    const originalItem = await this.getItem(itemId);
+    if (!originalItem) {
+      throw new Error('Item not found');
+    }
+    
+    // Verify it's a default item (business_id is null)
+    if (originalItem.business_id !== null) {
+      throw new Error('This item is not a default item - use updateItem instead');
+    }
+
+    // Merge original data with updates
+    const servingUnit = updates.unit || originalItem.unit;
+    const storageUnit = updates.storage_unit || originalItem.storage_unit || getDefaultStorageUnit(servingUnit as ServingUnit);
+    
+    // Validate unit pairing
+    const validationError = validateUnitPairing(storageUnit, servingUnit as ServingUnit);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+    
+    // Generate unique SKU for the new business item
+    const sku = await this.generateItemSku(businessId);
+    
+    // Create a new item for the business based on the default item
+    const { data: newItem, error } = await supabaseAdmin
+      .from('items')
+      .insert({
+        business_id: businessId,
+        name: updates.name || originalItem.name,
+        name_ar: updates.name_ar !== undefined ? updates.name_ar : originalItem.name_ar,
+        category: updates.category || originalItem.category,
+        unit: servingUnit,
+        storage_unit: storageUnit,
+        cost_per_unit: updates.cost_per_unit !== undefined ? updates.cost_per_unit : originalItem.cost_per_unit,
+        is_system_item: false,  // Not a system item anymore
+        is_composite: originalItem.is_composite,
+        status: 'active',
+        sku: sku,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to clone item:', error);
+      throw new Error('Failed to create business-specific item');
+    }
+
+    return newItem as Item;
+  }
+
+  /**
+   * Edit an item - handles both default items (clones them) and business items (updates them)
+   * Returns the updated/new item
+   */
+  async editItem(itemId: number, businessId: number, updates: Partial<{
+    name: string;
+    name_ar: string;
+    category: ItemCategory;
+    unit: ItemUnit;
+    storage_unit: StorageUnit;
+    cost_per_unit: number;
+    status: 'active' | 'inactive';
+  }>): Promise<Item> {
+    // Get the existing item
+    const existingItem = await this.getItem(itemId);
+    if (!existingItem) {
+      throw new Error('Item not found');
+    }
+
+    // If it's a default item (business_id is null), clone it for the business
+    if (existingItem.business_id === null) {
+      return this.cloneDefaultItemForBusiness(itemId, businessId, updates);
+    }
+
+    // If it belongs to a different business, deny access
+    if (existingItem.business_id !== businessId) {
+      throw new Error('You can only edit your own items');
+    }
+
+    // Validate unit pairing if units are being changed
+    const newUnit = updates.unit || existingItem.unit;
+    const newStorageUnit = updates.storage_unit || existingItem.storage_unit;
+    
+    if (newStorageUnit && newUnit) {
+      const validationError = validateUnitPairing(newStorageUnit as StorageUnit, newUnit as ServingUnit);
+      if (validationError) {
+        throw new Error(validationError);
+      }
+    }
+
+    // Update the existing business item
+    return this.updateItem(itemId, updates);
   }
 
   /**
@@ -572,7 +748,30 @@ export class InventoryService {
    * cost_per_unit = batch_price / batch_quantity (unit price)
    */
   async createCompositeItem(input: CreateCompositeItemInput): Promise<Item & { components: CompositeItemComponent[]; batch_price: number; unit_price: number }> {
-    const { business_id, name, name_ar, category, unit, batch_quantity, batch_unit, components } = input;
+    const { 
+      business_id, 
+      name, 
+      name_ar, 
+      category, 
+      unit,
+      storage_unit: inputStorageUnit,
+      batch_quantity, 
+      batch_unit, 
+      components,
+      production_rate_type,
+      production_rate_weekly_day,
+      production_rate_monthly_day,
+      production_rate_custom_dates
+    } = input;
+    
+    // Determine storage unit (default based on serving unit)
+    const storageUnit = inputStorageUnit || getDefaultStorageUnit(unit as ServingUnit);
+    
+    // Validate unit pairing
+    const validationError = validateUnitPairing(storageUnit, unit as ServingUnit);
+    if (validationError) {
+      throw new Error(validationError);
+    }
 
     // Validate batch_quantity
     if (!batch_quantity || batch_quantity <= 0) {
@@ -611,6 +810,17 @@ export class InventoryService {
     // Generate unique SKU
     const sku = await this.generateItemSku(business_id);
 
+    // Validate production rate fields
+    if (production_rate_type === 'weekly' && (production_rate_weekly_day === undefined || production_rate_weekly_day === null)) {
+      throw new Error('production_rate_weekly_day is required when production_rate_type is weekly');
+    }
+    if (production_rate_type === 'monthly' && (production_rate_monthly_day === undefined || production_rate_monthly_day === null)) {
+      throw new Error('production_rate_monthly_day is required when production_rate_type is monthly');
+    }
+    if (production_rate_type === 'custom' && (!production_rate_custom_dates || production_rate_custom_dates.length === 0)) {
+      throw new Error('production_rate_custom_dates is required when production_rate_type is custom');
+    }
+
     // Create the composite item
     // cost_per_unit stores the unit price for inventory calculations
     const { data: item, error } = await supabaseAdmin
@@ -620,7 +830,8 @@ export class InventoryService {
         name,
         name_ar: name_ar || null,
         category,
-        unit, // The unit used for this item in recipes/inventory (e.g., grams)
+        unit, // The serving unit used for this item in recipes/products (e.g., grams)
+        storage_unit: storageUnit, // The storage unit for inventory (e.g., Kg)
         cost_per_unit: unitPrice, // Cost per single unit (e.g., per gram)
         batch_quantity, // How much one batch produces
         batch_unit, // Unit of the batch quantity
@@ -628,6 +839,10 @@ export class InventoryService {
         is_composite: true,
         status: 'active',
         sku,
+        production_rate_type: production_rate_type || null,
+        production_rate_weekly_day: production_rate_weekly_day ?? null,
+        production_rate_monthly_day: production_rate_monthly_day ?? null,
+        production_rate_custom_dates: production_rate_custom_dates ? JSON.stringify(production_rate_custom_dates) : null,
       })
       .select()
       .single();
@@ -881,6 +1096,169 @@ export class InventoryService {
     }
 
     return items as Item[];
+  }
+
+  // ============ COST CASCADE RECALCULATION ============
+
+  /**
+   * Recalculate all composite items that use a specific item as component
+   * Returns list of composite item IDs that were updated
+   */
+  async recalculateCompositeItemsUsingItem(itemId: number, businessId: number): Promise<number[]> {
+    // Find all composite items that use this item as a component
+    const { data: components, error } = await supabaseAdmin
+      .from('composite_item_components')
+      .select('composite_item_id')
+      .eq('component_item_id', itemId);
+
+    if (error) {
+      console.error('Failed to find composite items using item:', error);
+      return [];
+    }
+
+    const updatedIds: number[] = [];
+    const uniqueCompositeIds = [...new Set(components?.map(c => c.composite_item_id) || [])];
+
+    for (const compositeId of uniqueCompositeIds) {
+      try {
+        await this.recalculateCompositeItemCost(compositeId, businessId);
+        updatedIds.push(compositeId);
+        console.log(`Recalculated composite item ${compositeId} cost due to item ${itemId} price change`);
+      } catch (err) {
+        console.error(`Failed to recalculate composite item ${compositeId}:`, err);
+      }
+    }
+
+    return updatedIds;
+  }
+
+  /**
+   * Recalculate all products that use a specific item (raw or composite) as ingredient
+   * Updates the product's calculated cost based on new ingredient prices
+   */
+  async recalculateProductsUsingItem(itemId: number, businessId: number): Promise<number[]> {
+    // Find all products that use this item as an ingredient
+    const { data: ingredients, error } = await supabaseAdmin
+      .from('product_ingredients')
+      .select('product_id, variant_id, quantity')
+      .eq('item_id', itemId);
+
+    if (error) {
+      console.error('Failed to find products using item:', error);
+      return [];
+    }
+
+    // Get the item's current cost
+    const item = await this.getItem(itemId, businessId);
+    if (!item) return [];
+
+    const effectiveCost = item.business_price ?? item.cost_per_unit;
+    const updatedProductIds: number[] = [];
+    const uniqueProductIds = [...new Set(ingredients?.map(i => i.product_id) || [])];
+
+    for (const productId of uniqueProductIds) {
+      try {
+        // Get all ingredients for this product
+        const { data: productIngredients } = await supabaseAdmin
+          .from('product_ingredients')
+          .select(`
+            id,
+            item_id,
+            quantity,
+            variant_id,
+            items:item_id (
+              id,
+              cost_per_unit,
+              business_price:business_item_prices(price)
+            )
+          `)
+          .eq('product_id', productId);
+
+        if (!productIngredients) continue;
+
+        // Calculate total cost for base product (no variant)
+        let baseCost = 0;
+        const baseIngredients = productIngredients.filter((i: any) => !i.variant_id);
+        for (const ing of baseIngredients) {
+          const itemData = ing.items as any;
+          const ingCost = itemData?.business_price?.[0]?.price ?? itemData?.cost_per_unit ?? 0;
+          baseCost += ing.quantity * ingCost;
+        }
+
+        // Update product's total_cost
+        await supabaseAdmin
+          .from('products')
+          .update({ 
+            total_cost: baseCost,
+            updated_at: new Date().toISOString() 
+          })
+          .eq('id', productId)
+          .eq('business_id', businessId);
+
+        // Also update variant costs if any
+        const variantIngredients = productIngredients.filter((i: any) => i.variant_id);
+        const variantIds = [...new Set(variantIngredients.map((i: any) => i.variant_id))];
+        
+        for (const variantId of variantIds) {
+          let variantCost = 0;
+          const vIngredients = variantIngredients.filter((i: any) => i.variant_id === variantId);
+          for (const ing of vIngredients) {
+            const itemData = ing.items as any;
+            const ingCost = itemData?.business_price?.[0]?.price ?? itemData?.cost_per_unit ?? 0;
+            variantCost += ing.quantity * ingCost;
+          }
+
+          await supabaseAdmin
+            .from('product_variants')
+            .update({ 
+              total_cost: variantCost,
+              updated_at: new Date().toISOString() 
+            })
+            .eq('id', variantId);
+        }
+
+        updatedProductIds.push(productId);
+        console.log(`Recalculated product ${productId} cost due to item ${itemId} price change`);
+      } catch (err) {
+        console.error(`Failed to recalculate product ${productId}:`, err);
+      }
+    }
+
+    return updatedProductIds;
+  }
+
+  /**
+   * Cascade cost update when an item's cost changes
+   * This updates all composite items and products that use this item
+   */
+  async cascadeItemCostUpdate(itemId: number, businessId: number): Promise<{
+    updatedCompositeItems: number[];
+    updatedProducts: number[];
+  }> {
+    console.log(`Starting cost cascade for item ${itemId} in business ${businessId}`);
+
+    // Step 1: Update composite items that use this item
+    const updatedCompositeItems = await this.recalculateCompositeItemsUsingItem(itemId, businessId);
+
+    // Step 2: Update products that use this item directly
+    const updatedProducts = await this.recalculateProductsUsingItem(itemId, businessId);
+
+    // Step 3: For each updated composite item, also update products that use them
+    for (const compositeId of updatedCompositeItems) {
+      const productsUsingComposite = await this.recalculateProductsUsingItem(compositeId, businessId);
+      for (const pid of productsUsingComposite) {
+        if (!updatedProducts.includes(pid)) {
+          updatedProducts.push(pid);
+        }
+      }
+    }
+
+    console.log(`Cost cascade complete: ${updatedCompositeItems.length} composite items, ${updatedProducts.length} products updated`);
+
+    return {
+      updatedCompositeItems,
+      updatedProducts,
+    };
   }
 }
 

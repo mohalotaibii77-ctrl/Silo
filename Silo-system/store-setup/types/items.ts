@@ -38,9 +38,60 @@ export const CATEGORY_TRANSLATIONS: Record<ItemCategory, { en: string; ar: strin
   other: { en: 'Other', ar: 'أخرى' },
 };
 
-// Item Units (simplified)
+// Item Units - Serving units (how items are used in products/recipes)
 export const ITEM_UNITS = ['grams', 'mL', 'piece'] as const;
 export type ItemUnit = typeof ITEM_UNITS[number];
+
+// Storage Units (how items are stored in inventory)
+export const STORAGE_UNITS = ['Kg', 'grams', 'L', 'mL', 'piece'] as const;
+export type StorageUnit = typeof STORAGE_UNITS[number];
+
+// Compatible unit mappings for validation
+export const COMPATIBLE_UNITS: Record<StorageUnit, ItemUnit[]> = {
+  'Kg': ['grams'],
+  'grams': ['grams'],
+  'L': ['mL'],
+  'mL': ['mL'],
+  'piece': ['piece'],
+};
+
+// Get default storage unit for a serving unit
+export function getDefaultStorageUnit(servingUnit: ItemUnit): StorageUnit {
+  switch (servingUnit) {
+    case 'grams':
+      return 'Kg';
+    case 'mL':
+      return 'L';
+    case 'piece':
+      return 'piece';
+    default:
+      return 'Kg';
+  }
+}
+
+// Check if storage and serving units are compatible
+export function areUnitsCompatible(storageUnit: StorageUnit, servingUnit: ItemUnit): boolean {
+  return COMPATIBLE_UNITS[storageUnit]?.includes(servingUnit) ?? false;
+}
+
+// Get compatible serving units for a storage unit
+export function getCompatibleServingUnits(storageUnit: StorageUnit): ItemUnit[] {
+  return COMPATIBLE_UNITS[storageUnit] || ['grams'];
+}
+
+// Get compatible storage units for a serving unit
+export function getCompatibleStorageUnits(servingUnit: ItemUnit): StorageUnit[] {
+  switch (servingUnit) {
+    case 'grams':
+      return ['Kg', 'grams'];
+    case 'mL':
+      return ['L', 'mL'];
+    case 'piece':
+      return ['piece'];
+    default:
+      return ['Kg', 'grams'];
+  }
+}
 
 // Item (raw material/ingredient)
 export interface Item {
@@ -50,7 +101,8 @@ export interface Item {
   name_ar?: string | null;
   sku?: string | null;
   category: ItemCategory;
-  unit: ItemUnit;
+  unit: ItemUnit;                    // Serving unit (for products/recipes)
+  storage_unit?: StorageUnit | null;  // Storage unit (for inventory)
   cost_per_unit: number; // Default price (for composite: unit price = batch_price / batch_quantity)
   business_price?: number | null; // Business-specific price (if set)
   effective_price?: number; // The price to use (business_price or cost_per_unit)
@@ -59,6 +111,11 @@ export interface Item {
   // Batch tracking for composite items
   batch_quantity?: number | null; // How much this recipe produces (e.g., 500)
   batch_unit?: ItemUnit | null; // Unit for batch quantity (e.g., 'grams')
+  // Production rate for composite items
+  production_rate_type?: 'daily' | 'weekly' | 'monthly' | 'custom' | null;
+  production_rate_weekly_day?: number | null; // 0=Sunday, 1=Monday, ..., 6=Saturday
+  production_rate_monthly_day?: number | null; // 1-31
+  production_rate_custom_dates?: string[] | null; // ISO date strings
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
@@ -90,6 +147,7 @@ export interface CreateItemData {
   name_ar?: string;
   category: ItemCategory;
   unit?: ItemUnit;
+  storage_unit?: StorageUnit;
   cost_per_unit?: number;
 }
 
@@ -98,13 +156,20 @@ export interface CreateCompositeItemData {
   name_ar?: string;
   category: ItemCategory;
   unit: ItemUnit;
+  storage_unit?: StorageUnit;
   // Batch tracking: how much this recipe produces
   batch_quantity: number; // e.g., 500 (makes 500 grams)
   batch_unit: ItemUnit; // e.g., 'grams'
   components: { item_id: number; quantity: number }[];
+  // Production rate for composite items
+  production_rate_type?: 'daily' | 'weekly' | 'monthly' | 'custom';
+  production_rate_weekly_day?: number; // 0=Sunday, 1=Monday, ..., 6=Saturday
+  production_rate_monthly_day?: number; // 1-31
+  production_rate_custom_dates?: string[]; // ISO date strings
 }
 
 export interface UpdateItemData extends Partial<CreateItemData> {
   status?: 'active' | 'inactive';
+  storage_unit?: StorageUnit;
 }
 

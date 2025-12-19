@@ -22,3 +22,8 @@ UPDATE items SET storage_unit =
   END
 WHERE storage_unit IS NULL OR storage_unit = 'Kg';
 
+
+
+
+
+

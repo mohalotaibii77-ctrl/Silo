@@ -3,22 +3,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Package, Loader2, Plus, Trash2, Layers, Calculator, Search, ChevronDown, Calendar, Clock } from 'lucide-react';
-import { 
-  CreateCompositeItemData, 
-  Item, 
-  ITEM_CATEGORIES, 
-  ITEM_UNITS, 
-  STORAGE_UNITS,
-  ItemCategory, 
-  ItemUnit, 
-  StorageUnit,
-  CATEGORY_TRANSLATIONS,
-  getDefaultStorageUnit,
-  getCompatibleStorageUnits,
-  areUnitsCompatible
-} from '@/types/items';
+import { CreateCompositeItemData, Item, ItemCategory, ItemUnit, StorageUnit } from '@/types/items';
 import { createCompositeItem, getItems } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface AddCompositeItemModalProps {
   isOpen: boolean;
@@ -35,6 +23,7 @@ interface ComponentEntry {
   quantity: number;
 }
 
+// Fallback constants - will migrate to config context
 const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
 };
@@ -53,15 +42,67 @@ const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }>
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const ITEM_CATEGORIES = [
+  'vegetable', 'fruit', 'meat', 'poultry', 'seafood', 'dairy', 
+  'grain', 'bread', 'sauce', 'condiment', 'spice', 'oil', 
+  'beverage', 'sweetener', 'other'
+] as const;
+
+const ITEM_UNITS = ['grams', 'mL', 'piece'] as const;
+const STORAGE_UNITS = ['Kg', 'grams', 'L', 'mL', 'piece'] as const;
+
+const CATEGORY_TRANSLATIONS: Record<ItemCategory, { en: string; ar: string }> = {
+  vegetable: { en: 'Vegetable', ar: 'خضروات' },
+  fruit: { en: 'Fruit', ar: 'فواكه' },
+  meat: { en: 'Meat', ar: 'لحوم' },
+  poultry: { en: 'Poultry', ar: 'دواجن' },
+  seafood: { en: 'Seafood', ar: 'مأكولات بحرية' },
+  dairy: { en: 'Dairy', ar: 'ألبان' },
+  grain: { en: 'Grain', ar: 'حبوب' },
+  bread: { en: 'Bread', ar: 'خبز' },
+  sauce: { en: 'Sauce', ar: 'صلصات' },
+  condiment: { en: 'Condiment', ar: 'توابل' },
+  spice: { en: 'Spice', ar: 'بهارات' },
+  oil: { en: 'Oil', ar: 'زيوت' },
+  beverage: { en: 'Beverage', ar: 'مشروبات' },
+  sweetener: { en: 'Sweetener', ar: 'محليات' },
+  other: { en: 'Other', ar: 'أخرى' },
+};
+
+function getDefaultStorageUnit(servingUnit: ItemUnit): StorageUnit {
+  switch (servingUnit) {
+    case 'grams': return 'Kg';
+    case 'mL': return 'L';
+    case 'piece': return 'piece';
+    default: return 'Kg';
+  }
+}
+
+function getCompatibleStorageUnits(servingUnit: ItemUnit): StorageUnit[] {
+  switch (servingUnit) {
+    case 'grams': return ['Kg', 'grams'];
+    case 'mL': return ['L', 'mL'];
+    case 'piece': return ['piece'];
+    default: return ['Kg', 'grams'];
+  }
+}
+
+function areUnitsCompatible(storageUnit: StorageUnit, servingUnit: ItemUnit): boolean {
+  return getCompatibleStorageUnits(servingUnit).includes(storageUnit);
+}
+
+
 export function AddCompositeItemModal({ 
   isOpen, 
   onClose, 
   onSuccess, 
   language,
-  currency = 'USD' 
+  currency 
 }: AddCompositeItemModalProps) {
-  const { isRTL, t } = useLanguage();
-  const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
+  const { isRTL, t, currency: contextCurrency } = useLanguage();
+  // Use passed currency or fall back to context currency (from business settings)
+  const activeCurrency = currency || contextCurrency;
+  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [availableItems, setAvailableItems] = useState<Item[]>([]);
@@ -206,7 +247,11 @@ export function AddCompositeItemModal({
            (item.name_ar && item.name_ar.toLowerCase().includes(query));
   });
 
-  // Calculate batch cost from all components (total cost to make one batch)
+  /**
+   * Calculate batch cost from all components (total cost to make one batch)
+   * NOTE: This is for form PREVIEW only. The backend calculates and stores the actual cost.
+   * Unit conversion factors match backend/src/utils/unit-conversion.ts
+   */
   const calculateBatchCost = () => {
     return components.reduce((sum, comp) => {
       if (comp.item && comp.quantity > 0) {
@@ -217,7 +262,10 @@ export function AddCompositeItemModal({
     }, 0);
   };
 
-  // Conversion factors to base unit (grams for weight, mL for volume, 1 for piece)
+  /**
+   * Conversion factors to base unit - must match backend/src/utils/unit-conversion.ts
+   * NOTE: These are duplicated here for form preview only. Backend is source of truth.
+   */
   const CONVERSION_TO_BASE: Record<StorageUnit, number> = {
     'Kg': 1000,    // 1 Kg = 1000 grams
     'grams': 1,
@@ -226,7 +274,10 @@ export function AddCompositeItemModal({
     'piece': 1,
   };
 
-  // Calculate unit price (cost per serving unit of the composite item)
+  /**
+   * Calculate unit price (cost per serving unit of the composite item)
+   * NOTE: This is for form PREVIEW only. Backend calculates actual cost on save.
+   */
   const calculateUnitPrice = () => {
     const batchCost = calculateBatchCost();
     const batchQty = typeof formData.batch_quantity === 'string' 
@@ -236,7 +287,6 @@ export function AddCompositeItemModal({
     if (!batchQty || batchQty <= 0) return 0;
     
     // Convert batch quantity to serving units
-    // e.g., 10 Kg -> 10 * 1000 = 10,000 grams
     const conversionFactor = CONVERSION_TO_BASE[formData.batch_unit] || 1;
     const batchQtyInServingUnits = batchQty * conversionFactor;
     
@@ -428,7 +478,12 @@ export function AddCompositeItemModal({
                           {isRTL ? item.name_ar || item.name : item.name}
                         </div>
                         <div className="text-xs text-zinc-500">
-                          {((item as any).effective_price || item.cost_per_unit || 0).toFixed(3)} / {item.unit}
+                          {(() => {
+                            const cost = (item as any).effective_price || item.cost_per_unit || 0;
+                            return cost > 0 && cost < 0.001 
+                              ? cost.toFixed(Math.min(-Math.floor(Math.log10(cost)) + 2, 6))
+                              : cost.toFixed(3);
+                          })()} / {item.unit}
                         </div>
                       </div>
                     </button>
@@ -525,21 +580,16 @@ export function AddCompositeItemModal({
                 </div>
 
                 {/* Category Row */}
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                    {t('Category *', 'الفئة *')}
-                  </label>
-                  <select
-                    name="category"
-                    value={formData.category}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                  >
-                    {ITEM_CATEGORIES.map(cat => (
-                      <option key={cat} value={cat}>{formatCategoryLabel(cat)}</option>
-                    ))}
-                  </select>
-                </div>
+                <SearchableSelect
+                  label={t('Category *', 'الفئة *')}
+                  value={formData.category}
+                  onChange={(val) => handleChange({ target: { name: 'category', value: val || 'prepared' } } as any)}
+                  options={ITEM_CATEGORIES.map(cat => ({
+                    id: cat,
+                    name: formatCategoryLabel(cat),
+                  }))}
+                  placeholder={t('Select category', 'اختر الفئة')}
+                />
 
                 {/* Batch Yield Section */}
                 <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
@@ -571,19 +621,16 @@ export function AddCompositeItemModal({
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                        {t('Storage Unit', 'وحدة التخزين')}
-                      </label>
-                      <select
-                        name="batch_unit"
+                      <SearchableSelect
+                        label={t('Storage Unit', 'وحدة التخزين')}
                         value={formData.batch_unit}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                      >
-                        {STORAGE_UNITS.map(unit => (
-                          <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleChange({ target: { name: 'batch_unit', value: val || 'kg' } } as any)}
+                        options={STORAGE_UNITS.map(unit => ({
+                          id: unit,
+                          name: formatStorageUnitLabel(unit),
+                        }))}
+                        placeholder={t('Select unit', 'اختر الوحدة')}
+                      />
                     </div>
                   </div>
                 </div>
@@ -601,19 +648,16 @@ export function AddCompositeItemModal({
                        'هذا يحدد حساب تكلفة الوحدة. يجب أن يتطابق مع فئة وحدة الدفعة.')}
                   </p>
                   <div>
-                    <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                      {t('Serving Unit', 'وحدة التقديم')}
-                    </label>
-                    <select
-                      name="unit"
+                    <SearchableSelect
+                      label={t('Serving Unit', 'وحدة التقديم')}
                       value={formData.unit}
-                      onChange={handleChange}
-                      className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                    >
-                      {compatibleServingUnits.map(unit => (
-                        <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                      ))}
-                    </select>
+                      onChange={(val) => handleChange({ target: { name: 'unit', value: val || 'g' } } as any)}
+                      options={compatibleServingUnits.map(unit => ({
+                        id: unit,
+                        name: formatUnitLabel(unit),
+                      }))}
+                      placeholder={t('Select unit', 'اختر الوحدة')}
+                    />
                     <p className="text-[10px] text-zinc-500 mt-1">
                       {t(`Unit cost will be calculated as: Batch Cost ÷ Batch Quantity (per ${formData.unit})`, 
                          `سيتم حساب تكلفة الوحدة كـ: تكلفة الدفعة ÷ كمية الدفعة (لكل ${formData.unit})`)}
@@ -635,14 +679,11 @@ export function AddCompositeItemModal({
 
                   {/* Production Rate Type */}
                   <div className="mb-3">
-                    <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                      {t('Frequency', 'التكرار')}
-                    </label>
-                    <select
-                      name="production_rate_type"
-                      value={formData.production_rate_type}
-                      onChange={(e) => {
-                        const value = e.target.value as '' | 'daily' | 'weekly' | 'monthly' | 'custom';
+                    <SearchableSelect
+                      label={t('Frequency', 'التكرار')}
+                      value={formData.production_rate_type || ''}
+                      onChange={(val) => {
+                        const value = (val || '') as '' | 'daily' | 'weekly' | 'monthly' | 'custom';
                         setFormData(prev => ({
                           ...prev,
                           production_rate_type: value,
@@ -652,57 +693,51 @@ export function AddCompositeItemModal({
                           production_rate_custom_dates: value === 'custom' ? prev.production_rate_custom_dates : [],
                         }));
                       }}
-                      className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                    >
-                      <option value="">{t('None', 'لا شيء')}</option>
-                      <option value="daily">{t('Daily', 'يومي')}</option>
-                      <option value="weekly">{t('Weekly', 'أسبوعي')}</option>
-                      <option value="monthly">{t('Monthly', 'شهري')}</option>
-                      <option value="custom">{t('Custom', 'مخصص')}</option>
-                    </select>
+                      options={[
+                        { id: '', name: t('None', 'لا شيء') },
+                        { id: 'daily', name: t('Daily', 'يومي') },
+                        { id: 'weekly', name: t('Weekly', 'أسبوعي') },
+                        { id: 'monthly', name: t('Monthly', 'شهري') },
+                        { id: 'custom', name: t('Custom', 'مخصص') },
+                      ]}
+                      placeholder={t('Select frequency', 'اختر التكرار')}
+                    />
                   </div>
 
                   {/* Weekly Day Selection */}
                   {formData.production_rate_type === 'weekly' && (
                     <div className="mb-3">
-                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                        {t('Day of Week', 'يوم الأسبوع')} *
-                      </label>
-                      <select
-                        name="production_rate_weekly_day"
+                      <SearchableSelect
+                        label={`${t('Day of Week', 'يوم الأسبوع')} *`}
                         value={formData.production_rate_weekly_day}
-                        onChange={(e) => setFormData(prev => ({ ...prev, production_rate_weekly_day: e.target.value }))}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                      >
-                        <option value="">{t('Select day', 'اختر اليوم')}</option>
-                        <option value="0">{t('Sunday', 'الأحد')}</option>
-                        <option value="1">{t('Monday', 'الإثنين')}</option>
-                        <option value="2">{t('Tuesday', 'الثلاثاء')}</option>
-                        <option value="3">{t('Wednesday', 'الأربعاء')}</option>
-                        <option value="4">{t('Thursday', 'الخميس')}</option>
-                        <option value="5">{t('Friday', 'الجمعة')}</option>
-                        <option value="6">{t('Saturday', 'السبت')}</option>
-                      </select>
+                        onChange={(val) => setFormData(prev => ({ ...prev, production_rate_weekly_day: val ? String(val) : '' }))}
+                        options={[
+                          { id: '0', name: t('Sunday', 'الأحد') },
+                          { id: '1', name: t('Monday', 'الإثنين') },
+                          { id: '2', name: t('Tuesday', 'الثلاثاء') },
+                          { id: '3', name: t('Wednesday', 'الأربعاء') },
+                          { id: '4', name: t('Thursday', 'الخميس') },
+                          { id: '5', name: t('Friday', 'الجمعة') },
+                          { id: '6', name: t('Saturday', 'السبت') },
+                        ]}
+                        placeholder={t('Select day', 'اختر اليوم')}
+                      />
                     </div>
                   )}
 
                   {/* Monthly Day Selection */}
                   {formData.production_rate_type === 'monthly' && (
                     <div className="mb-3">
-                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                        {t('Day of Month', 'يوم الشهر')} *
-                      </label>
-                      <select
-                        name="production_rate_monthly_day"
+                      <SearchableSelect
+                        label={`${t('Day of Month', 'يوم الشهر')} *`}
                         value={formData.production_rate_monthly_day}
-                        onChange={(e) => setFormData(prev => ({ ...prev, production_rate_monthly_day: e.target.value }))}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                      >
-                        <option value="">{t('Select day', 'اختر اليوم')}</option>
-                        {Array.from({ length: 31 }, (_, i) => i + 1).map(day => (
-                          <option key={day} value={day}>{day}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => setFormData(prev => ({ ...prev, production_rate_monthly_day: val ? String(val) : '' }))}
+                        options={Array.from({ length: 31 }, (_, i) => ({
+                          id: String(i + 1),
+                          name: String(i + 1),
+                        }))}
+                        placeholder={t('Select day', 'اختر اليوم')}
+                      />
                       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                         {t('This will occur on this day every month', 'سيحدث هذا في هذا اليوم من كل شهر')}
                       </p>
@@ -829,7 +864,12 @@ export function AddCompositeItemModal({
                             {t('Batch Cost:', 'تكلفة الدفعة:')}
                           </span>
                           <span className="font-semibold text-zinc-900 dark:text-white">
-                            {currencySymbol} {calculateBatchCost().toFixed(3)}
+                            {currencySymbol} {(() => {
+                              const cost = calculateBatchCost();
+                              return cost > 0 && cost < 0.001 
+                                ? cost.toFixed(Math.min(-Math.floor(Math.log10(cost)) + 2, 6))
+                                : cost.toFixed(3);
+                            })()}
                           </span>
                         </div>
                         

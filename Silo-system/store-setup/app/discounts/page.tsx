@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Percent, Plus, Edit2, Trash2, Tag, Calendar, Hash, CheckCircle, XCircle, X } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
 import { getDiscounts, createDiscount, updateDiscount, deleteDiscount, type DiscountCode, type CreateDiscountData } from '@/lib/discounts-api';
@@ -11,6 +12,7 @@ export default function DiscountsPage() {
   const { t, isRTL } = useLanguage();
   const [discounts, setDiscounts] = useState<DiscountCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const hasInitialLoad = useRef(false); // Track if initial load is complete to skip animations
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingDiscount, setEditingDiscount] = useState<DiscountCode | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -33,11 +35,15 @@ export default function DiscountsPage() {
     loadDiscounts();
   }, []);
 
-  const loadDiscounts = async () => {
+  const loadDiscounts = async (isRefresh = false) => {
     try {
-      setIsLoading(true);
+      // Only show loading spinner on initial load, not on refresh
+      if (!isRefresh) {
+        setIsLoading(true);
+      }
       const data = await getDiscounts();
       setDiscounts(data);
+      hasInitialLoad.current = true;
     } catch (err) {
       console.error('Failed to load discounts:', err);
     } finally {
@@ -134,7 +140,7 @@ export default function DiscountsPage() {
         await createDiscount(data);
       }
       handleCloseModal();
-      loadDiscounts();
+      loadDiscounts(true); // Refresh without showing loading spinner
     } catch (err: any) {
       setError(err.response?.data?.error || t('Failed to save discount', 'فشل في حفظ الخصم'));
     } finally {
@@ -145,7 +151,7 @@ export default function DiscountsPage() {
   const handleToggleActive = async (discount: DiscountCode) => {
     try {
       await updateDiscount(discount.id, { is_active: !discount.is_active });
-      loadDiscounts();
+      loadDiscounts(true); // Refresh without showing loading spinner
     } catch (err) {
       console.error('Failed to toggle discount:', err);
     }
@@ -157,7 +163,7 @@ export default function DiscountsPage() {
     }
     try {
       await deleteDiscount(discount.id);
-      loadDiscounts();
+      loadDiscounts(true); // Refresh without showing loading spinner
     } catch (err: any) {
       alert(err.response?.data?.error || t('Failed to delete discount', 'فشل في حذف الخصم'));
     }
@@ -189,8 +195,8 @@ export default function DiscountsPage() {
         animate={{ opacity: 1, y: 0 }}
         className="max-w-6xl mx-auto space-y-6"
       >
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
-          <div className={isRTL ? 'text-right' : ''}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
               {t('Discounts', 'الخصومات')}
             </h1>
@@ -200,7 +206,7 @@ export default function DiscountsPage() {
           </div>
           <button 
             onClick={() => handleOpenModal()}
-            className={`inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors ${isRTL ? 'flex-row-reverse' : ''}`}
+            className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
             {t('Add Discount', 'إضافة خصم')}
@@ -208,7 +214,7 @@ export default function DiscountsPage() {
         </div>
 
         {/* Filter Tabs */}
-        <div className={`flex gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
+        <div className="flex gap-2">
           {[
             { key: 'all', label: t('All', 'الكل'), count: discounts.length },
             { key: 'active', label: t('Active', 'نشط'), count: discounts.filter(d => d.is_active).length },
@@ -254,7 +260,7 @@ export default function DiscountsPage() {
             {filteredDiscounts.map((discount) => (
               <motion.div
                 key={discount.id}
-                initial={{ opacity: 0, y: 10 }}
+                initial={hasInitialLoad.current ? false : { opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`p-5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 ${
                   !discount.is_active || isExpired(discount) ? 'opacity-60' : ''
@@ -439,19 +445,16 @@ export default function DiscountsPage() {
 
                 {/* Discount Type and Value */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5 ${isRTL ? 'text-right' : ''}`}>
-                      {t('Discount Type', 'نوع الخصم')} *
-                    </label>
-                    <select
-                      value={discountType}
-                      onChange={(e) => setDiscountType(e.target.value as 'percentage' | 'fixed')}
-                      className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
-                    >
-                      <option value="percentage">{t('Percentage (%)', 'نسبة مئوية (%)')}</option>
-                      <option value="fixed">{t('Fixed Amount', 'مبلغ ثابت')}</option>
-                    </select>
-                  </div>
+                  <SearchableSelect
+                    label={`${t('Discount Type', 'نوع الخصم')} *`}
+                    value={discountType}
+                    onChange={(val) => setDiscountType((val || 'percentage') as 'percentage' | 'fixed')}
+                    options={[
+                      { id: 'percentage', name: t('Percentage (%)', 'نسبة مئوية (%)') },
+                      { id: 'fixed', name: t('Fixed Amount', 'مبلغ ثابت') },
+                    ]}
+                    placeholder={t('Select type', 'اختر النوع')}
+                  />
                   <div>
                     <label className={`block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5 ${isRTL ? 'text-right' : ''}`}>
                       {t('Discount Value', 'قيمة الخصم')} *

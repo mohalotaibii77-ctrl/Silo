@@ -10,6 +10,7 @@ import api from './api';
 export interface Vendor {
   id: number;
   business_id: number;
+  branch_id?: number | null; // null = available to all branches
   name: string;
   name_ar?: string | null;
   code?: string | null;
@@ -25,6 +26,7 @@ export interface Vendor {
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
+  branch?: { id: number; name: string; name_ar?: string } | null;
 }
 
 export interface InventoryStock {
@@ -60,7 +62,7 @@ export interface PurchaseOrder {
   branch_id?: number | null;
   vendor_id: number;
   order_number: string;
-  status: 'draft' | 'pending' | 'approved' | 'ordered' | 'partial' | 'received' | 'cancelled';
+  status: 'draft' | 'pending' | 'delivered' | 'cancelled' | 'approved' | 'ordered' | 'partial' | 'received'; // Legacy statuses for backwards compatibility
   order_date: string;
   expected_date?: string | null;
   received_date?: string | null;
@@ -69,6 +71,7 @@ export interface PurchaseOrder {
   discount_amount: number;
   total_amount: number;
   notes?: string | null;
+  invoice_image_url?: string | null; // URL to uploaded vendor invoice image
   vendor?: Vendor;
   items?: PurchaseOrderItem[];
 }
@@ -79,8 +82,10 @@ export interface PurchaseOrderItem {
   item_id: number;
   quantity: number;
   received_quantity: number;
-  unit_cost: number;
-  total_cost: number;
+  unit_cost: number | null;  // Calculated at receive: total_cost / received_quantity
+  total_cost: number | null; // Entered by employee at receive from invoice
+  variance_reason?: 'missing' | 'canceled' | 'rejected' | null; // Required if received < ordered
+  variance_note?: string | null; // Required if received > ordered (justification)
   item?: {
     id: number;
     name: string;
@@ -94,17 +99,32 @@ export interface PurchaseOrderItem {
 export interface InventoryTransfer {
   id: number;
   business_id: number;
+  from_business_id?: number | null;
+  to_business_id?: number | null;
   transfer_number: string;
   from_branch_id?: number | null;
   to_branch_id?: number | null;
-  status: 'draft' | 'pending' | 'in_transit' | 'completed' | 'cancelled';
+  status: 'pending' | 'received' | 'cancelled';
   transfer_date: string;
   expected_date?: string | null;
   completed_date?: string | null;
   notes?: string | null;
+  from_business?: { id: number; name: string };
+  to_business?: { id: number; name: string };
   from_branch?: { id: number; name: string; name_ar?: string };
   to_branch?: { id: number; name: string; name_ar?: string };
   items?: InventoryTransferItem[];
+}
+
+export interface TransferDestination {
+  business_id: number;
+  business_name: string;
+  branches: { id: number; name: string; name_ar?: string }[];
+}
+
+export interface TransferDestinationsResponse {
+  destinations: TransferDestination[];
+  role: string;
 }
 
 export interface InventoryTransferItem {
@@ -219,6 +239,7 @@ export async function getVendor(id: number): Promise<Vendor> {
 export async function createVendor(data: {
   name: string;
   name_ar?: string;
+  branch_id?: number | 'all' | null; // null or 'all' = available to all branches
   contact_person?: string;
   email?: string;
   phone?: string;
@@ -270,6 +291,28 @@ export async function getStockLevels(filters?: {
   const url = `/inventory-stock/stock${params.toString() ? `?${params}` : ''}`;
   const response = await api.get<{ success: boolean; data: InventoryStock[] }>(url);
   return response.data.data;
+}
+
+// Stock stats type
+export interface StockStats {
+  total_items: number;
+  low_stock_count: number;
+  out_of_stock_count: number;
+  healthy_stock_count: number;
+  overstocked_count: number;
+}
+
+/**
+ * Get stock statistics from backend
+ * All calculations done server-side
+ */
+export async function getStockStats(branchId?: number): Promise<StockStats> {
+  const params = new URLSearchParams();
+  if (branchId) params.append('branch_id', String(branchId));
+  
+  const url = `/inventory-stock/stock/stats${params.toString() ? `?${params}` : ''}`;
+  const response = await api.get<{ success: boolean; stats: StockStats }>(url);
+  return response.data.stats;
 }
 
 export async function setStockLimits(itemId: number, data: {
@@ -326,7 +369,7 @@ export async function createPurchaseOrder(data: {
   branch_id?: number;
   expected_date?: string;
   notes?: string;
-  items: { item_id: number; quantity: number; unit_cost: number }[];
+  items: { item_id: number; quantity: number }[]; // No prices at creation - entered at receive
 }): Promise<PurchaseOrder> {
   const response = await api.post<{ success: boolean; data: PurchaseOrder }>(
     '/inventory-stock/purchase-orders',
@@ -346,7 +389,7 @@ export async function updatePurchaseOrderStatus(id: number, status: string, note
 export async function updatePurchaseOrder(id: number, data: {
   notes?: string;
   expected_date?: string;
-  items?: { item_id: number; quantity: number; unit_cost: number }[];
+  items?: { item_id: number; quantity: number }[]; // No prices - only quantities can be updated
 }): Promise<PurchaseOrder> {
   const response = await api.put<{ success: boolean; data: PurchaseOrder }>(
     `/inventory-stock/purchase-orders/${id}`,
@@ -364,11 +407,20 @@ export async function getPOActivity(orderId: number): Promise<POActivity[]> {
 
 export async function receivePurchaseOrder(
   id: number,
-  items: { item_id: number; received_quantity: number }[]
+  data: {
+    invoice_image_url: string;
+    items: {
+      item_id: number;
+      received_quantity: number;
+      total_cost: number;
+      variance_reason?: 'missing' | 'canceled' | 'rejected';
+      variance_note?: string;
+    }[];
+  }
 ): Promise<PurchaseOrder> {
   const response = await api.post<{ success: boolean; data: PurchaseOrder }>(
     `/inventory-stock/purchase-orders/${id}/receive`,
-    { items }
+    data
   );
   return response.data.data;
 }
@@ -397,10 +449,18 @@ export async function getTransfer(id: number): Promise<InventoryTransfer> {
   return response.data.data;
 }
 
+export async function getTransferDestinations(): Promise<TransferDestinationsResponse> {
+  const response = await api.get<{ success: boolean; data: TransferDestination[]; role: string }>(
+    '/inventory-stock/transfers/destinations'
+  );
+  return { destinations: response.data.data, role: response.data.role };
+}
+
 export async function createTransfer(data: {
+  from_business_id?: number;
   from_branch_id: number;
+  to_business_id?: number;
   to_branch_id: number;
-  expected_date?: string;
   notes?: string;
   items: { item_id: number; quantity: number }[];
 }): Promise<InventoryTransfer> {
@@ -411,20 +471,20 @@ export async function createTransfer(data: {
   return response.data.data;
 }
 
-export async function startTransfer(id: number): Promise<InventoryTransfer> {
-  const response = await api.post<{ success: boolean; data: InventoryTransfer }>(
-    `/inventory-stock/transfers/${id}/start`
-  );
-  return response.data.data;
-}
-
-export async function completeTransfer(
+export async function receiveTransfer(
   id: number,
   items: { item_id: number; received_quantity: number }[]
 ): Promise<InventoryTransfer> {
   const response = await api.post<{ success: boolean; data: InventoryTransfer }>(
-    `/inventory-stock/transfers/${id}/complete`,
+    `/inventory-stock/transfers/${id}/receive`,
     { items }
+  );
+  return response.data.data;
+}
+
+export async function cancelTransfer(id: number): Promise<InventoryTransfer> {
+  const response = await api.post<{ success: boolean; data: InventoryTransfer }>(
+    `/inventory-stock/transfers/${id}/cancel`
   );
   return response.data.data;
 }
@@ -585,5 +645,187 @@ export async function updatePOTemplate(id: number, data: {
 
 export async function deletePOTemplate(id: number): Promise<void> {
   await api.delete(`/inventory-stock/po-templates/${id}`);
+}
+
+// ==================== INVENTORY TRANSACTIONS & TIMELINE ====================
+
+export type TransactionType = 
+  | 'manual_addition'
+  | 'manual_deduction'
+  | 'transfer_in'
+  | 'transfer_out'
+  | 'order_sale'
+  | 'po_receive'
+  | 'production_consume'
+  | 'production_yield'
+  | 'inventory_count_adjustment'
+  | 'order_void_return';
+
+export type DeductionReason = 'expired' | 'damaged' | 'spoiled' | 'others';
+
+export type ReferenceType = 'order' | 'transfer' | 'purchase_order' | 'production' | 'inventory_count' | 'manual';
+
+export interface InventoryTransaction {
+  id: number;
+  business_id: number;
+  branch_id: number | null;
+  item_id: number;
+  transaction_type: TransactionType;
+  quantity: number;
+  unit: string;
+  deduction_reason: DeductionReason | null;
+  reference_type: ReferenceType | null;
+  reference_id: number | null;
+  notes: string | null;
+  performed_by: number | null;
+  created_at: string;
+  quantity_before: number | null;
+  quantity_after: number | null;
+  cost_per_unit_at_time: number | null;
+  item?: {
+    id: number;
+    name: string;
+    name_ar: string | null;
+    sku: string | null;
+    unit: string;
+    storage_unit: string;
+  };
+  branch?: {
+    id: number;
+    name: string;
+    name_ar: string | null;
+  };
+  user?: {
+    id: number;
+    username: string;
+    full_name: string | null;
+  };
+}
+
+export interface TimelineResponse {
+  transactions: InventoryTransaction[];
+  total: number;
+  page: number;
+  limit: number;
+  has_more: boolean;
+}
+
+export interface TimelineStats {
+  today_transactions: number;
+  today_additions: number;
+  today_deductions: number;
+  week_transactions: number;
+  top_deduction_reasons: { reason: string; count: number }[];
+}
+
+export interface TimelineFilters {
+  branch_id?: number;
+  item_id?: number;
+  transaction_type?: TransactionType;
+  reference_type?: ReferenceType;
+  deduction_reason?: DeductionReason;
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Add stock to inventory (manual addition)
+ * Requires justification notes
+ */
+export async function addStock(data: {
+  item_id: number;
+  branch_id?: number | null;
+  quantity: number;
+  notes: string;
+}): Promise<{ transaction: InventoryTransaction; new_quantity: number }> {
+  const response = await api.post<{ success: boolean; data: { transaction: InventoryTransaction; new_quantity: number } }>(
+    '/inventory/adjustments/add',
+    data
+  );
+  return response.data.data;
+}
+
+/**
+ * Deduct stock from inventory (manual deduction)
+ * Requires reason (expired, damaged, spoiled, others)
+ * If reason is 'others', notes are required
+ */
+export async function deductStock(data: {
+  item_id: number;
+  branch_id?: number | null;
+  quantity: number;
+  reason: DeductionReason;
+  notes?: string | null;
+}): Promise<{ transaction: InventoryTransaction; new_quantity: number }> {
+  const response = await api.post<{ success: boolean; data: { transaction: InventoryTransaction; new_quantity: number } }>(
+    '/inventory/adjustments/deduct',
+    data
+  );
+  return response.data.data;
+}
+
+/**
+ * Get global inventory timeline
+ */
+export async function getInventoryTimeline(filters?: TimelineFilters): Promise<TimelineResponse> {
+  const params = new URLSearchParams();
+  if (filters?.branch_id) params.append('branch_id', String(filters.branch_id));
+  if (filters?.item_id) params.append('item_id', String(filters.item_id));
+  if (filters?.transaction_type) params.append('transaction_type', filters.transaction_type);
+  if (filters?.reference_type) params.append('reference_type', filters.reference_type);
+  if (filters?.deduction_reason) params.append('deduction_reason', filters.deduction_reason);
+  if (filters?.date_from) params.append('date_from', filters.date_from);
+  if (filters?.date_to) params.append('date_to', filters.date_to);
+  if (filters?.page) params.append('page', String(filters.page));
+  if (filters?.limit) params.append('limit', String(filters.limit));
+
+  const url = `/inventory/timeline${params.toString() ? `?${params}` : ''}`;
+  const response = await api.get<{ success: boolean } & TimelineResponse>(url);
+  return {
+    transactions: response.data.transactions,
+    total: response.data.total,
+    page: response.data.page,
+    limit: response.data.limit,
+    has_more: response.data.has_more,
+  };
+}
+
+/**
+ * Get timeline for a specific item
+ */
+export async function getItemTimeline(itemId: number, filters?: Omit<TimelineFilters, 'item_id'>): Promise<TimelineResponse> {
+  const params = new URLSearchParams();
+  if (filters?.branch_id) params.append('branch_id', String(filters.branch_id));
+  if (filters?.transaction_type) params.append('transaction_type', filters.transaction_type);
+  if (filters?.reference_type) params.append('reference_type', filters.reference_type);
+  if (filters?.deduction_reason) params.append('deduction_reason', filters.deduction_reason);
+  if (filters?.date_from) params.append('date_from', filters.date_from);
+  if (filters?.date_to) params.append('date_to', filters.date_to);
+  if (filters?.page) params.append('page', String(filters.page));
+  if (filters?.limit) params.append('limit', String(filters.limit));
+
+  const url = `/inventory/items/${itemId}/timeline${params.toString() ? `?${params}` : ''}`;
+  const response = await api.get<{ success: boolean } & TimelineResponse>(url);
+  return {
+    transactions: response.data.transactions,
+    total: response.data.total,
+    page: response.data.page,
+    limit: response.data.limit,
+    has_more: response.data.has_more,
+  };
+}
+
+/**
+ * Get timeline statistics
+ */
+export async function getTimelineStats(branchId?: number): Promise<TimelineStats> {
+  const params = new URLSearchParams();
+  if (branchId) params.append('branch_id', String(branchId));
+
+  const url = `/inventory/timeline/stats${params.toString() ? `?${params}` : ''}`;
+  const response = await api.get<{ success: boolean; data: TimelineStats }>(url);
+  return response.data.data;
 }
 

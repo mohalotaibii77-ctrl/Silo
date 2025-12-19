@@ -7,6 +7,7 @@ import { Router } from 'express';
 import { storeProductsService } from '../services/store-products.service';
 import { asyncHandler } from '../middleware/error.middleware';
 import { authenticate, requireBusinessAccess } from '../middleware/auth.middleware';
+import { extractPaginationParams, buildPaginatedResponse } from '../utils/pagination';
 
 const router = Router();
 
@@ -16,14 +17,38 @@ router.use(authenticate);
 /**
  * GET /api/store-products
  * Get all products for business
+ * Query params:
+ *   - branch_id: Optional branch ID to check stock availability
+ *   - page, limit: Pagination
+ *   - fields: Partial response fields (comma-separated)
  */
 router.get('/', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const products = await storeProductsService.getProducts(parseInt(req.user!.businessId));
+  const branchId = req.query.branch_id ? parseInt(req.query.branch_id as string) : undefined;
+  const pagination = extractPaginationParams(req);
   
-  res.json({
-    success: true,
-    data: products,
-  });
+  const result = await storeProductsService.getProducts(
+    parseInt(req.user!.businessId), 
+    branchId,
+    {
+      page: pagination.page,
+      limit: pagination.limit,
+      fields: pagination.fields,
+    }
+  );
+  
+  // Support both paginated and non-paginated responses for backward compatibility
+  if ('total' in result) {
+    const response = buildPaginatedResponse(result.data, result.total, pagination, !!pagination.fields);
+    res.json({
+      success: true,
+      ...response,
+    });
+  } else {
+    res.json({
+      success: true,
+      data: result,
+    });
+  }
 }));
 
 /**

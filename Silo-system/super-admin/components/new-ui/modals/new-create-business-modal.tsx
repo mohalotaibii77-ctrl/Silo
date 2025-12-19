@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { businessApi, UserCredentials } from '@/lib/api';
 import type { CreateBusinessInput, BusinessUser } from '@/types';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface NewCreateBusinessModalProps {
   isOpen: boolean;
@@ -375,19 +376,18 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                          <div className="space-y-2">
-                             <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Type</label>
-                             <select 
-                               value={formData.business_type}
-                               onChange={(e) => setFormData({...formData, business_type: e.target.value})}
-                               className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all appearance-none"
-                             >
-                               <option value="restaurant">Restaurant</option>
-                               <option value="cafe">Cafe</option>
-                               <option value="retail">Retail</option>
-                               <option value="service">Service</option>
-                             </select>
-                          </div>
+                          <SearchableSelect
+                            label="Business Type"
+                            options={[
+                              { id: 'restaurant', name: 'Restaurant' },
+                              { id: 'cafe', name: 'Cafe' },
+                              { id: 'retail', name: 'Retail' },
+                              { id: 'service', name: 'Service' },
+                            ]}
+                            value={formData.business_type || 'restaurant'}
+                            onChange={(value) => setFormData({...formData, business_type: value})}
+                            placeholder="Select type"
+                          />
                           <div className="space-y-2">
                              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Phone</label>
                              <div className="relative">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { FolderTree, Plus, Edit2, Trash2, Globe, Building2, GripVertical, X, Search } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,6 +11,7 @@ export default function CategoriesPage() {
   const { t, isRTL } = useLanguage();
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const hasInitialLoad = useRef(false); // Track if initial load is complete to skip animations
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [filter, setFilter] = useState<'all' | 'system' | 'custom'>('all');
@@ -27,11 +28,15 @@ export default function CategoriesPage() {
     loadCategories();
   }, []);
 
-  const loadCategories = async () => {
+  const loadCategories = async (isRefresh = false) => {
     try {
-      setIsLoading(true);
+      // Only show loading spinner on initial load, not on refresh
+      if (!isRefresh) {
+        setIsLoading(true);
+      }
       const data = await getCategories();
       setCategories(data);
+      hasInitialLoad.current = true;
     } catch (err) {
       console.error('Failed to load categories:', err);
     } finally {
@@ -88,7 +93,7 @@ export default function CategoriesPage() {
         });
       }
       handleCloseModal();
-      loadCategories();
+      loadCategories(true); // Refresh without showing loading spinner
     } catch (err: any) {
       setError(err.response?.data?.error || t('Failed to save category', 'فشل في حفظ الفئة'));
     } finally {
@@ -108,7 +113,7 @@ export default function CategoriesPage() {
 
     try {
       await deleteCategory(category.id);
-      loadCategories();
+      loadCategories(true); // Refresh without showing loading spinner
     } catch (err: any) {
       alert(err.response?.data?.error || t('Failed to delete category', 'فشل في حذف الفئة'));
     }
@@ -142,8 +147,8 @@ export default function CategoriesPage() {
         animate={{ opacity: 1, y: 0 }}
         className="max-w-6xl mx-auto space-y-6"
       >
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
-          <div className={isRTL ? 'text-right' : ''}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
               {t('Categories', 'الفئات')}
             </h1>
@@ -153,7 +158,7 @@ export default function CategoriesPage() {
           </div>
           <button 
             onClick={() => handleOpenModal()}
-            className={`inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors ${isRTL ? 'flex-row-reverse' : ''}`}
+            className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
             {t('Add Category', 'إضافة فئة')}
@@ -161,8 +166,8 @@ export default function CategoriesPage() {
         </div>
 
         {/* Filter Tabs & Search */}
-        <div className={`flex flex-col sm:flex-row gap-4 justify-between ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
-          <div className={`flex gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
+        <div className="flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="flex gap-2">
             {[
               { key: 'all', label: t('All', 'الكل'), count: categories.length },
               { key: 'system', label: t('General', 'عامة'), count: categories.filter(c => c.is_system).length },
@@ -232,7 +237,7 @@ export default function CategoriesPage() {
                   {systemCategories.map((category) => (
                     <motion.div
                       key={category.id}
-                      initial={{ opacity: 0, scale: 0.95 }}
+                      initial={hasInitialLoad.current ? false : { opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:shadow-md transition-shadow"
                     >
@@ -272,7 +277,7 @@ export default function CategoriesPage() {
                   {customCategories.map((category) => (
                     <motion.div
                       key={category.id}
-                      initial={{ opacity: 0, scale: 0.95 }}
+                      initial={hasInitialLoad.current ? false : { opacity: 0, scale: 0.95 }}
                       animate={{ opacity: 1, scale: 1 }}
                       className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 hover:shadow-md transition-shadow group"
                     >

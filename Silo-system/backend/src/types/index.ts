@@ -32,13 +32,24 @@ export interface User extends BaseEntity {
   is_active: boolean;
 }
 
-export type UserRole = 'owner' | 'manager' | 'employee' | 'pos' | 'super_admin';
+export type UserRole = 'owner' | 'manager' | 'employee' | 'pos' | 'kitchen_display' | 'super_admin';
 
-// Item Categories (raw materials/ingredients)
+// Item Types: Food (ingredients for recipes) vs Non-Food (accessories for products)
+export type ItemType = 'food' | 'non_food';
+
+// Item Categories
+// - Food items have multiple categories for organization
+// - Non-food items (accessories) have a single 'non_food' category
 export type ItemCategory = 
+  // Food categories
   | 'vegetable' | 'fruit' | 'meat' | 'poultry' | 'seafood' 
   | 'dairy' | 'grain' | 'bread' | 'sauce' | 'condiment' 
-  | 'spice' | 'oil' | 'beverage' | 'sweetener' | 'other';
+  | 'spice' | 'oil' | 'beverage' | 'sweetener'
+  // Non-food (accessories) - single category
+  | 'non_food';
+
+// Accessory order types - when product accessories should be deducted
+export type AccessoryOrderType = 'always' | 'dine_in' | 'takeaway' | 'delivery';
 
 // Serving units (how items are used in products/recipes)
 export type ItemUnit = 'grams' | 'mL' | 'piece';
@@ -49,13 +60,14 @@ export type StorageUnit = 'Kg' | 'grams' | 'L' | 'mL' | 'piece';
 // Unit categories for validation
 export type UnitCategory = 'weight' | 'volume' | 'count';
 
-// Items (Raw Materials / Ingredients)
+// Items (Raw Materials / Ingredients / Packaging / Supplies)
 export interface Item {
   id: number;
   business_id: number | null;
   name: string;
   name_ar?: string | null;
   sku?: string | null;
+  item_type: ItemType;         // Type: food or non_food (accessories)
   category: ItemCategory;
   unit: ItemUnit;              // Serving unit (for products/recipes)
   storage_unit: StorageUnit;   // Storage unit (for inventory)
@@ -71,6 +83,23 @@ export interface Item {
   
   created_at: string;
   updated_at: string;
+}
+
+// Product Accessories (non-food items linked to products)
+export interface ProductAccessory {
+  id: number;
+  product_id: number;
+  variant_id?: number | null;
+  item_id: number;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
+  is_required: boolean;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  
+  // Joined data (populated when needed)
+  item?: Item;
 }
 
 // Category
@@ -106,42 +135,30 @@ export type OrderSource =
 // Order types
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'drive_thru';
 
-// Order status
+// Order status (6 statuses)
+// Flow: 
+//   POS orders: in_progress → completed/cancelled
+//   Delivery API orders: in_progress → completed (food ready) → picked_up (driver collected)
 export type OrderStatus = 
-  | 'pending'           // Order received, not yet confirmed
-  | 'confirmed'         // Order confirmed
-  | 'preparing'         // Kitchen is preparing
-  | 'ready'             // Ready for pickup/delivery
-  | 'out_for_delivery'  // Driver has the order
-  | 'completed'         // Order fulfilled
+  | 'pending'           // Reserved for future use (scheduled orders)
+  | 'in_progress'       // Order being prepared (first status for all orders)
+  | 'completed'         // Food ready - for delivery orders, waiting for pickup
+  | 'picked_up'         // Delivery orders only: driver has picked up the order
   | 'cancelled'         // Order cancelled
-  | 'refunded'          // Order refunded
-  | 'failed';           // Order failed
+  | 'rejected';         // Reserved for future use
 
-// Payment methods
+// Payment methods - Simplified to actual methods used
+// Note: 'pay_later' is not a payment method, it's a payment timing option stored separately
 export type PaymentMethod = 
-  | 'cash'          // Cash
-  | 'card'          // Card at POS
-  | 'card_online'   // Online card payment
-  | 'apple_pay'     // Apple Pay
-  | 'stc_pay'       // STC Pay
-  | 'mada'          // Mada card
-  | 'visa'          // Visa
-  | 'mastercard'    // Mastercard
-  | 'wallet'        // Restaurant wallet/credits
-  | 'app_payment'   // Paid via delivery app
-  | 'bank_transfer' // Bank transfer
-  | 'split'         // Split payment
-  | 'other';        // Other
+  | 'cash'          // Cash payment
+  | 'card';         // Card payment (includes all card types: visa, mada, mastercard, etc.)
 
 // Payment status
 export type PaymentStatus = 
-  | 'pending'        // Payment not yet received
-  | 'paid'           // Fully paid
-  | 'partial'        // Partially paid
+  | 'pending'        // Payment not yet received (dine-in pay later, delivery COD)
+  | 'paid'           // Payment received
+  | 'app_payment'    // Delivery partner handles payment (Jahez, Talabat, etc.)
   | 'refunded'       // Fully refunded
-  | 'partial_refund' // Partially refunded
-  | 'failed'         // Payment failed
   | 'cancelled';     // Payment cancelled
 
 // Main Order interface
@@ -390,6 +407,7 @@ export interface CreateOrderInput {
   driver_name?: string;
   driver_phone?: string;
   driver_id?: string;
+  delivery_partner_id?: number;  // If set, this is a delivery partner order (app handles payment)
   
   // Items
   items: CreateOrderItemInput[];
@@ -410,6 +428,11 @@ export interface CreateOrderInput {
   // Payment
   payment_method?: PaymentMethod;
   payment_reference?: string;
+  is_pay_later?: boolean;  // For dine-in: customer pays after eating
+  
+  // Cash payment details (for upfront cash payments)
+  cash_amount_received?: number;
+  cash_change_given?: number;
   
   // Scheduling
   scheduled_time?: string;
@@ -433,6 +456,8 @@ export interface CreateOrderInput {
 // Create Order Item Input
 export interface CreateOrderItemInput {
   product_id?: number;
+  variant_id?: number;        // Product variant ID for inventory checking
+  bundle_id?: number;         // Bundle ID if this is a bundle
   product_name: string;
   product_name_ar?: string;
   product_sku?: string;
@@ -463,6 +488,56 @@ export interface CreateOrderItemModifierInput {
   unit_price: number;
   
   modifier_type?: string;
+}
+
+// =====================================================
+// CUSTOMER & DRIVER TYPES
+// =====================================================
+
+// Customer interface
+export interface Customer {
+  id: number;
+  business_id: number;
+  branch_id?: number | null;
+  
+  name: string;
+  name_ar?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  
+  address?: string | null;
+  address_lat?: number | null;
+  address_lng?: number | null;
+  
+  notes?: string | null;
+  is_active: boolean;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+// Driver status
+export type DriverStatus = 'available' | 'busy' | 'offline';
+
+// Driver interface
+export interface Driver {
+  id: number;
+  business_id: number;
+  branch_id?: number | null;
+  
+  name: string;
+  name_ar?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  
+  vehicle_type?: string | null;
+  vehicle_number?: string | null;
+  
+  status: DriverStatus;
+  is_active: boolean;
+  
+  created_at: string;
+  updated_at: string;
 }
 
 // Inventory

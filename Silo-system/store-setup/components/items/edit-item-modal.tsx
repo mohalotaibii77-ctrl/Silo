@@ -3,22 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Package, Loader2, Plus, Trash2, Layers, Calculator, Search, ChevronDown, Save } from 'lucide-react';
-import { 
-  Item, 
-  ItemCategory, 
-  ItemUnit, 
-  StorageUnit,
-  ITEM_CATEGORIES, 
-  ITEM_UNITS, 
-  STORAGE_UNITS,
-  CATEGORY_TRANSLATIONS,
-  CompositeItem,
-  getDefaultStorageUnit,
-  getCompatibleStorageUnits,
-  areUnitsCompatible
-} from '@/types/items';
+import { Item, ItemCategory, ItemUnit, StorageUnit, CompositeItem } from '@/types/items';
 import { updateItem, getItems, getCompositeItem, updateCompositeItemComponents, setItemPrice } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { useConfig } from '@/lib/config-context';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface CompositeItemWithComponents extends Item {
   components?: {
@@ -45,6 +34,7 @@ interface ComponentEntry {
   quantity: number;
 }
 
+// Fallback constants for edit modal - will migrate to config context
 const CURRENCY_SYMBOLS: Record<string, string> = {
   USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
 };
@@ -63,16 +53,68 @@ const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }>
   piece: { en: 'Piece', ar: 'قطعة' },
 };
 
+const ITEM_CATEGORIES = [
+  'vegetable', 'fruit', 'meat', 'poultry', 'seafood', 'dairy', 
+  'grain', 'bread', 'sauce', 'condiment', 'spice', 'oil', 
+  'beverage', 'sweetener', 'other'
+] as const;
+
+const ITEM_UNITS = ['grams', 'mL', 'piece'] as const;
+const STORAGE_UNITS = ['Kg', 'grams', 'L', 'mL', 'piece'] as const;
+
+const CATEGORY_TRANSLATIONS: Record<ItemCategory, { en: string; ar: string }> = {
+  vegetable: { en: 'Vegetable', ar: 'خضروات' },
+  fruit: { en: 'Fruit', ar: 'فواكه' },
+  meat: { en: 'Meat', ar: 'لحوم' },
+  poultry: { en: 'Poultry', ar: 'دواجن' },
+  seafood: { en: 'Seafood', ar: 'مأكولات بحرية' },
+  dairy: { en: 'Dairy', ar: 'ألبان' },
+  grain: { en: 'Grain', ar: 'حبوب' },
+  bread: { en: 'Bread', ar: 'خبز' },
+  sauce: { en: 'Sauce', ar: 'صلصات' },
+  condiment: { en: 'Condiment', ar: 'توابل' },
+  spice: { en: 'Spice', ar: 'بهارات' },
+  oil: { en: 'Oil', ar: 'زيوت' },
+  beverage: { en: 'Beverage', ar: 'مشروبات' },
+  sweetener: { en: 'Sweetener', ar: 'محليات' },
+  other: { en: 'Other', ar: 'أخرى' },
+};
+
+// Helper functions
+function getDefaultStorageUnit(servingUnit: ItemUnit): StorageUnit {
+  switch (servingUnit) {
+    case 'grams': return 'Kg';
+    case 'mL': return 'L';
+    case 'piece': return 'piece';
+    default: return 'Kg';
+  }
+}
+
+function getCompatibleStorageUnits(servingUnit: ItemUnit): StorageUnit[] {
+  switch (servingUnit) {
+    case 'grams': return ['Kg', 'grams'];
+    case 'mL': return ['L', 'mL'];
+    case 'piece': return ['piece'];
+    default: return ['Kg', 'grams'];
+  }
+}
+
+function areUnitsCompatible(storageUnit: StorageUnit, servingUnit: ItemUnit): boolean {
+  return getCompatibleStorageUnits(servingUnit).includes(storageUnit);
+}
+
 export function EditItemModal({ 
   isOpen, 
   item,
   compositeDetails: preloadedDetails,
   onClose, 
   onSuccess, 
-  currency = 'USD' 
+  currency 
 }: EditItemModalProps) {
-  const { isRTL, t } = useLanguage();
-  const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
+  const { isRTL, t, currency: contextCurrency } = useLanguage();
+  // Use passed currency or fall back to context currency (from business settings)
+  const activeCurrency = currency || contextCurrency;
+  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [availableItems, setAvailableItems] = useState<Item[]>([]);
@@ -256,7 +298,11 @@ export function EditItemModal({
     );
   });
 
-  // Calculate batch cost from components
+  /**
+   * Calculate batch cost from components - FORM PREVIEW ONLY
+   * Backend calculates and stores actual cost when item is saved
+   * Item prices (effective_price) come from backend API
+   */
   const calculateBatchCost = () => {
     return components.reduce((sum, comp) => {
       if (comp.item && comp.quantity > 0) {
@@ -267,15 +313,22 @@ export function EditItemModal({
     }, 0);
   };
 
-  // Conversion factors to base unit (grams for weight, mL for volume, 1 for piece)
+  /**
+   * Conversion factors - must match backend/src/utils/unit-conversion.ts
+   * NOTE: For form preview only. Backend is source of truth.
+   */
   const CONVERSION_TO_BASE: Record<StorageUnit, number> = {
-    'Kg': 1000,    // 1 Kg = 1000 grams
+    'Kg': 1000,
     'grams': 1,
-    'L': 1000,     // 1 L = 1000 mL
+    'L': 1000,
     'mL': 1,
     'piece': 1,
   };
 
+  /**
+   * Calculate unit price - FORM PREVIEW ONLY
+   * Backend calculates actual cost on save
+   */
   const calculateUnitPrice = () => {
     const batchCost = calculateBatchCost();
     const batchQty = typeof formData.batch_quantity === 'string' 
@@ -283,12 +336,9 @@ export function EditItemModal({
       : formData.batch_quantity;
     if (!batchQty || batchQty <= 0) return 0;
     
-    // Convert batch quantity to serving units
-    // e.g., 10 Kg -> 10 * 1000 = 10,000 grams
     const conversionFactor = CONVERSION_TO_BASE[formData.batch_unit] || 1;
     const batchQtyInServingUnits = batchQty * conversionFactor;
     
-    // Cost per serving unit = Batch Cost ÷ Batch Quantity (in serving units)
     return batchCost / batchQtyInServingUnits;
   };
 
@@ -450,7 +500,13 @@ export function EditItemModal({
                           {isRTL ? i.name_ar || i.name : i.name}
                         </div>
                         <div className="text-xs text-zinc-500">
-                          {((i as any).effective_price || i.cost_per_unit || 0).toFixed(3)} / {i.unit}
+                          {(() => {
+                            const cost = (i as any).effective_price || i.cost_per_unit || 0;
+                            // Show more decimals for very small costs
+                            return cost > 0 && cost < 0.001 
+                              ? cost.toFixed(Math.min(-Math.floor(Math.log10(cost)) + 2, 6))
+                              : cost.toFixed(3);
+                          })()} / {i.unit}
                         </div>
                       </div>
                     </button>
@@ -555,21 +611,16 @@ export function EditItemModal({
                 </div>
 
                 {/* Category */}
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                    {t('Category *', 'الفئة *')}
-                  </label>
-                  <select
-                    name="category"
-                    value={formData.category}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                  >
-                    {ITEM_CATEGORIES.map(cat => (
-                      <option key={cat} value={cat}>{formatCategoryLabel(cat)}</option>
-                    ))}
-                  </select>
-                </div>
+                <SearchableSelect
+                  label={t('Category *', 'الفئة *')}
+                  value={formData.category}
+                  onChange={(val) => handleChange({ target: { name: 'category', value: val || 'other' } } as any)}
+                  options={ITEM_CATEGORIES.map(cat => ({
+                    id: cat,
+                    name: formatCategoryLabel(cat),
+                  }))}
+                  placeholder={t('Select category', 'اختر الفئة')}
+                />
 
                 {/* Raw Item Fields */}
                 {!item.is_composite && (
@@ -581,37 +632,31 @@ export function EditItemModal({
                       </p>
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
-                            {t('Storage Unit *', 'وحدة التخزين *')}
-                          </label>
-                          <select
-                            name="storage_unit"
+                          <SearchableSelect
+                            label={t('Storage Unit *', 'وحدة التخزين *')}
                             value={formData.storage_unit}
-                            onChange={handleChange}
-                            className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
-                          >
-                            {compatibleStorageUnits.map(unit => (
-                              <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
-                            ))}
-                          </select>
+                            onChange={(val) => handleChange({ target: { name: 'storage_unit', value: val || 'kg' } } as any)}
+                            options={compatibleStorageUnits.map(unit => ({
+                              id: unit,
+                              name: formatStorageUnitLabel(unit),
+                            }))}
+                            placeholder={t('Select unit', 'اختر الوحدة')}
+                          />
                           <p className="text-[10px] text-zinc-500 mt-1">
                             {t('How this item is stored', 'كيف يتم التخزين')}
                           </p>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
-                            {t('Serving Unit *', 'وحدة التقديم *')}
-                          </label>
-                          <select
-                            name="unit"
+                          <SearchableSelect
+                            label={t('Serving Unit *', 'وحدة التقديم *')}
                             value={formData.unit}
-                            onChange={handleChange}
-                            className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
-                          >
-                            {ITEM_UNITS.map(unit => (
-                              <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                            ))}
-                          </select>
+                            onChange={(val) => handleChange({ target: { name: 'unit', value: val || 'g' } } as any)}
+                            options={ITEM_UNITS.map(unit => ({
+                              id: unit,
+                              name: formatUnitLabel(unit),
+                            }))}
+                            placeholder={t('Select unit', 'اختر الوحدة')}
+                          />
                           <p className="text-[10px] text-zinc-500 mt-1">
                             {t('How this item is used', 'كيف يتم الاستخدام')}
                           </p>
@@ -629,7 +674,7 @@ export function EditItemModal({
                         name="cost_per_unit"
                         value={formData.cost_per_unit}
                         onChange={handleChange}
-                        step="0.001"
+                        step="0.0001"
                         min="0"
                         dir="ltr"
                         className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
@@ -669,19 +714,16 @@ export function EditItemModal({
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
-                            {t('Storage Unit', 'وحدة التخزين')}
-                          </label>
-                          <select
-                            name="batch_unit"
+                          <SearchableSelect
+                            label={t('Storage Unit', 'وحدة التخزين')}
                             value={formData.batch_unit}
-                            onChange={handleChange}
-                            className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                          >
-                            {STORAGE_UNITS.map(unit => (
-                              <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
-                            ))}
-                          </select>
+                            onChange={(val) => handleChange({ target: { name: 'batch_unit', value: val || 'kg' } } as any)}
+                            options={STORAGE_UNITS.map(unit => ({
+                              id: unit,
+                              name: formatStorageUnitLabel(unit),
+                            }))}
+                            placeholder={t('Select unit', 'اختر الوحدة')}
+                          />
                         </div>
                       </div>
                     </div>
@@ -698,16 +740,15 @@ export function EditItemModal({
                         {t('How is this item measured when used in products? Cost is calculated per this unit.', 
                            'كيف يتم قياس هذا العنصر عند استخدامه في المنتجات؟ يتم حساب التكلفة لكل وحدة.')}
                       </p>
-                      <select
-                        name="unit"
+                      <SearchableSelect
                         value={formData.unit}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                      >
-                        {getCompatibleServingUnitsForStorage(formData.batch_unit).map(unit => (
-                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleChange({ target: { name: 'unit', value: val || 'g' } } as any)}
+                        options={getCompatibleServingUnitsForStorage(formData.batch_unit).map(unit => ({
+                          id: unit,
+                          name: formatUnitLabel(unit),
+                        }))}
+                        placeholder={t('Select unit', 'اختر الوحدة')}
+                      />
                       <p className="text-[10px] text-zinc-500 mt-2">
                         {t(`Cost per ${formData.unit} = Batch Cost ÷ ${formData.batch_quantity || '?'} ${formData.batch_unit}`,
                            `التكلفة لكل ${formData.unit} = تكلفة الدفعة ÷ ${formData.batch_quantity || '?'} ${formData.batch_unit}`)}
@@ -778,7 +819,12 @@ export function EditItemModal({
                                 {t('Batch Cost:', 'تكلفة الدفعة:')}
                               </span>
                               <span className="font-semibold text-zinc-900 dark:text-white">
-                                {currencySymbol} {calculateBatchCost().toFixed(3)}
+                                {currencySymbol} {(() => {
+                                  const cost = calculateBatchCost();
+                                  return cost > 0 && cost < 0.001 
+                                    ? cost.toFixed(Math.min(-Math.floor(Math.log10(cost)) + 2, 6))
+                                    : cost.toFixed(3);
+                                })()}
                               </span>
                             </div>
                             

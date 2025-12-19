@@ -100,3 +100,8 @@ ALTER TABLE product_ingredients ADD COLUMN IF NOT EXISTS removable BOOLEAN DEFAU
 
 runMigration();
 
+
+
+
+
+

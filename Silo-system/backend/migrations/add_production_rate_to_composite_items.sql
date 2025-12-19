@@ -62,3 +62,8 @@ COMMENT ON COLUMN items.production_rate_weekly_day IS 'Day of week for weekly pr
 COMMENT ON COLUMN items.production_rate_monthly_day IS 'Day of month for monthly production (1-31). Required if production_rate_type is monthly.';
 COMMENT ON COLUMN items.production_rate_custom_dates IS 'JSONB array of ISO date strings for custom production schedule. Required if production_rate_type is custom.';
 
+
+
+
+
+

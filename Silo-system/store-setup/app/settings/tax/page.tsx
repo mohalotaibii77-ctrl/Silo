@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Percent, Save, FileText } from 'lucide-react';
+import { ArrowLeft, Percent, Send, FileText, AlertCircle } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
@@ -14,6 +14,11 @@ interface TaxSettings {
   tax_number: string;
 }
 
+interface OriginalSettings {
+  vat_enabled: boolean;
+  tax_rate: number;
+}
+
 export default function TaxSettingsPage() {
   const router = useRouter();
   const { isRTL, t, formatCurrency } = useLanguage();
@@ -23,10 +28,13 @@ export default function TaxSettingsPage() {
     tax_rate: 0,
     tax_number: '',
   });
+  const [originalSettings, setOriginalSettings] = useState<OriginalSettings>({
+    vat_enabled: false,
+    tax_rate: 0,
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
+  const [message, setMessage] = useState<{ type: string; text: string }>({ type: '', text: '' });
 
   useEffect(() => {
     loadSettings();
@@ -43,6 +51,10 @@ export default function TaxSettingsPage() {
           tax_rate: data.tax_rate || 0,
           tax_number: data.tax_number || '',
         });
+        setOriginalSettings({
+          vat_enabled: data.vat_enabled || false,
+          tax_rate: data.tax_rate || 0,
+        });
       }
     } catch (err) {
       console.error('Failed to load tax settings:', err);
@@ -54,19 +66,43 @@ export default function TaxSettingsPage() {
   const handleSave = async () => {
     try {
       setIsSaving(true);
-      setError(null);
-      setSuccess(false);
+      setMessage({ type: '', text: '' });
 
-      await api.put('/business-settings', {
-        vat_enabled: settings.vat_enabled,
-        tax_rate: settings.vat_enabled ? settings.tax_rate : 0,
-        tax_number: settings.tax_number,
+      // Check if there are any changes
+      const vatEnabledChanged = settings.vat_enabled !== originalSettings.vat_enabled;
+      const vatRateChanged = settings.tax_rate !== originalSettings.tax_rate;
+      const hasChanges = vatEnabledChanged || vatRateChanged;
+      
+      if (!hasChanges) {
+        setMessage({ type: 'info', text: t('No changes detected', 'لم يتم اكتشاف تغييرات') });
+        setIsSaving(false);
+        return;
+      }
+
+      // Always include both values so the request shows complete tax settings
+      const changeData = {
+        request_type: 'tax',
+        new_vat_enabled: settings.vat_enabled,
+        new_vat_rate: settings.vat_enabled ? settings.tax_rate : 0,
+      };
+
+      await api.post('/business-settings/change-requests', changeData);
+      setMessage({ 
+        type: 'success', 
+        text: t('Change request submitted! Waiting for admin approval.', 'تم إرسال طلب التغيير! في انتظار موافقة المسؤول.') 
       });
-
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
-      setError(err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات'));
+      if (err.response?.data?.error?.includes('pending request')) {
+        setMessage({ 
+          type: 'warning', 
+          text: t('You already have a pending tax change request.', 'لديك بالفعل طلب تغيير الضريبة قيد الانتظار.') 
+        });
+      } else {
+        setMessage({ 
+          type: 'error', 
+          text: err.response?.data?.error || t('Failed to submit request', 'فشل في إرسال الطلب') 
+        });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -117,15 +153,23 @@ export default function TaxSettingsPage() {
           </div>
         </div>
 
+        {/* Approval Notice */}
+        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            {t('Tax/VAT changes require admin approval. Submit your changes and we\'ll review them shortly.', 'تتطلب تغييرات الضريبة موافقة المسؤول. أرسل تغييراتك وسنراجعها قريبًا.')}
+          </p>
+        </div>
+
         {/* Status Messages */}
-        {error && (
-          <div className="p-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
-            {error}
-          </div>
-        )}
-        {success && (
-          <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400">
-            {t('Settings saved successfully!', 'تم حفظ الإعدادات بنجاح!')}
+        {message.text && (
+          <div className={`p-4 rounded-xl ${
+            message.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' :
+            message.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400' :
+            message.type === 'info' ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' :
+            'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+          }`}>
+            {message.text}
           </div>
         )}
 
@@ -256,15 +300,15 @@ export default function TaxSettingsPage() {
           )}
         </div>
 
-        {/* Save Button */}
+        {/* Submit Button */}
         <div className="flex justify-end">
           <button
             onClick={handleSave}
             disabled={isSaving}
             className="flex items-center gap-2 px-6 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-medium hover:bg-zinc-800 dark:hover:bg-zinc-100 disabled:opacity-50 transition-colors"
           >
-            <Save className="w-5 h-5" />
-            {isSaving ? t('Saving...', 'جاري الحفظ...') : t('Save Changes', 'حفظ التغييرات')}
+            <Send className="w-5 h-5" />
+            {isSaving ? t('Submitting...', 'جاري الإرسال...') : t('Submit Change Request', 'إرسال طلب التغيير')}
           </button>
         </div>
       </motion.div>

@@ -20,13 +20,24 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   QAR: 'QAR', BHD: 'BHD', OMR: 'OMR', EGP: 'EGP', JOD: 'JD', INR: '₹', CNY: '¥', JPY: '¥',
 };
 
-export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'USD' }: EditPriceModalProps) {
-  const { isRTL, t } = useLanguage();
+export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency }: EditPriceModalProps) {
+  const { isRTL, t, currency: contextCurrency } = useLanguage();
+  // Use passed currency or fall back to context currency (from business settings)
+  const activeCurrency = currency || contextCurrency;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [price, setPrice] = useState('');
 
-  const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
+  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
+
+  // Format price - handles small values like 0.0003
+  const formatCost = (cost: number) => {
+    if (cost > 0 && cost < 0.001) {
+      const significantDecimals = Math.max(4, -Math.floor(Math.log10(cost)) + 2);
+      return cost.toFixed(Math.min(significantDecimals, 6));
+    }
+    return cost.toFixed(3);
+  };
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -161,7 +172,7 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'U
                     {t('Default price:', 'السعر الافتراضي:')}
                   </span>
                   <span className="font-medium text-zinc-900 dark:text-white" dir="ltr">
-                    {currencySymbol} {item.cost_per_unit.toFixed(3)} / {item.unit}
+                    {currencySymbol} {formatCost(item.cost_per_unit)} / {item.unit}
                   </span>
                 </div>
 
@@ -176,7 +187,7 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'U
                       type="number"
                       value={price}
                       onChange={(e) => setPrice(e.target.value)}
-                      step="0.001"
+                      step="0.0001"
                       min="0"
                       dir="ltr"
                       className={`w-full ${isRTL ? 'pr-12 pl-4' : 'pl-12 pr-4'} py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-lg font-medium`}
@@ -194,7 +205,7 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency = 'U
                     className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
                   >
                     <RotateCcw className="w-4 h-4" />
-                    {t(`Reset to default price (${currencySymbol} ${item.cost_per_unit.toFixed(3)})`, `إعادة تعيين السعر الافتراضي (${currencySymbol} ${item.cost_per_unit.toFixed(3)})`)}
+                    {t(`Reset to default price (${currencySymbol} ${formatCost(item.cost_per_unit)})`, `إعادة تعيين السعر الافتراضي (${currencySymbol} ${formatCost(item.cost_per_unit)})`)}
                   </button>
                 )}
               </form>

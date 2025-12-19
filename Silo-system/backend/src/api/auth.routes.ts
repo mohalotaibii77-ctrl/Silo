@@ -13,23 +13,33 @@ const router = Router();
  * POST /api/auth/login
  * Login with email and password
  */
-router.post('/login', asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required',
+      });
+    }
+
+    const result = await authService.login(email, password);
+    
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Auth login error:', error);
+    const message = error instanceof Error ? error.message : 'Login failed';
+    
+    res.status(401).json({
       success: false,
-      error: 'Email and password are required',
+      error: message,
     });
   }
-
-  const result = await authService.login(email, password);
-  
-  res.json({
-    success: true,
-    data: result,
-  });
-}));
+});
 
 /**
  * POST /api/auth/register
@@ -94,4 +104,7 @@ router.post('/refresh', authenticate, asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+
+
 

@@ -209,3 +209,8 @@ CREATE INDEX idx_inventory_movements_type ON inventory_movements(movement_type);
 CREATE INDEX idx_inventory_movements_date ON inventory_movements(created_at);
 CREATE INDEX idx_inventory_movements_reference ON inventory_movements(reference_type, reference_id);
 
+
+
+
+
+

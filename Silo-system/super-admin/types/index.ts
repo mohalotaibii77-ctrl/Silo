@@ -56,7 +56,7 @@ export interface Business {
   logo_url: string | null;
   certificate_url: string | null;
   subscription_tier: 'basic' | 'pro' | 'enterprise';
-  subscription_status: 'active' | 'inactive' | 'suspended' | 'trial';
+  subscription_status: 'active' | 'inactive';
   max_users: number;
   max_products: number;
   branch_count: number;
@@ -95,7 +95,7 @@ export interface CreateBusinessInput {
 }
 
 export interface UpdateBusinessInput extends Partial<CreateBusinessInput> {
-  subscription_status?: 'active' | 'inactive' | 'suspended' | 'trial';
+  subscription_status?: 'active' | 'inactive';
   users?: BusinessUser[]; // Users to add/update
   deleteUserIds?: number[]; // IDs of users to delete
 }

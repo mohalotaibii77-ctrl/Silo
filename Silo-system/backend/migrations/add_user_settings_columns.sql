@@ -11,3 +11,8 @@ COMMENT ON COLUMN business_users.preferred_language IS 'User preferred language 
 COMMENT ON COLUMN business_users.preferred_theme IS 'User preferred theme (light, dark, system)';
 COMMENT ON COLUMN business_users.settings IS 'Additional user settings as JSON (for future extensibility)';
 
+
+
+
+
+

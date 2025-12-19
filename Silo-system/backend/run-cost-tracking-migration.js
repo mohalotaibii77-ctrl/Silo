@@ -125,3 +125,8 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_updated_at TIMESTAMP WITH TIM
 
 runMigration();
 
+
+
+
+
+

@@ -10,6 +10,21 @@ import { ownerService } from '../services/owner.service';
 const router = Router();
 
 /**
+ * GET /api/owners/platform-stats
+ * Get platform-wide statistics for super-admin dashboard
+ * All calculations done on backend
+ */
+router.get('/platform-stats', async (req: Request, res: Response) => {
+  try {
+    const stats = await ownerService.getPlatformStats();
+    res.json({ success: true, stats });
+  } catch (error: any) {
+    console.error('Error fetching platform stats:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch platform stats' });
+  }
+});
+
+/**
  * GET /api/owners
  * Get all owners with their business counts
  */

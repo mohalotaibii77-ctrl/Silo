@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Package, Layers, Calculator, Info } from 'lucide-react';
-import { Item, ItemUnit, StorageUnit, CATEGORY_TRANSLATIONS, ItemCategory } from '@/types/items';
+import { Item, ItemUnit, StorageUnit } from '@/types/items';
 import { getCompositeItem } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { useConfig } from '@/lib/config-context';
 
 interface ViewItemModalProps {
   isOpen: boolean;
@@ -14,24 +15,6 @@ interface ViewItemModalProps {
   onClose: () => void;
   currency?: string;
 }
-
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
-};
-
-const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
-  grams: { en: 'Grams', ar: 'جرام' },
-  mL: { en: 'Milliliters', ar: 'مل' },
-  piece: { en: 'Piece', ar: 'قطعة' },
-};
-
-const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
-  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
-  grams: { en: 'Grams', ar: 'جرام' },
-  L: { en: 'Liter', ar: 'لتر' },
-  mL: { en: 'Milliliters', ar: 'مل' },
-  piece: { en: 'Piece', ar: 'قطعة' },
-};
 
 interface CompositeItemDetails extends Item {
   components?: {
@@ -55,10 +38,13 @@ export function ViewItemModal({
   item, 
   compositeDetails: preloadedDetails,
   onClose, 
-  currency = 'USD' 
+  currency 
 }: ViewItemModalProps) {
-  const { isRTL, t } = useLanguage();
-  const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
+  const { isRTL, t, currency: contextCurrency } = useLanguage();
+  const { config, getCategoryLabel, getCurrencySymbol, getServingUnit, getStorageUnit } = useConfig();
+  // Use passed currency or fall back to context currency (from business settings)
+  const activeCurrency = currency || contextCurrency;
+  const currencySymbol = getCurrencySymbol(activeCurrency);
   const [loading, setLoading] = useState(false);
   const [fetchedDetails, setFetchedDetails] = useState<CompositeItemDetails | null>(null);
 
@@ -100,25 +86,33 @@ export function ViewItemModal({
   };
 
   const formatUnitLabel = (unit: ItemUnit) => {
-    return isRTL ? UNIT_TRANSLATIONS[unit]?.ar : UNIT_TRANSLATIONS[unit]?.en;
+    const servingUnit = getServingUnit(unit);
+    return isRTL ? servingUnit?.name_ar || unit : servingUnit?.name || unit;
   };
 
   const formatStorageUnitLabel = (unit: StorageUnit) => {
-    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit]?.ar : STORAGE_UNIT_TRANSLATIONS[unit]?.en;
+    const storageUnit = getStorageUnit(unit);
+    return isRTL ? storageUnit?.name_ar || unit : storageUnit?.name || unit;
   };
 
-  const formatCategoryLabel = (category: ItemCategory) => {
-    if (CATEGORY_TRANSLATIONS[category]) {
-      return isRTL ? CATEGORY_TRANSLATIONS[category].ar : CATEGORY_TRANSLATIONS[category].en;
-    }
-    return category.charAt(0).toUpperCase() + category.slice(1);
+  const formatCategoryLabel = (category: string) => {
+    return getCategoryLabel(category, isRTL ? 'ar' : 'en');
   };
 
+  // Format price - handles small values like 0.0003
   const formatPrice = (price: number) => {
+    // For very small amounts (< 0.001), show more decimal places to avoid rounding to 0
+    if (price > 0 && price < 0.001) {
+      const significantDecimals = Math.max(4, -Math.floor(Math.log10(price)) + 2);
+      return `${currencySymbol} ${price.toFixed(Math.min(significantDecimals, 6))}`;
+    }
     return `${currencySymbol} ${price.toFixed(3)}`;
   };
 
-  // Calculate total batch cost from components
+  /**
+   * Sum component costs for display
+   * component_cost values come from backend API
+   */
   const calculateBatchCost = () => {
     if (!compositeDetails?.components) return 0;
     return compositeDetails.components.reduce((sum, comp) => {

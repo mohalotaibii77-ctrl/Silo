@@ -5,7 +5,34 @@ import bcrypt from 'bcryptjs';
 
 const router = Router();
 
-const DEFAULT_PASSWORD = '90074007';
+const DEFAULT_PASSWORD = '90074009';
+
+// Default permissions by role
+const DEFAULT_PERMISSIONS = {
+  manager: {
+    orders: true,
+    menu_edit: true,
+    inventory: true,
+    delivery: true,
+    tables: true,
+    drivers: true,
+    discounts: true,
+    pos_access: true,  // Managers can access POS by default
+  },
+  employee: {
+    orders: false,
+    menu_edit: false,
+    inventory: false,
+    delivery: false,
+    tables: false,
+    drivers: false,
+    discounts: false,
+    pos_access: false, // Must be explicitly granted
+  },
+  // POS and Kitchen Display have fixed access - no configurable permissions
+  pos: null,
+  kitchen_display: null,
+};
 
 interface AuthenticatedRequest extends Request {
   businessUser?: {
@@ -150,7 +177,7 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
 
     const { data: users, error } = await supabase
       .from('business_users')
-      .select('id, username, role, first_name, last_name, email, phone, status, last_login, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, last_login, created_at')
       .eq('business_id', businessId)
       .order('created_at', { ascending: true });
 
@@ -172,14 +199,14 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
 router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
-    const { username, role, first_name, last_name, email, phone } = req.body;
+    const { username, role, first_name, last_name, email, phone, permissions } = req.body;
 
     if (!username || !username.trim()) {
       return res.status(400).json({ error: 'Username is required' });
     }
 
-    if (!role || !['manager', 'employee', 'pos'].includes(role)) {
-      return res.status(400).json({ error: 'Role must be manager, employee, or pos' });
+    if (!role || !['manager', 'employee', 'pos', 'kitchen_display'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be manager, employee, pos, or kitchen_display' });
     }
 
     // Check max users limit
@@ -198,12 +225,12 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
       return res.status(400).json({ error: `Maximum ${business.max_users} users allowed for this business` });
     }
 
-    // Check if username already exists in this business
+    // Check if username already exists in this business (case-insensitive to match login behavior)
     const { data: existing } = await supabase
       .from('business_users')
       .select('id')
       .eq('business_id', businessId)
-      .eq('username', username.trim())
+      .ilike('username', username.trim())
       .single();
 
     if (existing) {
@@ -212,6 +239,17 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
 
     // Hash password
     const password_hash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+
+    // Set permissions: use provided permissions or default based on role
+    // POS and Kitchen Display don't have configurable permissions
+    let userPermissions = null;
+    if (role === 'manager' || role === 'employee') {
+      if (permissions && typeof permissions === 'object') {
+        userPermissions = permissions;
+      } else {
+        userPermissions = DEFAULT_PERMISSIONS[role as 'manager' | 'employee'];
+      }
+    }
 
     const { data: user, error } = await supabase
       .from('business_users')
@@ -225,8 +263,10 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
         email: email?.trim() || null,
         phone: phone?.trim() || null,
         status: 'active',
+        permissions: userPermissions,
+        password_changed: false, // Requires password change on first login
       })
-      .select('id, username, role, first_name, last_name, email, phone, status, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at')
       .single();
 
     if (error) throw error;
@@ -254,7 +294,7 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
     const businessId = req.businessUser?.business_id;
     const currentUserId = req.businessUser?.id;
     const userId = parseInt(req.params.id);
-    const { username, role, first_name, last_name, email, phone, status } = req.body;
+    const { username, role, first_name, last_name, email, phone, status, permissions } = req.body;
 
     // Check if user belongs to this business
     const { data: user } = await supabase
@@ -291,6 +331,20 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
       }
     }
 
+    // Check if new username already exists (case-insensitive to match login behavior)
+    if (username !== undefined && username.trim().toLowerCase() !== user.username.toLowerCase()) {
+      const { data: existingUsername } = await supabase
+        .from('business_users')
+        .select('id')
+        .eq('business_id', businessId)
+        .ilike('username', username.trim())
+        .single();
+
+      if (existingUsername) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+    }
+
     const updateData: any = { updated_at: new Date().toISOString() };
     if (username !== undefined) updateData.username = username.trim();
     if (role !== undefined && user.role !== 'owner') updateData.role = role;
@@ -299,12 +353,26 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
     if (email !== undefined) updateData.email = email?.trim() || null;
     if (phone !== undefined) updateData.phone = phone?.trim() || null;
     if (status !== undefined && user.role !== 'owner') updateData.status = status;
+    
+    // Update permissions only for manager/employee roles
+    const effectiveRole = role !== undefined ? role : user.role;
+    if (permissions !== undefined && (effectiveRole === 'manager' || effectiveRole === 'employee')) {
+      updateData.permissions = permissions;
+    }
+    // If role is changing to POS or Kitchen Display, clear permissions
+    if (role !== undefined && (role === 'pos' || role === 'kitchen_display')) {
+      updateData.permissions = null;
+    }
+    // If role is changing to manager/employee and no permissions provided, set defaults
+    if (role !== undefined && (role === 'manager' || role === 'employee') && permissions === undefined) {
+      updateData.permissions = DEFAULT_PERMISSIONS[role as 'manager' | 'employee'];
+    }
 
     const { data, error } = await supabase
       .from('business_users')
       .update(updateData)
       .eq('id', userId)
-      .select('id, username, role, first_name, last_name, email, phone, status, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at')
       .single();
 
     if (error) throw error;

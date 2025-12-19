@@ -1,0 +1,63 @@
+---
+alwaysApply: true
+---
+## Architecture Principles: Backend as the Engine
+
+### Core Principle
+**The backend is the single engine that powers ALL frontends.** Every piece of business logic, data processing, calculation, validation, and transformation MUST happen in the backend. Frontends are purely visual interfaces that display what the backend provides.
+
+### Backend Responsibilities (ALL business logic lives here)
+- **ALL calculations** - margins, costs, totals, taxes, discounts, commissions, conversions, aggregations
+- **ALL data processing** - filtering, sorting, grouping, transformations, formatting business data
+- **ALL validations** - business rules, constraints, permissions, data integrity
+- **ALL business rules** - pricing logic, inventory rules, order workflows, approval processes
+- **ALL derived/computed values** - anything that requires logic to determine its value
+- **Data warehouse, audit logs, and AI models**
+
+If it involves logic beyond simple display formatting, it belongs in the backend.
+
+### Frontend Responsibilities (UI layer ONLY)
+- **Display** data exactly as received from backend APIs
+- **Collect** user input and send raw values to backend
+- **Navigate** between screens and routes
+- **Style** the interface (colors, layouts, animations)
+- **Format for display** - date formatting, number formatting for locale (not business calculations)
+
+Frontends do NOT process, calculate, derive, aggregate, or transform business data.
+
+### The Only Exception: Form Preview for UX
+Frontends MAY show preview calculations while user fills a form for better UX experience.
+- **MUST** include comment: `// UI preview only - backend calculates actual value on save`
+- **MUST** send raw form data to backend
+- **MUST** use backend-returned values after save
+- Preview is for user feedback only, never for business decisions
+
+### Implementation Pattern
+
+// ❌ NEVER DO THIS - Frontend processing data
+const totalRevenue = orders.reduce((sum, o) => sum + o.amount, 0);
+const margin = ((price - cost) / price) * 100;
+const filteredItems = items.filter(i => i.status === 'active' && i.stock > 0);
+
+// ✅ ALWAYS DO THIS - Frontend displays backend values
+const totalRevenue = dashboardData.total_revenue;  // Backend calculated
+const margin = product.margin_percent;              // Backend calculated
+const activeItems = await api.get('/items?status=active&in_stock=true'); // Backend filtered### When Adding New Features
+1. Ask: "Does this involve any logic, calculation, or data processing?"
+2. If YES → Implement in backend, return result via API
+3. If NO (pure UI) → Implement in frontend
+4. When in doubt → Put it in backend
+
+### Project Scope
+This APP solely uses the project **Silo** from our database. Don't edit or do anything to other projects.
+
+When asked to implement something:
+1. Implement following these architecture principles
+2. Provide a brief summary in chat
+3. Do not create documentation files unless explicitly requested
+
+### Backend Architecture
+The backend is a **Modular Monolith** containing all microservices:
+- POS, Inventory, HR, Accounting, Operations, QHSE, Maintenance, Training, Customer Care, AI Core, or any features we will add later.
+- Controls all business logic and Data proccesing to be the single source of truth that serves all frontends for unity.
+- Serves as the single source of truth for all three frontends (SuperAdmin, Business App, Main)

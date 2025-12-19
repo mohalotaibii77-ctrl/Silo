@@ -3,6 +3,8 @@ import { Inter, JetBrains_Mono, Noto_Sans_Arabic } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { LanguageProvider } from "@/lib/language-context";
+// import { IdleTimeoutProvider } from "@/lib/idle-timeout"; // TODO: Re-enable idle timeout later
+import { ConfigProvider } from "@/lib/config-context";
 
 const inter = Inter({
   variable: "--font-sans",
@@ -42,7 +44,12 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <LanguageProvider>
-            {children}
+            <ConfigProvider>
+              {/* TODO: Re-enable idle timeout later */}
+              {/* <IdleTimeoutProvider> */}
+                {children}
+              {/* </IdleTimeoutProvider> */}
+            </ConfigProvider>
           </LanguageProvider>
         </ThemeProvider>
       </body>

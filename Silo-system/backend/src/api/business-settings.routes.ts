@@ -193,12 +193,28 @@ router.get('/change-requests', authenticateBusinessToken, async (req: Authentica
   }
 });
 
-// Submit a change request (profile changes)
+// Submit a change request (profile, localization, or tax changes)
 router.post('/change-requests', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const userId = req.businessUser?.id;
-    const { request_type, new_name, new_email, new_phone, new_address, new_logo_url, new_certificate_url } = req.body;
+    const { 
+      request_type, 
+      new_name, 
+      new_email, 
+      new_phone, 
+      new_address, 
+      new_logo_url, 
+      new_certificate_url, 
+      requester_notes,
+      // Localization fields
+      new_currency,
+      new_language,
+      new_timezone,
+      // Tax fields
+      new_vat_enabled,
+      new_vat_rate,
+    } = req.body;
 
     // Check if there's already a pending request of this type
     const { data: existing } = await supabase
@@ -225,6 +241,14 @@ router.post('/change-requests', authenticateBusinessToken, async (req: Authentic
         new_address,
         new_logo_url,
         new_certificate_url,
+        requester_notes,
+        // Localization fields
+        new_currency,
+        new_language,
+        new_timezone,
+        // Tax fields
+        new_vat_enabled,
+        new_vat_rate,
         status: 'pending',
       })
       .select()
@@ -310,12 +334,196 @@ router.put('/user-settings', authenticateBusinessToken, async (req: Authenticate
   }
 });
 
+// ============================================
+// RECEIPT SETTINGS ENDPOINTS
+// ============================================
+
+// Get receipt settings for the business
+router.get('/receipt', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    
+    const { data, error } = await supabase
+      .from('receipt_settings')
+      .select('*')
+      .eq('business_id', businessId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      // PGRST116 = no rows returned, which is fine for new businesses
+      throw error;
+    }
+
+    // Return defaults if no settings exist
+    const defaultSettings = {
+      business_id: businessId,
+      receipt_logo_url: null,
+      print_languages: ['en'],
+      main_language: 'en',
+      receipt_header: '',
+      receipt_footer: '',
+      show_order_number: true,
+      show_subtotal: true,
+      show_closer_username: false,
+      show_creator_username: false,
+    };
+
+    res.json({ 
+      success: true, 
+      data: data || defaultSettings 
+    });
+  } catch (error: any) {
+    console.error('Error fetching receipt settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update receipt settings
+router.put('/receipt', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    const { 
+      receipt_logo_url,
+      print_languages,
+      main_language,
+      receipt_header,
+      receipt_footer,
+      show_order_number,
+      show_subtotal,
+      show_closer_username,
+      show_creator_username,
+    } = req.body;
+
+    // Check if settings exist
+    const { data: existing } = await supabase
+      .from('receipt_settings')
+      .select('id')
+      .eq('business_id', businessId)
+      .single();
+
+    const settingsData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Only update fields that are provided
+    if (receipt_logo_url !== undefined) settingsData.receipt_logo_url = receipt_logo_url;
+    if (print_languages !== undefined) settingsData.print_languages = print_languages;
+    if (main_language !== undefined) settingsData.main_language = main_language;
+    if (receipt_header !== undefined) settingsData.receipt_header = receipt_header;
+    if (receipt_footer !== undefined) settingsData.receipt_footer = receipt_footer;
+    if (show_order_number !== undefined) settingsData.show_order_number = show_order_number;
+    if (show_subtotal !== undefined) settingsData.show_subtotal = show_subtotal;
+    if (show_closer_username !== undefined) settingsData.show_closer_username = show_closer_username;
+    if (show_creator_username !== undefined) settingsData.show_creator_username = show_creator_username;
+
+    let result;
+    
+    if (existing) {
+      // Update existing settings
+      const { data, error } = await supabase
+        .from('receipt_settings')
+        .update(settingsData)
+        .eq('business_id', businessId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    } else {
+      // Insert new settings
+      settingsData.business_id = businessId;
+      settingsData.created_at = new Date().toISOString();
+      
+      const { data, error } = await supabase
+        .from('receipt_settings')
+        .insert(settingsData)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    }
+
+    res.json({ 
+      success: true, 
+      data: result, 
+      message: 'Receipt settings updated successfully' 
+    });
+  } catch (error: any) {
+    console.error('Error updating receipt settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Upload receipt logo
+router.post('/receipt/logo', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    const { file_data, file_name } = req.body;
+
+    if (!file_data) {
+      return res.status(400).json({ error: 'No file data provided' });
+    }
+
+    // For now, store base64 data directly
+    // In production, this should upload to Supabase Storage
+    const logoUrl = file_data;
+
+    // Check if settings exist
+    const { data: existing } = await supabase
+      .from('receipt_settings')
+      .select('id')
+      .eq('business_id', businessId)
+      .single();
+
+    let result;
+    
+    if (existing) {
+      const { data, error } = await supabase
+        .from('receipt_settings')
+        .update({ 
+          receipt_logo_url: logoUrl,
+          updated_at: new Date().toISOString() 
+        })
+        .eq('business_id', businessId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    } else {
+      const { data, error } = await supabase
+        .from('receipt_settings')
+        .insert({ 
+          business_id: businessId,
+          receipt_logo_url: logoUrl,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    }
+
+    res.json({ 
+      success: true, 
+      data: result, 
+      message: 'Receipt logo uploaded successfully' 
+    });
+  } catch (error: any) {
+    console.error('Error uploading receipt logo:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Upload file and create change request (using base64 for now)
 router.post('/upload-request', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const userId = req.businessUser?.id;
-    const { request_type, file_data, file_name } = req.body;
+    const { request_type, file_data, file_name, requester_notes } = req.body;
 
     if (!file_data) {
       return res.status(400).json({ error: 'No file data provided' });
@@ -342,6 +550,7 @@ router.post('/upload-request', authenticateBusinessToken, async (req: Authentica
       requested_by: userId,
       request_type,
       status: 'pending',
+      requester_notes,
     };
 
     if (request_type === 'logo') {

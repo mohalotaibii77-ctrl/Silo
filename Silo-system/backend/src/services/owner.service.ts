@@ -446,6 +446,76 @@ export class OwnerService {
   }
 
   /**
+   * Get platform-wide statistics for super-admin dashboard
+   * All calculations done on backend - frontend just displays values
+   */
+  async getPlatformStats(): Promise<{
+    total_businesses: number;
+    active_businesses: number;
+    inactive_businesses: number;
+    total_owners: number;
+    total_users: number;
+    total_revenue: number;
+    businesses_by_tier: Record<string, number>;
+  }> {
+    // Get all businesses with their subscription info and user counts
+    const { data: businesses, error: bizError } = await supabaseAdmin
+      .from('businesses')
+      .select('id, subscription_status, subscription_tier, user_count');
+
+    if (bizError) {
+      console.error('Error fetching businesses for stats:', bizError);
+      throw new Error(`Failed to fetch platform stats: ${bizError.message}`);
+    }
+
+    // Get total owners count
+    const { count: totalOwners, error: ownerError } = await supabaseAdmin
+      .from('owners')
+      .select('*', { count: 'exact', head: true });
+
+    if (ownerError) {
+      console.error('Error fetching owner count:', ownerError);
+    }
+
+    // Calculate stats
+    const totalBusinesses = businesses?.length || 0;
+    const activeBusinesses = businesses?.filter(b => b.subscription_status === 'active').length || 0;
+    const inactiveBusinesses = businesses?.filter(b => b.subscription_status === 'inactive').length || 0;
+    const totalUsers = businesses?.reduce((sum, b) => sum + (b.user_count || 0), 0) || 0;
+
+    // Calculate revenue based on subscription tiers (monthly pricing)
+    // These are the standard tier prices - should be configured in DB ideally
+    const tierPrices: Record<string, number> = {
+      'free': 0,
+      'starter': 29,
+      'pro': 99,
+      'enterprise': 299,
+    };
+
+    let totalRevenue = 0;
+    const businessesByTier: Record<string, number> = {};
+
+    for (const biz of businesses || []) {
+      const tier = biz.subscription_tier || 'free';
+      businessesByTier[tier] = (businessesByTier[tier] || 0) + 1;
+      
+      if (biz.subscription_status === 'active') {
+        totalRevenue += tierPrices[tier] || 0;
+      }
+    }
+
+    return {
+      total_businesses: totalBusinesses,
+      active_businesses: activeBusinesses,
+      inactive_businesses: inactiveBusinesses,
+      total_owners: totalOwners || 0,
+      total_users: totalUsers,
+      total_revenue: totalRevenue,
+      businesses_by_tier: businessesByTier,
+    };
+  }
+
+  /**
    * Get all businesses for an owner by their username
    * This is used for workspace switching - finds owner by username and returns their businesses
    */

@@ -1,18 +1,60 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Command, Mail, Lock, ArrowRight } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import api from '@/lib/api';
 import { motion } from 'framer-motion';
+import { useLanguage } from '@/lib/language-context';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { setLanguage: setGlobalLanguage } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Check for token in URL (from Main website redirect)
+  useEffect(() => {
+    const token = searchParams.get('token');
+    const userParam = searchParams.get('user');
+    const businessParam = searchParams.get('business');
+
+    if (token && userParam) {
+      try {
+        const user = JSON.parse(decodeURIComponent(userParam));
+        
+        // Only allow owner role
+        if (user.role !== 'owner') {
+          setError('Access denied. Store Setup is exclusively for business owners.');
+          return;
+        }
+
+        // Store auth data
+        localStorage.setItem('setup_token', token);
+        localStorage.setItem('setup_user', JSON.stringify(user));
+        
+        if (businessParam) {
+          const business = JSON.parse(decodeURIComponent(businessParam));
+          localStorage.setItem('setup_business', JSON.stringify(business));
+          
+          // Apply language from business settings
+          if (business.language) {
+            setGlobalLanguage(business.language);
+          }
+        }
+        
+        // Clean URL and redirect to orders page
+        window.history.replaceState({}, '', '/login');
+        router.push('/orders');
+      } catch (err) {
+        console.error('Error parsing auth data from URL:', err);
+      }
+    }
+  }, [searchParams, router, setGlobalLanguage]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,9 +71,9 @@ export default function LoginPage() {
       const response = await api.post('/business-auth/login', { email, password });
       const { token, user, business, userSettings } = response.data;
 
-      // Only allow owner and manager roles
-      if (user.role !== 'owner' && user.role !== 'manager') {
-        setError('Access denied. Only owners and managers can access store setup.');
+      // Only allow owner role - store-setup is exclusively for owners
+      if (user.role !== 'owner') {
+        setError('Access denied. Store Setup is exclusively for business owners. Please use the Business App.');
         setLoading(false);
         return;
       }
@@ -53,13 +95,12 @@ export default function LoginPage() {
         }
       }
 
-      // Apply language direction immediately before navigation (user setting takes priority)
+      // Apply language immediately via context (user setting takes priority)
       const lang = userSettings?.preferred_language || business?.language || 'en';
-      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
-      document.documentElement.lang = lang;
+      setGlobalLanguage(lang);
 
-      // Navigate to Items page directly
-      router.push('/items');
+      // Navigate to Orders page directly
+      router.push('/orders');
     } catch (err: any) {
       console.error('Login error:', err);
       // Show actual error for debugging
@@ -190,9 +231,21 @@ export default function LoginPage() {
 
         {/* Role Notice */}
         <p className="text-center mt-6 text-xs text-zinc-400 dark:text-zinc-600">
-          Only owners and operations managers can access store setup
+          Store Setup is exclusively for business owners
         </p>
       </motion.div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+        <Command className="w-8 h-8 animate-spin text-zinc-400" />
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }

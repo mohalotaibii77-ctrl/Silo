@@ -35,6 +35,8 @@ router.post('/login', async (req: Request, res: Response): Promise<void> => {
       user: result.user,
       business: result.business,
       businesses: result.businesses,  // All businesses for workspace switching (owners only)
+      userSettings: result.userSettings,
+      requiresPasswordChange: result.requiresPasswordChange,  // True if first-time login
     });
   } catch (error) {
     console.error('Business auth login error:', error);
@@ -84,6 +86,52 @@ router.get('/me', async (req: Request, res: Response): Promise<void> => {
     res.status(401).json({
       success: false,
       error: 'Invalid or expired token',
+    });
+  }
+});
+
+/**
+ * POST /api/business-auth/change-password
+ * Change user password (for first-time login or regular password change)
+ */
+router.post('/change-password', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        success: false,
+        error: 'No token provided',
+      });
+      return;
+    }
+
+    const token = authHeader.substring(7);
+    const payload = businessAuthService.verifyToken(token);
+    
+    const { newPassword, currentPassword } = req.body;
+
+    if (!newPassword) {
+      res.status(400).json({
+        success: false,
+        error: 'New password is required',
+      });
+      return;
+    }
+
+    await businessAuthService.changePassword(payload.userId, newPassword, currentPassword);
+
+    res.json({
+      success: true,
+      message: 'Password changed successfully',
+    });
+  } catch (error) {
+    console.error('Change password error:', error);
+    const message = error instanceof Error ? error.message : 'Failed to change password';
+    
+    res.status(400).json({
+      success: false,
+      error: message,
     });
   }
 });

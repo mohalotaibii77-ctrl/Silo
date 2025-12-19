@@ -1,13 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { UserCog, Plus, Edit2, Trash2, Crown, Shield, User, Key, X, AlertCircle, Monitor } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { UserCog, Plus, Edit2, Trash2, Crown, Shield, User, Key, X, AlertCircle, Monitor, ChefHat } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
-import { getUsers, createUser, updateUser, deleteUser, resetUserPassword, type BusinessUser, type CreateUserData } from '@/lib/users-api';
+import { getUsers, createUser, updateUser, deleteUser, resetUserPassword, type BusinessUser, type CreateUserData, type UserPermissions, DEFAULT_PERMISSIONS } from '@/lib/users-api';
 
 export default function UsersRolesPage() {
+  const router = useRouter();
   const { t, isRTL } = useLanguage();
   const [users, setUsers] = useState<BusinessUser[]>([]);
   const [maxUsers, setMaxUsers] = useState(5);
@@ -22,15 +25,31 @@ export default function UsersRolesPage() {
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<'manager' | 'employee' | 'pos'>('employee');
+  const [role, setRole] = useState<'manager' | 'employee' | 'pos' | 'kitchen_display'>('employee');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
+  const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS.employee);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Check if user is owner, redirect if not
   useEffect(() => {
+    const storedUser = localStorage.getItem('setup_user');
+    if (storedUser) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        if (parsedUser.role !== 'owner') {
+          // Non-owner trying to access users page, redirect to items
+          router.push('/items');
+          return;
+        }
+      } catch {
+        router.push('/login');
+        return;
+      }
+    }
     loadUsers();
-  }, []);
+  }, [router]);
 
   const loadUsers = async () => {
     try {
@@ -62,8 +81,20 @@ export default function UsersRolesPage() {
       setLastName(user.last_name || '');
       setEmail(user.email || '');
       setPhone(user.phone || '');
-      setRole(user.role === 'owner' ? 'manager' : user.role as 'manager' | 'employee');
+      setRole(user.role === 'owner' ? 'manager' : user.role as 'manager' | 'employee' | 'pos' | 'kitchen_display');
       setStatus(user.status === 'suspended' ? 'inactive' : user.status as 'active' | 'inactive');
+      // Set permissions from user or defaults based on role
+      // Merge with defaults to ensure new permission fields (like pos_access) have a value
+      if (user.permissions) {
+        const defaultPerms = (user.role === 'manager' || user.role === 'employee') 
+          ? DEFAULT_PERMISSIONS[user.role as 'manager' | 'employee']
+          : DEFAULT_PERMISSIONS.employee;
+        setPermissions({ ...defaultPerms, ...user.permissions });
+      } else if (user.role === 'manager' || user.role === 'employee') {
+        setPermissions(DEFAULT_PERMISSIONS[user.role as 'manager' | 'employee']);
+      } else {
+        setPermissions(DEFAULT_PERMISSIONS.employee);
+      }
     } else {
       setEditingUser(null);
       setUsername('');
@@ -73,10 +104,28 @@ export default function UsersRolesPage() {
       setPhone('');
       setRole('employee');
       setStatus('active');
+      setPermissions(DEFAULT_PERMISSIONS.employee);
     }
     setError(null);
     setSuccessMessage(null);
     setIsModalOpen(true);
+  };
+
+  // Handle role change - update permissions to defaults
+  const handleRoleChange = (newRole: 'manager' | 'employee' | 'pos' | 'kitchen_display') => {
+    setRole(newRole);
+    // Set default permissions based on new role
+    if (newRole === 'manager' || newRole === 'employee') {
+      setPermissions(DEFAULT_PERMISSIONS[newRole]);
+    }
+  };
+
+  // Handle individual permission toggle
+  const handlePermissionToggle = (key: keyof UserPermissions) => {
+    setPermissions(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
   };
 
   const handleCloseModal = () => {
@@ -96,6 +145,9 @@ export default function UsersRolesPage() {
     setError(null);
 
     try {
+      // Only include permissions for manager/employee roles
+      const shouldIncludePermissions = role === 'manager' || role === 'employee';
+      
       if (editingUser) {
         await updateUser(editingUser.id, {
           username: username.trim(),
@@ -105,6 +157,7 @@ export default function UsersRolesPage() {
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           status: editingUser.role === 'owner' ? undefined : status,
+          permissions: shouldIncludePermissions ? permissions : undefined,
         });
         setSuccessMessage(t('User updated successfully', 'تم تحديث المستخدم بنجاح'));
       } else {
@@ -115,6 +168,7 @@ export default function UsersRolesPage() {
           last_name: lastName.trim() || undefined,
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
+          permissions: shouldIncludePermissions ? permissions : undefined,
         });
         setSuccessMessage(t(`User created! Default password: ${result.default_password}`, `تم إنشاء المستخدم! كلمة المرور الافتراضية: ${result.default_password}`));
       }
@@ -165,6 +219,7 @@ export default function UsersRolesPage() {
       case 'owner': return <Crown className="w-4 h-4 text-amber-500" />;
       case 'manager': return <Shield className="w-4 h-4 text-zinc-600 dark:text-zinc-400" />;
       case 'pos': return <Monitor className="w-4 h-4 text-emerald-500" />;
+      case 'kitchen_display': return <ChefHat className="w-4 h-4 text-orange-500" />;
       default: return <User className="w-4 h-4 text-zinc-400" />;
     }
   };
@@ -177,6 +232,8 @@ export default function UsersRolesPage() {
         return 'bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300';
       case 'pos': 
         return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400';
+      case 'kitchen_display': 
+        return 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400';
       default: 
         return 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400';
     }
@@ -191,8 +248,8 @@ export default function UsersRolesPage() {
         animate={{ opacity: 1, y: 0 }}
         className="max-w-6xl mx-auto space-y-6"
       >
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${isRTL ? 'sm:flex-row-reverse' : ''}`}>
-          <div className={isRTL ? 'text-right' : ''}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">
               {t('Users & Roles', 'المستخدمين والصلاحيات')}
             </h1>
@@ -200,14 +257,14 @@ export default function UsersRolesPage() {
               {t('Manage staff access and permissions', 'إدارة صلاحيات الموظفين')}
             </p>
           </div>
-          <div className={`flex items-center gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
+          <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-500">
               {users.length} / {maxUsers} {t('users', 'مستخدم')}
             </span>
             <button 
               onClick={() => handleOpenModal()}
               disabled={!canAddUsers}
-              className={`inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors ${isRTL ? 'flex-row-reverse' : ''} ${!canAddUsers ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors ${!canAddUsers ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Plus className="w-4 h-4" />
               {t('Add User', 'إضافة مستخدم')}
@@ -255,8 +312,8 @@ export default function UsersRolesPage() {
                 animate={{ opacity: 1, y: 0 }}
                 className="p-5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800"
               >
-                <div className={`flex items-center justify-between gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
-                  <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4">
                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-lg font-bold ${
                       user.role === 'owner' 
                         ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' 
@@ -264,8 +321,8 @@ export default function UsersRolesPage() {
                     }`}>
                       {user.username[0].toUpperCase()}
                     </div>
-                    <div className={isRTL ? 'text-right' : ''}>
-                      <div className={`flex items-center gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                    <div>
+                      <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-zinc-900 dark:text-white">
                           {user.first_name && user.last_name 
                             ? `${user.first_name} ${user.last_name}` 
@@ -276,10 +333,12 @@ export default function UsersRolesPage() {
                           {t(
                             user.role === 'owner' ? 'Owner' : 
                             user.role === 'manager' ? 'Manager' : 
-                            user.role === 'pos' ? 'POS Terminal' : 'Employee',
+                            user.role === 'pos' ? 'POS Terminal' : 
+                            user.role === 'kitchen_display' ? 'Kitchen Display' : 'Employee',
                             user.role === 'owner' ? 'مالك' : 
                             user.role === 'manager' ? 'مدير' : 
-                            user.role === 'pos' ? 'نقطة بيع' : 'موظف'
+                            user.role === 'pos' ? 'نقطة بيع' : 
+                            user.role === 'kitchen_display' ? 'شاشة المطبخ' : 'موظف'
                           )}
                         </span>
                         {user.status !== 'active' && (
@@ -294,7 +353,7 @@ export default function UsersRolesPage() {
                       </p>
                     </div>
                   </div>
-                  <div className={`flex items-center gap-1 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                  <div className="flex items-center gap-1">
                     {/* Reset password - only for non-owners or self */}
                     {(user.role !== 'owner' || user.id === currentUserId) && (
                       <button
@@ -345,7 +404,7 @@ export default function UsersRolesPage() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="w-full max-w-md rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl"
+              className="w-full max-w-lg rounded-2xl bg-white dark:bg-zinc-900 shadow-2xl max-h-[90vh] flex flex-col"
               dir={isRTL ? 'rtl' : 'ltr'}
             >
               {/* Header */}
@@ -362,7 +421,7 @@ export default function UsersRolesPage() {
               </div>
 
               {/* Content */}
-              <div className="p-6 space-y-4">
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
                 {error && (
                   <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
                     {error}
@@ -422,35 +481,170 @@ export default function UsersRolesPage() {
 
                 {(!editingUser || editingUser.role !== 'owner') && (
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className={`block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5 ${isRTL ? 'text-right' : ''}`}>
-                        {t('Role', 'الدور')} *
-                      </label>
-                      <select
-                        value={role}
-                        onChange={(e) => setRole(e.target.value as 'manager' | 'employee' | 'pos')}
-                        className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
-                      >
-                        <option value="manager">{t('Manager', 'مدير')}</option>
-                        <option value="employee">{t('Employee', 'موظف')}</option>
-                        <option value="pos">{t('POS Terminal', 'نقطة بيع')}</option>
-                      </select>
-                    </div>
+                    <SearchableSelect
+                      label={`${t('Role', 'الدور')} *`}
+                      value={role}
+                      onChange={(val) => handleRoleChange((val || 'employee') as 'manager' | 'employee' | 'pos' | 'kitchen_display')}
+                      options={[
+                        { id: 'manager', name: t('Manager', 'مدير') },
+                        { id: 'employee', name: t('Employee', 'موظف') },
+                        { id: 'pos', name: t('POS Terminal', 'نقطة بيع') },
+                        { id: 'kitchen_display', name: t('Kitchen Display', 'شاشة المطبخ') },
+                      ]}
+                      placeholder={t('Select role', 'اختر الدور')}
+                    />
                     {editingUser && (
-                      <div>
-                        <label className={`block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5 ${isRTL ? 'text-right' : ''}`}>
-                          {t('Status', 'الحالة')}
-                        </label>
-                        <select
-                          value={status}
-                          onChange={(e) => setStatus(e.target.value as 'active' | 'inactive')}
-                          className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
-                        >
-                          <option value="active">{t('Active', 'نشط')}</option>
-                          <option value="inactive">{t('Inactive', 'غير نشط')}</option>
-                        </select>
-                      </div>
+                      <SearchableSelect
+                        label={t('Status', 'الحالة')}
+                        value={status}
+                        onChange={(val) => setStatus((val || 'active') as 'active' | 'inactive')}
+                        options={[
+                          { id: 'active', name: t('Active', 'نشط') },
+                          { id: 'inactive', name: t('Inactive', 'غير نشط') },
+                        ]}
+                        placeholder={t('Select status', 'اختر الحالة')}
+                      />
                     )}
+                  </div>
+                )}
+
+                {/* Permissions Section - Only for Manager/Employee roles */}
+                {(!editingUser || editingUser.role !== 'owner') && (role === 'manager' || role === 'employee') && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between ${isRTL ? 'flex-row-reverse' : ''}`}>
+                      <label className={`text-sm font-medium text-zinc-700 dark:text-zinc-300 ${isRTL ? 'text-right' : ''}`}>
+                        {t('Permissions (for Business App)', 'الصلاحيات (لتطبيق الأعمال)')}
+                      </label>
+                      <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                        {role === 'manager' ? t('Manager defaults: All enabled', 'افتراضي المدير: الكل مفعل') : t('Employee defaults: All disabled', 'افتراضي الموظف: الكل معطل')}
+                      </span>
+                    </div>
+                    <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 space-y-3">
+                      {/* Orders */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.orders}
+                          onChange={() => handlePermissionToggle('orders')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Orders', 'الطلبات')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('View and manage orders', 'عرض وإدارة الطلبات')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Menu Edit */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.menu_edit}
+                          onChange={() => handlePermissionToggle('menu_edit')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Menu Edit', 'تعديل القائمة')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Items, Products, Bundles, Categories', 'المواد، المنتجات، الباقات، الفئات')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Inventory */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.inventory}
+                          onChange={() => handlePermissionToggle('inventory')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Inventory', 'المخزون')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('PO, Transfers, Vendors, Counts', 'أوامر الشراء، التحويلات، الموردين، الجرد')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Delivery */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.delivery}
+                          onChange={() => handlePermissionToggle('delivery')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Delivery', 'التوصيل')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Delivery Partners', 'شركاء التوصيل')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Tables */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.tables}
+                          onChange={() => handlePermissionToggle('tables')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Tables', 'الطاولات')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Table Management', 'إدارة الطاولات')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Drivers */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.drivers}
+                          onChange={() => handlePermissionToggle('drivers')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Drivers', 'السائقين')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Driver Management', 'إدارة السائقين')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* Discounts */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.discounts}
+                          onChange={() => handlePermissionToggle('discounts')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('Discounts', 'الخصومات')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Discount Management', 'إدارة الخصومات')}</p>
+                        </div>
+                      </label>
+                      
+                      {/* POS Access */}
+                      <label className={`flex items-center gap-3 cursor-pointer ${isRTL ? 'flex-row-reverse' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={permissions.pos_access ?? false}
+                          onChange={() => handlePermissionToggle('pos_access')}
+                          className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-600 text-zinc-900 dark:text-white focus:ring-zinc-500"
+                        />
+                        <div className={`flex-1 ${isRTL ? 'text-right' : ''}`}>
+                          <span className="text-sm font-medium text-zinc-900 dark:text-white">{t('POS Access', 'الوصول لنقطة البيع')}</span>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Can login to POS Terminal', 'يمكنه تسجيل الدخول لجهاز نقطة البيع')}</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* POS/Kitchen Display notice */}
+                {(!editingUser || editingUser.role !== 'owner') && (role === 'pos' || role === 'kitchen_display') && (
+                  <div className="p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400 text-sm flex items-center gap-2">
+                    <Monitor className="w-4 h-4 flex-shrink-0" />
+                    <span>
+                      {role === 'pos' 
+                        ? t('POS Terminal has fixed access to order management only', 'نقطة البيع لديها وصول ثابت لإدارة الطلبات فقط')
+                        : t('Kitchen Display has fixed access to kitchen order view only', 'شاشة المطبخ لديها وصول ثابت لعرض طلبات المطبخ فقط')
+                      }
+                    </span>
                   </div>
                 )}
 
@@ -489,7 +683,7 @@ export default function UsersRolesPage() {
               </div>
 
               {/* Footer */}
-              <div className={`flex items-center justify-end gap-3 p-6 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 rounded-b-2xl ${isRTL ? 'flex-row-reverse' : ''}`}>
+              <div className="flex items-center justify-end gap-3 p-6 border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 rounded-b-2xl">
                 <button
                   onClick={handleCloseModal}
                   className="px-5 py-2.5 rounded-xl text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-medium transition-colors"

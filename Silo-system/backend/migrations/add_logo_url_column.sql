@@ -18,3 +18,8 @@ ADD COLUMN IF NOT EXISTS logo_url TEXT;
 -- VALUES ('business-assets', 'business-assets', true)
 -- ON CONFLICT (id) DO NOTHING;
 
+
+
+
+
+

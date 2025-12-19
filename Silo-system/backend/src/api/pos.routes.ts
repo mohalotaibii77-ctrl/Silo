@@ -6,8 +6,9 @@
 import { Router } from 'express';
 import { posService } from '../services';
 import { asyncHandler } from '../middleware/error.middleware';
-import { authenticate, requireBusinessAccess } from '../middleware/auth.middleware';
+import { authenticate, requireBusinessAccess, requirePOSAccess, requireKitchenAccess } from '../middleware/auth.middleware';
 import { OrderSource, OrderStatus, CreateOrderInput, CreateOrderItemInput } from '../types';
+import { extractPaginationParams, buildPaginatedResponse } from '../utils/pagination';
 
 const router = Router();
 
@@ -40,6 +41,7 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     driver_name,
     driver_phone,
     driver_id,
+    delivery_partner_id,
     items,
     discount_id,
     discount_code,
@@ -99,6 +101,7 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     driver_name,
     driver_phone,
     driver_id,
+    delivery_partner_id: delivery_partner_id ? parseInt(delivery_partner_id) : undefined,
     items: items as CreateOrderItemInput[],
     discount_id,
     discount_code,
@@ -200,7 +203,7 @@ router.post('/orders/delivery-app', requireBusinessAccess, asyncHandler(async (r
 
 /**
  * GET /api/pos/orders
- * Get orders with filters
+ * Get orders with filters and pagination
  */
 router.get('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { 
@@ -213,11 +216,11 @@ router.get('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     date_to,
     customer_phone,
     external_order_id,
-    limit, 
-    offset 
   } = req.query;
 
-  const orders = await posService.getOrders(parseInt(req.user!.businessId), {
+  const pagination = extractPaginationParams(req);
+
+  const result = await posService.getOrders(parseInt(req.user!.businessId), {
     branch_id: branch_id ? parseInt(branch_id as string) : undefined,
     status: status as OrderStatus | OrderStatus[] | undefined,
     order_source: order_source as OrderSource | undefined,
@@ -227,15 +230,51 @@ router.get('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     date_to: date_to as string | undefined,
     customer_phone: customer_phone as string | undefined,
     external_order_id: external_order_id as string | undefined,
-    limit: limit ? parseInt(limit as string) : undefined,
-    offset: offset ? parseInt(offset as string) : undefined,
+    page: pagination.page,
+    limit: pagination.limit,
+    fields: pagination.fields,
   });
 
-  res.json({
-    success: true,
-    data: orders,
-    count: orders.length,
-  });
+  // Support both paginated and non-paginated responses
+  if ('total' in result) {
+    const response = buildPaginatedResponse(result.data, result.total, pagination, !!pagination.fields);
+    
+    // Get accurate stats from full filtered dataset (not just current page)
+    const stats = await posService.getOrderListStats(parseInt(req.user!.businessId), {
+      branch_id: branch_id ? parseInt(branch_id as string) : undefined,
+      status: status as OrderStatus | OrderStatus[] | undefined,
+      order_source: order_source as OrderSource | undefined,
+      order_type: order_type as string | undefined,
+      date: date as string | undefined,
+      date_from: date_from as string | undefined,
+      date_to: date_to as string | undefined,
+      customer_phone: customer_phone as string | undefined,
+      external_order_id: external_order_id as string | undefined,
+    });
+
+    res.json({
+      success: true,
+      ...response,
+      stats,
+    });
+  } else {
+    // Legacy response format - stats calculated from full result set
+    const orders = result as any[];
+    const completedOrders = orders.filter((o: any) => o.order_status === 'completed');
+    const stats = {
+      total_orders: orders.length,
+      completed_orders: completedOrders.length,
+      in_progress_orders: orders.filter((o: any) => o.order_status === 'in_progress' || o.order_status === 'pending').length,
+      total_revenue: completedOrders.reduce((sum: number, o: any) => sum + parseFloat(o.total_amount || '0'), 0),
+    };
+
+    res.json({
+      success: true,
+      data: orders,
+      count: orders.length,
+      stats,
+    });
+  }
 }));
 
 /**
@@ -296,6 +335,10 @@ router.get('/orders/external/:externalOrderId', requireBusinessAccess, asyncHand
 /**
  * PATCH /api/pos/orders/:orderId/status
  * Update order status
+ * 
+ * Order Status Flow:
+ * - POS orders: in_progress → completed/cancelled
+ * - API orders: pending → in_progress (accept) or rejected → completed/cancelled
  */
 router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
@@ -308,7 +351,8 @@ router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(asyn
     });
   }
 
-  const validStatuses = ['pending', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'completed', 'cancelled', 'refunded', 'failed'];
+  // Valid order statuses
+  const validStatuses = ['pending', 'in_progress', 'completed', 'picked_up', 'cancelled', 'rejected'];
   if (!validStatuses.includes(status)) {
     return res.status(400).json({
       success: false,
@@ -330,12 +374,123 @@ router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(asyn
 }));
 
 /**
+ * POST /api/pos/orders/:orderId/accept
+ * Accept a pending order (from delivery partner API)
+ * Changes status: pending → in_progress
+ */
+router.post('/orders/:orderId/accept', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+
+  const order = await posService.acceptOrder(
+    parseInt(orderId),
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order accepted successfully',
+  });
+}));
+
+/**
+ * POST /api/pos/orders/:orderId/reject
+ * Reject a pending order (from delivery partner API)
+ * Changes status: pending → rejected
+ */
+router.post('/orders/:orderId/reject', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+  const { reason } = req.body;
+
+  const order = await posService.rejectOrder(
+    parseInt(orderId),
+    parseInt(req.user!.userId),
+    reason
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order rejected',
+  });
+}));
+
+/**
+ * POST /api/pos/orders/:orderId/complete
+ * Complete an in-progress order (food is ready)
+ * Changes status: in_progress → completed
+ * For delivery orders: completed means "ready for pickup" - driver still needs to collect
+ * 
+ * ACCESS: Kitchen Display only - orders can only be completed from kitchen
+ */
+router.post('/orders/:orderId/complete', requireBusinessAccess, requireKitchenAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+
+  const order = await posService.completeOrder(
+    parseInt(orderId),
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order completed',
+  });
+}));
+
+/**
+ * POST /api/pos/orders/:orderId/pickup
+ * Mark a completed delivery order as picked up by driver
+ * Changes status: completed → picked_up
+ * Only for delivery orders - marks when delivery driver has collected the food
+ * 
+ * ACCESS: POS operators only
+ */
+router.post('/orders/:orderId/pickup', requireBusinessAccess, requirePOSAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+
+  const order = await posService.pickupOrder(
+    parseInt(orderId),
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order marked as picked up',
+  });
+}));
+
+/**
+ * POST /api/pos/orders/:orderId/cancel
+ * Cancel an in-progress order
+ * Changes status: in_progress → cancelled
+ */
+router.post('/orders/:orderId/cancel', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+  const { reason } = req.body;
+
+  const order = await posService.cancelOrder(
+    parseInt(orderId),
+    parseInt(req.user!.userId),
+    reason
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order cancelled',
+  });
+}));
+
+/**
  * POST /api/pos/orders/:orderId/payment
  * Process payment for order
+ * For cash payments: include amount_received and change_given for cash drawer tracking
  */
 router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { payment_method, amount, reference } = req.body;
+  const { payment_method, amount, reference, amount_received, change_given, pos_session_id } = req.body;
 
   if (!payment_method || amount === undefined) {
     return res.status(400).json({
@@ -344,12 +499,19 @@ router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(asyn
     });
   }
 
+  // Build cash details if provided (for cash payments)
+  const cashDetails = (amount_received !== undefined && change_given !== undefined)
+    ? { amount_received, change_given }
+    : undefined;
+
   const order = await posService.processPayment(
     parseInt(orderId),
     payment_method,
     amount,
     reference,
-    parseInt(req.user!.userId)
+    parseInt(req.user!.userId),
+    cashDetails,
+    pos_session_id ? parseInt(pos_session_id) : undefined
   );
 
   res.json({
@@ -436,6 +598,238 @@ router.get('/stats', requireBusinessAccess, asyncHandler(async (req, res) => {
   res.json({
     success: true,
     data: stats,
+  });
+}));
+
+/**
+ * POST /api/pos/calculate-totals
+ * Calculate order totals from cart items (use this instead of frontend calculation)
+ */
+router.post('/calculate-totals', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const {
+    items,
+    discount_type,
+    discount_value,
+    delivery_fee,
+    packaging_fee,
+    service_charge,
+    tip_amount,
+  } = req.body;
+
+  if (!items || !items.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'Items array is required',
+    });
+  }
+
+  const totals = await posService.calculateOrderTotals(
+    parseInt(req.user!.businessId),
+    items,
+    {
+      discount_type,
+      discount_value,
+      delivery_fee,
+      packaging_fee,
+      service_charge,
+      tip_amount,
+    }
+  );
+
+  res.json({
+    success: true,
+    data: totals,
+  });
+}));
+
+/**
+ * POST /api/pos/calculate-delivery-margin
+ * Calculate profit margin for delivery orders (after commission)
+ */
+router.post('/calculate-delivery-margin', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { price, cost, commission_type, commission_value } = req.body;
+
+  if (price === undefined || cost === undefined || !commission_type || commission_value === undefined) {
+    return res.status(400).json({
+      success: false,
+      error: 'price, cost, commission_type, and commission_value are required',
+    });
+  }
+
+  const margin = posService.calculateDeliveryMargin(
+    price,
+    cost,
+    commission_type,
+    commission_value
+  );
+
+  res.json({
+    success: true,
+    data: {
+      margin_percent: margin,
+    },
+  });
+}));
+
+// ==================== ORDER EDITING ROUTES ====================
+
+/**
+ * PATCH /api/pos/orders/:orderId/edit
+ * Edit order items (POS orders only)
+ * Can add items, remove items, or modify quantities
+ * 
+ * ACCESS: POS operators, cashiers, and owners only
+ */
+router.patch('/orders/:orderId/edit', requireBusinessAccess, requirePOSAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+  const { items_to_add, items_to_remove, items_to_modify } = req.body;
+
+  // Must have at least one edit operation
+  if (!items_to_add?.length && !items_to_remove?.length && !items_to_modify?.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'At least one edit operation is required (items_to_add, items_to_remove, or items_to_modify)',
+    });
+  }
+
+  const order = await posService.editOrder(
+    parseInt(orderId),
+    {
+      items_to_add,
+      items_to_remove,
+      items_to_modify,
+    },
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: order,
+    message: 'Order edited successfully',
+  });
+}));
+
+/**
+ * GET /api/pos/orders/:orderId/timeline
+ * Get order timeline/audit trail
+ */
+router.get('/orders/:orderId/timeline', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+
+  const timeline = await posService.getOrderTimeline(parseInt(orderId));
+
+  res.json({
+    success: true,
+    data: timeline,
+  });
+}));
+
+// ==================== KITCHEN DISPLAY ROUTES ====================
+
+/**
+ * GET /api/pos/kitchen/orders
+ * Get all orders for kitchen display with filters
+ * Supports filtering by status for different tabs
+ */
+router.get('/kitchen/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { branch_id, status, date } = req.query;
+
+  const today = date as string || new Date().toISOString().split('T')[0];
+
+  let statusFilter: OrderStatus | OrderStatus[] | undefined;
+  if (status) {
+    statusFilter = (status as string).includes(',') 
+      ? (status as string).split(',') as OrderStatus[]
+      : status as OrderStatus;
+  }
+
+  const result = await posService.getOrders(parseInt(req.user!.businessId), {
+    branch_id: branch_id ? parseInt(branch_id as string) : undefined,
+    status: statusFilter,
+    date: today,
+    limit: 100, // Kitchen display shows more orders
+  });
+
+  // Transform order_items to items for frontend compatibility
+  const rawOrders = 'data' in result ? result.data : result;
+  const orders = rawOrders.map((order: any) => ({
+    ...order,
+    items: order.order_items?.map((item: any) => ({
+      id: item.id,
+      product_name: item.product_name || item.name,
+      product_name_ar: item.product_name_ar || item.name_ar,
+      variant_name: item.variant_name,
+      quantity: item.quantity,
+      original_quantity: item.original_quantity,
+      special_instructions: item.special_instructions || item.notes,
+      modifiers: item.order_item_modifiers?.map((mod: any) => ({
+        modifier_name: mod.modifier_name || mod.name,
+        modifier_name_ar: mod.modifier_name_ar || mod.name_ar,
+        quantity: mod.quantity || 1,
+      })) || [],
+    })) || [],
+  }));
+
+  res.json({
+    success: true,
+    data: orders,
+    count: orders.length,
+  });
+}));
+
+/**
+ * GET /api/pos/kitchen/cancelled-items
+ * Get cancelled order items awaiting kitchen decision (waste vs return)
+ */
+router.get('/kitchen/cancelled-items', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { branch_id } = req.query;
+
+  const items = await posService.getCancelledItemsPendingDecision(
+    parseInt(req.user!.businessId),
+    branch_id ? parseInt(branch_id as string) : undefined
+  );
+
+  res.json({
+    success: true,
+    data: items,
+    count: items.length,
+  });
+}));
+
+/**
+ * POST /api/pos/kitchen/process-waste
+ * Process waste/return decisions from kitchen
+ * Kitchen decides for each cancelled item whether it's waste or can return to inventory
+ */
+router.post('/kitchen/process-waste', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { decisions } = req.body;
+
+  if (!decisions || !Array.isArray(decisions) || decisions.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'decisions array is required with at least one decision',
+    });
+  }
+
+  // Validate each decision
+  for (const decision of decisions) {
+    if (!decision.cancelled_item_id || !['waste', 'return'].includes(decision.decision)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Each decision must have cancelled_item_id and decision (waste or return)',
+      });
+    }
+  }
+
+  const result = await posService.processWasteDecisions(
+    decisions,
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: result,
+    message: `Processed ${result.processed} items`,
   });
 }));
 

@@ -46,3 +46,8 @@ CREATE POLICY recipe_ingredients_insert_policy ON recipe_ingredients FOR INSERT 
 CREATE POLICY recipe_ingredients_update_policy ON recipe_ingredients FOR UPDATE USING (true);
 CREATE POLICY recipe_ingredients_delete_policy ON recipe_ingredients FOR DELETE USING (true);
 
+
+
+
+
+

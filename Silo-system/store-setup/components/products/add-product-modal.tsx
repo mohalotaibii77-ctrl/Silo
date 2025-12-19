@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Trash2, Package, Search, ChevronDown, Layers, ImagePlus, Camera } from 'lucide-react';
+import { X, Plus, Trash2, Package, Search, ChevronDown, Layers, ImagePlus, Camera, ShoppingBag } from 'lucide-react';
 import { useLanguage } from '@/lib/language-context';
 import { getItems, type Item } from '@/lib/items-api';
-import { createProduct, updateProductIngredients, getProduct, updateProduct, type CreateProductData, type Product } from '@/lib/products-api';
+import { createProduct, updateProductIngredients, getProduct, updateProduct, getProductAccessories, updateProductAccessories, type CreateProductData, type Product, type ProductAccessory, type AccessoryOrderType } from '@/lib/products-api';
 import { getCategories, type Category } from '@/lib/categories-api';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface IngredientEntry {
   id: string;
@@ -30,6 +31,14 @@ interface ModifierEntry {
   item?: Item;
   quantity: number; // Quantity of the add-on
   extra_price: number; // Extra charge for this add-on
+}
+
+interface AccessoryEntry {
+  id: string;
+  item_id: number | null;
+  item?: Item;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
 }
 
 interface AddProductModalProps {
@@ -58,10 +67,15 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
   const [ingredients, setIngredients] = useState<IngredientEntry[]>([]);
   const [variants, setVariants] = useState<VariantEntry[]>([]);
   const [modifiers, setModifiers] = useState<ModifierEntry[]>([]);
+  const [accessories, setAccessories] = useState<AccessoryEntry[]>([]);
   
   // Items and categories for selection
   const [items, setItems] = useState<Item[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  
+  // Filter items by type for ingredients (food) vs accessories (non-food)
+  const foodItems = useMemo(() => items.filter(item => !item.item_type || item.item_type === 'food'), [items]);
+  const nonFoodItems = useMemo(() => items.filter(item => item.item_type && item.item_type !== 'food'), [items]);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   
@@ -203,6 +217,37 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
       } else {
         setModifiers([]);
       }
+
+      // Load accessories (non-food items linked to product)
+      try {
+        const accessoriesData = await getProductAccessories(productId);
+        if (accessoriesData && accessoriesData.length > 0) {
+          const mappedAccessories: AccessoryEntry[] = accessoriesData.map((acc) => {
+            const item = items.find(i => i.id === acc.item_id);
+            return {
+              id: generateId(),
+              item_id: acc.item_id,
+              item: item || (acc.item ? {
+                id: acc.item.id,
+                name: acc.item.name,
+                name_ar: acc.item.name_ar,
+                unit: acc.item.unit as any,
+                cost_per_unit: acc.item.cost_per_unit || 0,
+                category: 'other' as const,
+                item_type: acc.item.item_type as any,
+              } : undefined),
+              quantity: acc.quantity,
+              applicable_order_types: acc.applicable_order_types || ['always'],
+            };
+          });
+          setAccessories(mappedAccessories);
+        } else {
+          setAccessories([]);
+        }
+      } catch (err) {
+        console.error('Failed to load product accessories:', err);
+        setAccessories([]);
+      }
     } catch (err) {
       console.error('Failed to load product ingredients:', err);
     } finally {
@@ -222,9 +267,65 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
     setIngredients([]);
     setVariants([]);
     setModifiers([]);
+    setAccessories([]);
     setError(null);
     setImageUrl(null);
     setImagePreview(null);
+  };
+
+  // Accessory functions
+  const addAccessory = () => {
+    setAccessories([...accessories, { 
+      id: generateId(), 
+      item_id: null,
+      quantity: 1,
+      applicable_order_types: ['always'],
+    }]);
+  };
+
+  const removeAccessory = (id: string) => {
+    setAccessories(accessories.filter(a => a.id !== id));
+  };
+
+  const updateAccessory = (id: string, updates: Partial<AccessoryEntry>) => {
+    setAccessories(accessories.map(a => 
+      a.id === id ? { ...a, ...updates } : a
+    ));
+  };
+
+  const selectItemForAccessory = (accessoryId: string, item: Item) => {
+    updateAccessory(accessoryId, { item_id: item.id, item });
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  const toggleOrderType = (accessoryId: string, orderType: AccessoryOrderType) => {
+    const accessory = accessories.find(a => a.id === accessoryId);
+    if (!accessory) return;
+
+    let newTypes = [...accessory.applicable_order_types];
+    
+    if (orderType === 'always') {
+      // If clicking 'always', set to only 'always'
+      newTypes = ['always'];
+    } else {
+      // Remove 'always' if it exists
+      newTypes = newTypes.filter(t => t !== 'always');
+      
+      if (newTypes.includes(orderType)) {
+        // Remove the type if it exists
+        newTypes = newTypes.filter(t => t !== orderType);
+        // If no types left, default to 'always'
+        if (newTypes.length === 0) {
+          newTypes = ['always'];
+        }
+      } else {
+        // Add the type
+        newTypes.push(orderType);
+      }
+    }
+    
+    updateAccessory(accessoryId, { applicable_order_types: newTypes });
   };
 
   // Modifier functions (addable extras only)
@@ -387,7 +488,11 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
     setSearchQuery('');
   };
 
-  // Calculate cost for a set of ingredients
+  /**
+   * Calculate cost for a set of ingredients - FORM PREVIEW ONLY
+   * Backend calculates and returns actual cost/margin when product is saved
+   * Item prices (effective_price) come from backend API
+   */
   const calculateCost = (ings: IngredientEntry[]) => {
     return ings.reduce((sum, ing) => {
       if (!ing.item) return sum;
@@ -396,12 +501,6 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
     }, 0);
   };
 
-  // Filter items by search
-  const filteredItems = items.filter(item => {
-    const query = searchQuery.toLowerCase();
-    return item.name.toLowerCase().includes(query) || 
-           (item.name_ar && item.name_ar.includes(query));
-  });
 
   // Handle submit
   const handleSubmit = async () => {
@@ -530,6 +629,19 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
         });
       }
 
+      // Update accessories (non-food items like packaging)
+      const validAccessories = accessories.filter(a => a.item_id && a.quantity > 0);
+      if (validAccessories.length > 0) {
+        await updateProductAccessories(productId, validAccessories.map(a => ({
+          item_id: a.item_id!,
+          quantity: a.quantity,
+          applicable_order_types: a.applicable_order_types,
+        })));
+      } else {
+        // Clear accessories if none are set
+        await updateProductAccessories(productId, []);
+      }
+
       onSuccess();
       onClose();
     } catch (err: any) {
@@ -544,15 +656,27 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
     ingredientId, 
     variantId,
     selectedItem,
-    onSelect 
+    onSelect,
+    itemsList,
+    placeholder,
   }: { 
     ingredientId: string; 
     variantId?: string;
     selectedItem?: Item;
     onSelect: (item: Item) => void;
+    itemsList?: Item[];
+    placeholder?: string;
   }) => {
     const dropdownId = variantId ? `${variantId}-${ingredientId}` : ingredientId;
     const isOpen = activeDropdown === dropdownId;
+    
+    // Use provided items list or default to all items
+    const availableItems = itemsList || items;
+    const searchedItems = availableItems.filter(item => {
+      const query = searchQuery.toLowerCase();
+      return item.name.toLowerCase().includes(query) || 
+             (item.name_ar && item.name_ar.includes(query));
+    });
 
     return (
       <div className="relative flex-1">
@@ -567,7 +691,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
           <span className={selectedItem ? 'text-zinc-900 dark:text-white' : 'text-zinc-400'}>
             {selectedItem 
               ? (isRTL ? selectedItem.name_ar || selectedItem.name : selectedItem.name)
-              : t('Select item', 'اختر عنصر')}
+              : (placeholder || t('Select item', 'اختر عنصر'))}
           </span>
           <ChevronDown className="w-4 h-4 text-zinc-400" />
         </button>
@@ -595,12 +719,12 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
               </div>
 
               <div className="py-1">
-                {filteredItems.length === 0 ? (
+                {searchedItems.length === 0 ? (
                   <div className="px-4 py-3 text-sm text-zinc-500 text-center">
                     {t('No items found', 'لم يتم العثور على عناصر')}
                   </div>
                 ) : (
-                  filteredItems.map(item => (
+                  searchedItems.map(item => (
                     <button
                       key={item.id}
                       type="button"
@@ -614,6 +738,11 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                         </div>
                         <div className="text-xs text-zinc-500">
                           {((item as any).effective_price || item.cost_per_unit || 0).toFixed(3)} / {item.unit}
+                          {item.item_type && item.item_type !== 'food' && (
+                            <span className="ml-2 px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400">
+                              {item.item_type}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </button>
@@ -728,38 +857,22 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                   className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1.5">
-                  {t('Category', 'الفئة')} *
-                </label>
-                <select
-                  value={categoryId || ''}
-                  onChange={(e) => setCategoryId(e.target.value ? parseInt(e.target.value) : null)}
-                  className={`w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500 ${!categoryId ? 'text-zinc-400' : ''}`}
-                >
-                  <option value="">{t('Select category', 'اختر الفئة')}</option>
-                  {categories.length > 0 && (
-                    <>
-                      <optgroup label={t('General Categories', 'الفئات العامة')}>
-                        {categories.filter(c => c.is_system).map((cat) => (
-                          <option key={cat.id} value={cat.id}>
-                            {isRTL ? cat.name_ar || cat.name : cat.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                      {categories.filter(c => !c.is_system).length > 0 && (
-                        <optgroup label={t('Custom Categories', 'الفئات المخصصة')}>
-                          {categories.filter(c => !c.is_system).map((cat) => (
-                            <option key={cat.id} value={cat.id}>
-                              {isRTL ? cat.name_ar || cat.name : cat.name}
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </>
-                  )}
-                </select>
-              </div>
+              <SearchableSelect
+                label={`${t('Category', 'الفئة')} *`}
+                value={categoryId}
+                onChange={(val) => setCategoryId(val ? Number(val) : null)}
+                options={[
+                  ...categories.filter(c => c.is_system).map((cat) => ({
+                    id: cat.id,
+                    name: `${isRTL ? cat.name_ar || cat.name : cat.name} (${t('General', 'عام')})`,
+                  })),
+                  ...categories.filter(c => !c.is_system).map((cat) => ({
+                    id: cat.id,
+                    name: isRTL ? cat.name_ar || cat.name : cat.name,
+                  })),
+                ]}
+                placeholder={t('Select category', 'اختر الفئة')}
+              />
             </div>
 
             {/* Description */}
@@ -954,6 +1067,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                           ingredientId={ing.id}
                           selectedItem={ing.item}
                           onSelect={(item) => selectItemForIngredient(ing.id, item)}
+                          itemsList={foodItems}
                         />
                         <input
                           type="number"
@@ -1035,6 +1149,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                               variantId={variant.id}
                               selectedItem={ing.item}
                               onSelect={(item) => selectItemForVariantIngredient(variant.id, ing.id, item)}
+                              itemsList={foodItems}
                             />
                             <input
                               type="number"
@@ -1122,6 +1237,7 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                         variantId="modifier"
                         selectedItem={mod.item}
                         onSelect={(item) => selectItemForModifier(mod.id, item)}
+                        itemsList={foodItems}
                       />
                       <div className="flex items-center gap-1.5">
                         <input
@@ -1170,6 +1286,105 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                   <Plus className="w-4 h-4" />
                   {t('Add Extra Item', 'إضافة عنصر إضافي')}
                 </button>
+              </div>
+            </div>
+
+            {/* Accessories Section - Non-Food Items (Packaging, Supplies) */}
+            <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6">
+              <div className="flex items-center gap-3 mb-4">
+                <ShoppingBag className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                <span className="font-medium text-zinc-900 dark:text-white">
+                  {t('Accessories (Packaging & Supplies)', 'الملحقات (التعبئة والمستلزمات)')}
+                </span>
+              </div>
+              <p className="text-sm text-zinc-500 mb-4">
+                {t('Non-food items to deduct from inventory when this product is sold (e.g., cups, boxes, napkins)', 
+                   'المواد غير الغذائية التي يتم خصمها من المخزون عند بيع هذا المنتج (مثال: أكواب، علب، مناديل)')}
+              </p>
+
+              <div className="space-y-3 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30">
+                {nonFoodItems.length === 0 ? (
+                  <p className="text-sm text-amber-700 dark:text-amber-400 text-center py-4">
+                    {t('No non-food items available. Create packaging or supply items first in the Items section.', 
+                       'لا توجد مواد غير غذائية متاحة. قم بإنشاء مواد التعبئة أو المستلزمات أولاً في قسم المواد.')}
+                  </p>
+                ) : accessories.length === 0 ? (
+                  <p className="text-sm text-zinc-500 text-center py-4">
+                    {t('No accessories configured. Add packaging or supplies that should be deducted when sold.', 
+                       'لم يتم تكوين ملحقات. أضف التعبئة أو المستلزمات التي يجب خصمها عند البيع.')}
+                  </p>
+                ) : (
+                  accessories.map((acc) => (
+                    <div key={acc.id} className="p-3 rounded-lg bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                      <div className="flex items-center gap-3 mb-3">
+                        <ItemDropdown
+                          ingredientId={acc.id}
+                          variantId="accessory"
+                          selectedItem={acc.item}
+                          onSelect={(item) => selectItemForAccessory(acc.id, item)}
+                          itemsList={nonFoodItems}
+                          placeholder={t('Select packaging/supply item', 'اختر مادة تعبئة/مستلزم')}
+                        />
+                        <input
+                          type="number"
+                          value={acc.quantity ?? ''}
+                          onChange={(e) => updateAccessory(acc.id, { quantity: e.target.value === '' ? 1 : parseFloat(e.target.value) })}
+                          placeholder={t('Qty', 'الكمية')}
+                          step="1"
+                          min="1"
+                          className="w-20 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
+                        />
+                        {acc.item && (
+                          <span className="text-xs text-zinc-500 w-12">
+                            {acc.item.unit}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeAccessory(acc.id)}
+                          className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      {/* Order type toggles */}
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        <span className="text-xs text-zinc-500 self-center">
+                          {t('Deduct for:', 'خصم عند:')}
+                        </span>
+                        {(['always', 'dine_in', 'takeaway', 'delivery'] as AccessoryOrderType[]).map((orderType) => (
+                          <button
+                            key={orderType}
+                            type="button"
+                            onClick={() => toggleOrderType(acc.id, orderType)}
+                            className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                              acc.applicable_order_types.includes(orderType)
+                                ? 'bg-amber-500 text-white'
+                                : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+                            }`}
+                          >
+                            {orderType === 'always' && t('Always', 'دائماً')}
+                            {orderType === 'dine_in' && t('Dine-in', 'محلي')}
+                            {orderType === 'takeaway' && t('Takeaway', 'سفري')}
+                            {orderType === 'delivery' && t('Delivery', 'توصيل')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+
+                {nonFoodItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={addAccessory}
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/20 rounded-lg border border-dashed border-amber-300 dark:border-amber-700 transition-colors w-full justify-center"
+                  >
+                    <Plus className="w-4 h-4" />
+                    {t('Add Accessory', 'إضافة ملحق')}
+                  </button>
+                )}
               </div>
             </div>
           </div>

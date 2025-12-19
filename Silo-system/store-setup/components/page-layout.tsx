@@ -75,7 +75,8 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
 
     try {
       const parsedUser = JSON.parse(storedUser);
-      if (parsedUser.role !== 'owner' && parsedUser.role !== 'manager') {
+      // Store-setup is for owners only
+      if (parsedUser.role !== 'owner') {
         handleLogout();
         return;
       }
@@ -103,6 +104,9 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
       if (parsedBusiness?.id) {
         fetchBranches(parsedBusiness.id);
       }
+
+      // Fetch fresh business data from server to get updated logo_url etc.
+      fetchBusinessData();
     } catch {
       router.push('/login');
       return;
@@ -110,6 +114,20 @@ export function PageLayout({ children, searchPlaceholder }: PageLayoutProps) {
 
     setLoading(false);
   }, [router]);
+
+  const fetchBusinessData = async () => {
+    try {
+      const response = await api.get('/business-settings');
+      const freshBusiness = response.data.data;
+      if (freshBusiness) {
+        setBusiness(freshBusiness);
+        // Update localStorage with fresh data
+        localStorage.setItem('setup_business', JSON.stringify(freshBusiness));
+      }
+    } catch (err) {
+      console.error('Failed to fetch fresh business data:', err);
+    }
+  };
 
   const fetchWorkspaces = async (username: string) => {
     try {

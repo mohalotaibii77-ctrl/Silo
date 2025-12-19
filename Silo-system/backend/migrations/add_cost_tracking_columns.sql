@@ -52,3 +52,8 @@ COMMENT ON COLUMN items.total_stock_value IS 'Total inventory value for WAC calc
 COMMENT ON COLUMN items.last_purchase_cost IS 'Last purchase price for reference';
 COMMENT ON COLUMN items.last_purchase_date IS 'Date of last purchase';
 
+
+
+
+
+

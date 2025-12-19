@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../theme/colors';
+import { useLocalization } from '../localization/LocalizationContext';
 import { 
   LayoutDashboard, 
   Package, 
@@ -14,21 +15,38 @@ import {
 } from 'lucide-react-native';
 
 export default function PMDashboardScreen({ navigation }: any) {
+  const { t, isRTL } = useLocalization();
+  
   const handleLogout = async () => {
     await AsyncStorage.clear();
     navigation.replace('Login');
   };
 
-  const MenuItem = ({ icon: Icon, title, subtitle }: any) => (
-    <TouchableOpacity style={styles.menuItem}>
-      <View style={styles.menuIconContainer}>
-        <Icon size={20} color={colors.foreground} />
-      </View>
-      <View style={styles.menuTextContainer}>
-        <Text style={styles.menuTitle}>{title}</Text>
-        {subtitle && <Text style={styles.menuSubtitle}>{subtitle}</Text>}
-      </View>
-      <ChevronRight size={16} color={colors.mutedForeground} />
+  const MenuItem = ({ icon: Icon, title, subtitle, onPress }: any) => (
+    <TouchableOpacity style={[styles.menuItem, isRTL && styles.rtlRow]} onPress={onPress}>
+      {isRTL ? (
+        <>
+          <View style={[styles.menuIconContainer, { marginRight: 0, marginLeft: 12 }]}>
+            <Icon size={20} color={colors.foreground} />
+          </View>
+          <View style={[styles.menuTextContainer, { alignItems: 'flex-end' }]}>
+            <Text style={[styles.menuTitle, styles.rtlText]}>{title}</Text>
+            {subtitle && <Text style={[styles.menuSubtitle, styles.rtlText]}>{subtitle}</Text>}
+          </View>
+          <ChevronRight size={16} color={colors.mutedForeground} style={{ transform: [{ rotate: '180deg' }] }} />
+        </>
+      ) : (
+        <>
+          <View style={styles.menuIconContainer}>
+            <Icon size={20} color={colors.foreground} />
+          </View>
+          <View style={styles.menuTextContainer}>
+            <Text style={styles.menuTitle}>{title}</Text>
+            {subtitle && <Text style={styles.menuSubtitle}>{subtitle}</Text>}
+          </View>
+          <ChevronRight size={16} color={colors.mutedForeground} />
+        </>
+      )}
     </TouchableOpacity>
   );
 
@@ -63,11 +81,18 @@ export default function PMDashboardScreen({ navigation }: any) {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Inventory & Orders</Text>
+          <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('management')}</Text>
           <View style={styles.card}>
-            <MenuItem icon={ShoppingBag} title="Order Management" />
+            <MenuItem 
+              icon={Package} 
+              title={t('itemsAndProducts')} 
+              subtitle={t('manageItemsProducts')}
+              onPress={() => navigation.navigate('ItemsProducts')}
+            />
             <View style={styles.divider} />
-            <MenuItem icon={ClipboardList} title="Inventory Check" />
+            <MenuItem icon={ShoppingBag} title={t('orders')} subtitle={t('trackProcessOrders')} />
+            <View style={styles.divider} />
+            <MenuItem icon={ClipboardList} title={t('inventory')} subtitle={t('stockLevelsSuppliers')} />
           </View>
         </View>
 
@@ -174,5 +199,16 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.border,
     marginLeft: 64,
+  },
+  rtlRow: {
+    flexDirection: 'row-reverse',
+  },
+  rtlText: {
+    textAlign: 'right',
+  },
+  sectionTitleRTL: {
+    textAlign: 'right',
+    marginLeft: 0,
+    marginRight: 4,
   },
 });

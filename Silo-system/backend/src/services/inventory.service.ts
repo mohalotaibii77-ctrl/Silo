@@ -11,11 +11,22 @@ import {
   ServingUnit 
 } from '../utils/unit-conversion';
 
-// Item categories as defined in database
+// Item types: Food (ingredients) vs Non-Food (accessories)
+export type ItemType = 'food' | 'non_food';
+
+// Item categories
+// - Food items have multiple categories for organization
+// - Non-food items (accessories) use a single 'non_food' category
 export type ItemCategory = 
+  // Food categories
   | 'vegetable' | 'fruit' | 'meat' | 'poultry' | 'seafood' 
   | 'dairy' | 'grain' | 'bread' | 'sauce' | 'condiment' 
-  | 'spice' | 'oil' | 'beverage' | 'sweetener' | 'other';
+  | 'spice' | 'oil' | 'beverage' | 'sweetener'
+  // Non-food (accessories) - single category
+  | 'non_food';
+
+// Accessory order types - when product accessories should be deducted
+export type AccessoryOrderType = 'always' | 'dine_in' | 'takeaway' | 'delivery';
 
 // Item units (simplified) - serving units
 export type ItemUnit = 'grams' | 'mL' | 'piece';
@@ -29,6 +40,7 @@ export interface Item {
   name: string;
   name_ar?: string | null;
   sku?: string | null;
+  item_type: ItemType;               // Type: food or non_food
   category: ItemCategory;
   unit: ItemUnit;                    // Serving unit (for recipes/products)
   storage_unit: StorageUnit;         // Storage unit (for inventory)
@@ -48,6 +60,22 @@ export interface Item {
   updated_at: string;
   // Business-specific price (if set)
   business_price?: number | null;
+}
+
+// Product Accessories (non-food items linked to products)
+export interface ProductAccessory {
+  id: number;
+  product_id: number;
+  variant_id?: number | null;
+  item_id: number;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
+  is_required: boolean;
+  notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  item?: Item;
 }
 
 export interface BusinessItemPrice {
@@ -114,15 +142,27 @@ export class InventoryService {
 
   /**
    * Get all items for a business with business-specific prices
+   * Supports pagination with page, limit, fields options
    */
   async getItems(businessId: number, filters?: {
     category?: ItemCategory;
-  }): Promise<Item[]> {
+    item_type?: ItemType;
+    page?: number;
+    limit?: number;
+    fields?: string[];
+  }): Promise<Item[] | { data: Item[]; total: number }> {
+    const { page, limit, fields } = filters || {};
+    
     // Build base query
     let query = supabaseAdmin
       .from('items')
-      .select('*')
+      .select('*', { count: page && limit ? 'exact' : undefined })
       .eq('status', 'active');
+
+    // Filter by item_type if specified
+    if (filters?.item_type) {
+      query = query.eq('item_type', filters.item_type);
+    }
 
     // Filter by category if specified
     if (filters?.category) {
@@ -132,7 +172,13 @@ export class InventoryService {
     // Get items that belong to this business OR are general items (business_id is null)
     query = query.or(`business_id.eq.${businessId},business_id.is.null`);
 
-    const { data: items, error } = await query.order('name');
+    // Apply pagination if provided
+    if (page && limit) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
+    }
+
+    const { data: items, error, count } = await query.order('name');
     
     if (error) {
       console.error('Failed to fetch items:', error);
@@ -150,6 +196,14 @@ export class InventoryService {
       // Continue without business prices - will use default prices
     }
 
+    // Get items that this business has "deleted" (business_deleted_items)
+    const { data: deletedItems } = await supabaseAdmin
+      .from('business_deleted_items')
+      .select('item_id')
+      .eq('business_id', businessId);
+    
+    const deletedItemIds = new Set((deletedItems || []).map(d => d.item_id));
+
     // Create a map of item_id to business price
     const priceMap = new Map<number, number>();
     if (businessPrices) {
@@ -158,8 +212,31 @@ export class InventoryService {
       });
     }
 
+    // Filter out default items that have been "overridden" by business-specific clones
+    // This happens when a user edits a default item - it creates a clone for their business
+    const businessItemNames = new Set(
+      (items || [])
+        .filter(item => item.business_id === businessId)
+        .map(item => item.name.toLowerCase())
+    );
+    
+    // Remove default items that have been cloned (same name exists in business items)
+    // Also remove default items that have been explicitly deleted by this business
+    const filteredItems = (items || []).filter(item => {
+      // Keep all business-owned items
+      if (item.business_id === businessId) return true;
+      // For default items, check if deleted or cloned
+      if (item.business_id === null) {
+        // Skip if this business has deleted this default item
+        if (deletedItemIds.has(item.id)) return false;
+        // Skip if there's a business item with the same name (cloned)
+        return !businessItemNames.has(item.name.toLowerCase());
+      }
+      return true;
+    });
+
     // Merge business prices with items and parse production_rate_custom_dates
-    const itemsWithPrices = (items || []).map(item => {
+    const itemsWithPrices = filteredItems.map(item => {
       let parsedItem = { ...item };
       // Parse production_rate_custom_dates from JSONB if present
       if (item.production_rate_custom_dates) {
@@ -180,6 +257,14 @@ export class InventoryService {
       };
     });
     
+    // Return paginated response if pagination was requested
+    if (page && limit && count !== null) {
+      return {
+        data: itemsWithPrices as Item[],
+        total: count,
+      };
+    }
+
     return itemsWithPrices as Item[];
   }
 
@@ -233,11 +318,18 @@ export class InventoryService {
     business_id: number;
     name: string;
     name_ar?: string;
+    item_type?: ItemType;
     category: ItemCategory;
     unit?: ItemUnit;
     storage_unit?: StorageUnit;
     cost_per_unit?: number;
   }): Promise<Item> {
+    // Check for duplicate name using the comprehensive public method
+    const duplicateCheck = await this.checkDuplicateItemName(data.business_id, data.name);
+    if (duplicateCheck.isDuplicate) {
+      throw new Error('An item with this name already exists');
+    }
+
     const servingUnit = data.unit || 'grams';
     const storageUnit = data.storage_unit || getDefaultStorageUnit(servingUnit as ServingUnit);
     
@@ -256,6 +348,7 @@ export class InventoryService {
         business_id: data.business_id,
         name: data.name,
         name_ar: data.name_ar || null,
+        item_type: data.item_type || 'food',
         category: data.category,
         unit: servingUnit,
         storage_unit: storageUnit,
@@ -280,12 +373,21 @@ export class InventoryService {
   async updateItem(itemId: number, data: Partial<{
     name: string;
     name_ar: string;
+    item_type: ItemType;
     category: ItemCategory;
     unit: ItemUnit;
     storage_unit: StorageUnit;
     cost_per_unit: number;
     status: 'active' | 'inactive';
-  }>): Promise<Item> {
+  }>, businessId?: number): Promise<Item> {
+    // If name is being updated, check for duplicates
+    if (data.name && businessId) {
+      const duplicateCheck = await this.checkDuplicateItemName(businessId, data.name, itemId);
+      if (duplicateCheck.isDuplicate) {
+        throw new Error('An item with this name already exists');
+      }
+    }
+
     // If both unit and storage_unit are being updated, validate pairing
     if (data.unit && data.storage_unit) {
       const validationError = validateUnitPairing(data.storage_unit, data.unit as ServingUnit);
@@ -367,6 +469,54 @@ export class InventoryService {
     if (error) {
       console.error('Failed to clone item:', error);
       throw new Error('Failed to create business-specific item');
+    }
+
+    // Update all product ingredients that reference the old default item to point to the new cloned item
+    // This ensures products use the business's customized version
+    try {
+      // Get all products for this business
+      const { data: businessProducts } = await supabaseAdmin
+        .from('products')
+        .select('id')
+        .eq('business_id', businessId);
+
+      if (businessProducts && businessProducts.length > 0) {
+        const productIds = businessProducts.map(p => p.id);
+        
+        // Update product_ingredients to use the new item
+        await supabaseAdmin
+          .from('product_ingredients')
+          .update({ item_id: newItem.id })
+          .eq('item_id', itemId)
+          .in('product_id', productIds);
+        
+        // Update product_modifiers to use the new item
+        await supabaseAdmin
+          .from('product_modifiers')
+          .update({ item_id: newItem.id })
+          .eq('item_id', itemId)
+          .in('product_id', productIds);
+      }
+
+      // Also update composite item components that reference the old default item
+      const { data: businessComposites } = await supabaseAdmin
+        .from('items')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('is_composite', true);
+
+      if (businessComposites && businessComposites.length > 0) {
+        const compositeIds = businessComposites.map(c => c.id);
+        
+        await supabaseAdmin
+          .from('composite_item_components')
+          .update({ component_item_id: newItem.id })
+          .eq('component_item_id', itemId)
+          .in('composite_item_id', compositeIds);
+      }
+    } catch (updateError) {
+      console.error('Failed to update references to new item:', updateError);
+      // Don't fail the whole operation - the item was cloned successfully
     }
 
     return newItem as Item;
@@ -764,6 +914,12 @@ export class InventoryService {
       production_rate_custom_dates
     } = input;
     
+    // Check for duplicate name (composite items are stored in the items table)
+    const duplicateCheck = await this.checkDuplicateItemName(business_id, name);
+    if (duplicateCheck.isDuplicate) {
+      throw new Error('An item with this name already exists');
+    }
+
     // Determine storage unit (default based on serving unit)
     const storageUnit = inputStorageUnit || getDefaultStorageUnit(unit as ServingUnit);
     
@@ -882,7 +1038,7 @@ export class InventoryService {
   /**
    * Get a composite item with its components
    */
-  async getCompositeItem(itemId: number, businessId: number): Promise<(Item & { components: CompositeItemComponent[] }) | null> {
+  async getCompositeItem(itemId: number, businessId: number): Promise<(Item & { components: CompositeItemComponent[]; batch_cost: number; cost_per_serving_unit: number }) | null> {
     // Get the item
     const item = await this.getItem(itemId, businessId);
     if (!item) return null;
@@ -902,6 +1058,7 @@ export class InventoryService {
           name,
           name_ar,
           unit,
+          storage_unit,
           cost_per_unit,
           sku
         )
@@ -910,7 +1067,7 @@ export class InventoryService {
 
     if (error) {
       console.error('Failed to fetch composite item components:', error);
-      return { ...item, components: [] };
+      return { ...item, components: [], batch_cost: 0, cost_per_serving_unit: 0 };
     }
 
     // Get business-specific prices for components
@@ -926,10 +1083,13 @@ export class InventoryService {
       businessPrices.forEach(bp => priceMap.set(bp.item_id, bp.cost_per_unit));
     }
 
-    // Format components with effective prices
+    // Format components with effective prices and calculate batch cost
+    let batchCost = 0;
     const formattedComponents = (components || []).map((comp: any) => {
       const componentItem = comp.items;
       const effectivePrice = priceMap.get(comp.component_item_id) ?? componentItem?.cost_per_unit ?? 0;
+      const componentCost = comp.quantity * effectivePrice;
+      batchCost += componentCost;
       return {
         id: comp.id,
         composite_item_id: comp.composite_item_id,
@@ -940,14 +1100,21 @@ export class InventoryService {
         component_item: componentItem ? {
           ...componentItem,
           effective_price: effectivePrice,
-          component_cost: comp.quantity * effectivePrice,
+          component_cost: componentCost,
         } : undefined,
       };
     });
 
+    // Calculate cost per serving unit based on batch quantity
+    const batchQuantity = item.batch_quantity || 1;
+    const costPerServingUnit = batchQuantity > 0 ? batchCost / batchQuantity : 0;
+
     return {
       ...item,
       components: formattedComponents,
+      // Calculated fields from backend
+      batch_cost: batchCost,
+      cost_per_serving_unit: costPerServingUnit,
     };
   }
 
@@ -1079,9 +1246,9 @@ export class InventoryService {
   }
 
   /**
-   * Get all composite items for a business
+   * Get all composite items for a business with calculated costs
    */
-  async getCompositeItems(businessId: number): Promise<Item[]> {
+  async getCompositeItems(businessId: number): Promise<(Item & { batch_cost: number; cost_per_serving_unit: number })[]> {
     const { data: items, error } = await supabaseAdmin
       .from('items')
       .select('*')
@@ -1095,7 +1262,57 @@ export class InventoryService {
       throw new Error('Failed to fetch composite items');
     }
 
-    return items as Item[];
+    // For each composite item, fetch components and calculate batch_cost and cost_per_serving_unit
+    const itemsWithCosts = await Promise.all(
+      (items || []).map(async (item) => {
+        // Get components for this item
+        const { data: components } = await supabaseAdmin
+          .from('composite_item_components')
+          .select(`
+            quantity,
+            items:component_item_id (
+              id,
+              cost_per_unit
+            )
+          `)
+          .eq('composite_item_id', item.id);
+
+        // Get business-specific prices
+        const componentItemIds = (components || []).map((c: any) => c.items?.id).filter(Boolean);
+        const { data: businessPrices } = await supabaseAdmin
+          .from('business_item_prices')
+          .select('item_id, cost_per_unit')
+          .eq('business_id', businessId)
+          .in('item_id', componentItemIds);
+
+        const priceMap = new Map<number, number>();
+        if (businessPrices) {
+          businessPrices.forEach(bp => priceMap.set(bp.item_id, bp.cost_per_unit));
+        }
+
+        // Calculate batch cost
+        let batchCost = 0;
+        (components || []).forEach((comp: any) => {
+          const componentItem = comp.items;
+          if (componentItem) {
+            const effectivePrice = priceMap.get(componentItem.id) ?? componentItem.cost_per_unit ?? 0;
+            batchCost += comp.quantity * effectivePrice;
+          }
+        });
+
+        // Calculate cost per serving unit
+        const batchQuantity = item.batch_quantity || 1;
+        const costPerServingUnit = batchQuantity > 0 ? batchCost / batchQuantity : 0;
+
+        return {
+          ...item,
+          batch_cost: batchCost,
+          cost_per_serving_unit: costPerServingUnit,
+        };
+      })
+    );
+
+    return itemsWithCosts as (Item & { batch_cost: number; cost_per_serving_unit: number })[];
   }
 
   // ============ COST CASCADE RECALCULATION ============
@@ -1259,6 +1476,631 @@ export class InventoryService {
       updatedCompositeItems,
       updatedProducts,
     };
+  }
+
+  // ============ PRODUCT STATS ============
+
+  /**
+   * Get sales stats for all products
+   * Returns sold count and average profit margin per product
+   * Includes products sold directly AND products sold as part of bundles
+   */
+  async getProductStats(businessId: number): Promise<Record<number, { sold: number; profit_margin: number }>> {
+    // Get all order items for this business from completed orders (not voided)
+    const { data: orderItems, error } = await supabaseAdmin
+      .from('order_items')
+      .select(`
+        product_id,
+        quantity,
+        profit_margin,
+        is_combo,
+        combo_id,
+        orders!inner (
+          business_id,
+          is_void,
+          order_status
+        )
+      `)
+      .eq('orders.business_id', businessId)
+      .eq('orders.is_void', false)
+      .in('orders.order_status', ['completed', 'ready', 'out_for_delivery']);
+
+    if (error) {
+      console.error('Failed to fetch order items for stats:', error);
+      return {};
+    }
+
+    // Get bundle items to map bundle_id -> products
+    const { data: bundleItems, error: bundleError } = await supabaseAdmin
+      .from('bundle_items')
+      .select(`
+        bundle_id,
+        product_id,
+        quantity,
+        bundles!inner (
+          business_id
+        )
+      `)
+      .eq('bundles.business_id', businessId);
+
+    if (bundleError) {
+      console.error('Failed to fetch bundle items:', bundleError);
+    }
+
+    // Create a map of bundle_id -> array of { product_id, quantity }
+    const bundleProductsMap: Record<number, { product_id: number; quantity: number }[]> = {};
+    for (const item of bundleItems || []) {
+      if (!bundleProductsMap[item.bundle_id]) {
+        bundleProductsMap[item.bundle_id] = [];
+      }
+      bundleProductsMap[item.bundle_id].push({
+        product_id: item.product_id,
+        quantity: item.quantity
+      });
+    }
+
+    // Aggregate stats by product_id
+    const statsMap: Record<number, { sold: number; totalMargin: number; count: number }> = {};
+
+    for (const item of orderItems || []) {
+      // Direct product sale (not a combo/bundle)
+      if (!item.is_combo && item.product_id) {
+        if (!statsMap[item.product_id]) {
+          statsMap[item.product_id] = { sold: 0, totalMargin: 0, count: 0 };
+        }
+        
+        statsMap[item.product_id].sold += item.quantity || 0;
+        statsMap[item.product_id].totalMargin += (item.profit_margin || 0) * (item.quantity || 0);
+        statsMap[item.product_id].count += item.quantity || 0;
+      }
+      
+      // Bundle sale - count products within the bundle
+      if (item.is_combo && item.combo_id) {
+        const bundleProducts = bundleProductsMap[item.combo_id] || [];
+        const bundleQty = item.quantity || 1;
+        
+        for (const bundleProduct of bundleProducts) {
+          if (!statsMap[bundleProduct.product_id]) {
+            statsMap[bundleProduct.product_id] = { sold: 0, totalMargin: 0, count: 0 };
+          }
+          // Each bundle sold means each product in the bundle is sold (qty in bundle * bundles sold)
+          statsMap[bundleProduct.product_id].sold += bundleProduct.quantity * bundleQty;
+        }
+      }
+    }
+
+    // Calculate average profit margin
+    const result: Record<number, { sold: number; profit_margin: number }> = {};
+    for (const [productId, stats] of Object.entries(statsMap)) {
+      result[parseInt(productId)] = {
+        sold: stats.sold,
+        profit_margin: stats.count > 0 ? Math.round((stats.totalMargin / stats.count) * 100) / 100 : 0,
+      };
+    }
+
+    return result;
+  }
+
+  // ============ ITEM DELETION & VALIDATION ============
+
+  /**
+   * Check if an item name already exists for this business
+   * Checks both business-owned items and visible default items
+   * @param businessId - The business ID
+   * @param name - The item name to check
+   * @param excludeItemId - Optional item ID to exclude (for editing)
+   * @returns true if duplicate exists, false otherwise
+   */
+  async checkDuplicateItemName(
+    businessId: number, 
+    name: string, 
+    excludeItemId?: number
+  ): Promise<{ isDuplicate: boolean; existingItem?: { id: number; name: string; business_id: number | null } }> {
+    const normalizedName = name.toLowerCase().trim();
+
+    // Get business-deleted items to exclude from default items check
+    const { data: deletedItems } = await supabaseAdmin
+      .from('business_deleted_items')
+      .select('item_id')
+      .eq('business_id', businessId);
+    
+    const deletedItemIds = (deletedItems || []).map(d => d.item_id);
+
+    // Check business-owned items
+    let businessQuery = supabaseAdmin
+      .from('items')
+      .select('id, name, business_id')
+      .eq('business_id', businessId)
+      .eq('status', 'active')
+      .ilike('name', normalizedName);
+    
+    if (excludeItemId) {
+      businessQuery = businessQuery.neq('id', excludeItemId);
+    }
+
+    const { data: businessItems } = await businessQuery;
+
+    if (businessItems && businessItems.length > 0) {
+      return { 
+        isDuplicate: true, 
+        existingItem: businessItems[0] 
+      };
+    }
+
+    // Check default items (not deleted by this business)
+    let defaultQuery = supabaseAdmin
+      .from('items')
+      .select('id, name, business_id')
+      .is('business_id', null)
+      .eq('status', 'active')
+      .ilike('name', normalizedName);
+    
+    if (excludeItemId) {
+      defaultQuery = defaultQuery.neq('id', excludeItemId);
+    }
+
+    const { data: defaultItems } = await defaultQuery;
+
+    // Filter out items that are deleted by this business
+    const visibleDefaultItems = (defaultItems || []).filter(
+      item => !deletedItemIds.includes(item.id)
+    );
+
+    if (visibleDefaultItems.length > 0) {
+      return { 
+        isDuplicate: true, 
+        existingItem: visibleDefaultItems[0] 
+      };
+    }
+
+    return { isDuplicate: false };
+  }
+
+  /**
+   * Get usage information for an item
+   * Returns what products, composite items, bundles, and inventory use this item
+   * @param itemId - The item ID to check
+   * @param businessId - The business ID
+   */
+  async getItemUsage(itemId: number, businessId: number): Promise<{
+    products: Array<{ id: number; name: string; name_ar?: string }>;
+    compositeItems: Array<{ id: number; name: string; name_ar?: string }>;
+    bundles: Array<{ id: number; name: string; name_ar?: string }>;
+    inventoryBranches: Array<{ id: number; name: string; quantity: number }>;
+    totalUsageCount: number;
+  }> {
+    // Get products that use this item as ingredient
+    const { data: productIngredients } = await supabaseAdmin
+      .from('product_ingredients')
+      .select(`
+        product_id,
+        products!inner (
+          id,
+          name,
+          name_ar,
+          business_id
+        )
+      `)
+      .eq('item_id', itemId)
+      .eq('products.business_id', businessId)
+      .eq('products.is_active', true);
+
+    // Get products that use this item as modifier
+    const { data: productModifiers } = await supabaseAdmin
+      .from('product_modifiers')
+      .select(`
+        product_id,
+        products!inner (
+          id,
+          name,
+          name_ar,
+          business_id
+        )
+      `)
+      .eq('item_id', itemId)
+      .eq('products.business_id', businessId)
+      .eq('products.is_active', true);
+
+    // Combine and deduplicate products
+    const productMap = new Map<number, { id: number; name: string; name_ar?: string }>();
+    
+    for (const ing of productIngredients || []) {
+      const product = ing.products as any;
+      if (product && !productMap.has(product.id)) {
+        productMap.set(product.id, {
+          id: product.id,
+          name: product.name,
+          name_ar: product.name_ar,
+        });
+      }
+    }
+    
+    for (const mod of productModifiers || []) {
+      const product = mod.products as any;
+      if (product && !productMap.has(product.id)) {
+        productMap.set(product.id, {
+          id: product.id,
+          name: product.name,
+          name_ar: product.name_ar,
+        });
+      }
+    }
+
+    const products = Array.from(productMap.values());
+
+    // Get composite items that use this item as component
+    const { data: compositeComponents } = await supabaseAdmin
+      .from('composite_item_components')
+      .select(`
+        composite_item_id,
+        items!composite_item_components_composite_item_id_fkey (
+          id,
+          name,
+          name_ar,
+          business_id
+        )
+      `)
+      .eq('component_item_id', itemId);
+
+    const compositeItems = (compositeComponents || [])
+      .filter((comp: any) => comp.items && comp.items.business_id === businessId)
+      .map((comp: any) => ({
+        id: comp.items.id,
+        name: comp.items.name,
+        name_ar: comp.items.name_ar,
+      }));
+
+    // Get bundles that contain products using this item
+    const productIds = products.map(p => p.id);
+    let bundles: Array<{ id: number; name: string; name_ar?: string }> = [];
+
+    if (productIds.length > 0) {
+      const { data: bundleItems } = await supabaseAdmin
+        .from('bundle_items')
+        .select(`
+          bundle_id,
+          bundles!inner (
+            id,
+            name,
+            name_ar,
+            business_id,
+            is_active
+          )
+        `)
+        .in('product_id', productIds)
+        .eq('bundles.business_id', businessId)
+        .eq('bundles.is_active', true);
+
+      const bundleMap = new Map<number, { id: number; name: string; name_ar?: string }>();
+      for (const item of bundleItems || []) {
+        const bundle = item.bundles as any;
+        if (bundle && !bundleMap.has(bundle.id)) {
+          bundleMap.set(bundle.id, {
+            id: bundle.id,
+            name: bundle.name,
+            name_ar: bundle.name_ar,
+          });
+        }
+      }
+      bundles = Array.from(bundleMap.values());
+    }
+
+    // Get inventory stock for this item
+    const { data: inventoryStock } = await supabaseAdmin
+      .from('inventory_stock')
+      .select(`
+        id,
+        branch_id,
+        quantity,
+        branches (
+          id,
+          name
+        )
+      `)
+      .eq('item_id', itemId)
+      .eq('business_id', businessId)
+      .gt('quantity', 0);
+
+    const inventoryBranches = (inventoryStock || []).map((stock: any) => ({
+      id: stock.branches?.id || stock.branch_id,
+      name: stock.branches?.name || 'Main Branch',
+      quantity: stock.quantity,
+    }));
+
+    const totalUsageCount = products.length + compositeItems.length + bundles.length + inventoryBranches.length;
+
+    return {
+      products,
+      compositeItems,
+      bundles,
+      inventoryBranches,
+      totalUsageCount,
+    };
+  }
+
+  /**
+   * Delete an item for a specific business with cascade
+   * - For default items: marks as deleted for this business only
+   * - For business items: performs cascade deletion
+   * @param itemId - The item ID to delete
+   * @param businessId - The business ID
+   * @param cascade - Whether to cascade delete related entities
+   */
+  async deleteItemForBusiness(
+    itemId: number, 
+    businessId: number,
+    cascade: boolean = false
+  ): Promise<{
+    success: boolean;
+    deletedProducts: number[];
+    deletedCompositeItems: number[];
+    deletedBundles: number[];
+    clearedInventoryBranches: number[];
+  }> {
+    const item = await this.getItem(itemId);
+    if (!item) {
+      throw new Error('Item not found');
+    }
+
+    const result = {
+      success: true,
+      deletedProducts: [] as number[],
+      deletedCompositeItems: [] as number[],
+      deletedBundles: [] as number[],
+      clearedInventoryBranches: [] as number[],
+    };
+
+    // If cascade is true, delete all related entities first
+    if (cascade) {
+      const usage = await this.getItemUsage(itemId, businessId);
+
+      // Delete bundles first (they depend on products)
+      for (const bundle of usage.bundles) {
+        await supabaseAdmin
+          .from('bundles')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', bundle.id)
+          .eq('business_id', businessId);
+        result.deletedBundles.push(bundle.id);
+      }
+
+      // Delete products (soft delete)
+      for (const product of usage.products) {
+        await supabaseAdmin
+          .from('products')
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq('id', product.id)
+          .eq('business_id', businessId);
+        result.deletedProducts.push(product.id);
+      }
+
+      // Delete composite items (soft delete)
+      for (const composite of usage.compositeItems) {
+        await supabaseAdmin
+          .from('items')
+          .update({ status: 'inactive', updated_at: new Date().toISOString() })
+          .eq('id', composite.id)
+          .eq('business_id', businessId);
+        result.deletedCompositeItems.push(composite.id);
+      }
+
+      // Clear inventory stock
+      for (const branch of usage.inventoryBranches) {
+        await supabaseAdmin
+          .from('inventory_stock')
+          .update({ quantity: 0, updated_at: new Date().toISOString() })
+          .eq('item_id', itemId)
+          .eq('business_id', businessId)
+          .eq('branch_id', branch.id);
+        result.clearedInventoryBranches.push(branch.id);
+      }
+    }
+
+    // Now handle the item itself
+    if (item.business_id === null) {
+      // Default item - mark as deleted for this business only
+      const { error } = await supabaseAdmin
+        .from('business_deleted_items')
+        .upsert({
+          business_id: businessId,
+          item_id: itemId,
+          deleted_at: new Date().toISOString(),
+        }, {
+          onConflict: 'business_id,item_id',
+        });
+
+      if (error) {
+        console.error('Failed to mark default item as deleted:', error);
+        throw new Error('Failed to delete item');
+      }
+    } else if (item.business_id === businessId) {
+      // Business-owned item - soft delete it
+      const { error } = await supabaseAdmin
+        .from('items')
+        .update({ status: 'inactive', updated_at: new Date().toISOString() })
+        .eq('id', itemId)
+        .eq('business_id', businessId);
+
+      if (error) {
+        console.error('Failed to delete business item:', error);
+        throw new Error('Failed to delete item');
+      }
+    } else {
+      throw new Error('You can only delete your own items or default items');
+    }
+
+    return result;
+  }
+
+  /**
+   * Restore a deleted default item for a business
+   * (Removes the entry from business_deleted_items)
+   */
+  async restoreDeletedItem(itemId: number, businessId: number): Promise<void> {
+    const { error } = await supabaseAdmin
+      .from('business_deleted_items')
+      .delete()
+      .eq('business_id', businessId)
+      .eq('item_id', itemId);
+
+    if (error) {
+      console.error('Failed to restore deleted item:', error);
+      throw new Error('Failed to restore item');
+    }
+  }
+
+  // ============ PRODUCT ACCESSORIES ============
+
+  /**
+   * Get all accessories for a product
+   */
+  async getProductAccessories(productId: number, businessId: number): Promise<ProductAccessory[]> {
+    // First verify the product belongs to this business
+    const { data: product } = await supabaseAdmin
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    const { data: accessories, error } = await supabaseAdmin
+      .from('product_accessories')
+      .select(`
+        *,
+        item:items (
+          id, name, name_ar, item_type, category, unit, storage_unit, 
+          cost_per_unit, is_system_item, status
+        )
+      `)
+      .eq('product_id', productId);
+
+    if (error) {
+      console.error('Failed to fetch product accessories:', error);
+      throw new Error('Failed to fetch product accessories');
+    }
+
+    // Get business-specific prices for accessories
+    const itemIds = (accessories || []).map(a => a.item_id);
+    if (itemIds.length > 0) {
+      const { data: businessPrices } = await supabaseAdmin
+        .from('business_item_prices')
+        .select('item_id, cost_per_unit')
+        .eq('business_id', businessId)
+        .in('item_id', itemIds);
+
+      const priceMap = new Map<number, number>();
+      (businessPrices || []).forEach(bp => priceMap.set(bp.item_id, bp.cost_per_unit));
+
+      // Merge business prices with accessories
+      return (accessories || []).map(acc => ({
+        ...acc,
+        item: acc.item ? {
+          ...acc.item,
+          business_price: priceMap.get(acc.item_id) ?? null,
+          effective_price: priceMap.get(acc.item_id) ?? acc.item.cost_per_unit,
+        } : undefined,
+      })) as ProductAccessory[];
+    }
+
+    return (accessories || []) as ProductAccessory[];
+  }
+
+  /**
+   * Update accessories for a product (replaces all existing accessories)
+   */
+  async updateProductAccessories(
+    productId: number,
+    businessId: number,
+    accessories: Array<{
+      item_id: number;
+      variant_id?: number | null;
+      quantity: number;
+      applicable_order_types?: AccessoryOrderType[];
+      is_required?: boolean;
+      notes?: string;
+    }>
+  ): Promise<ProductAccessory[]> {
+    // Verify product belongs to this business
+    const { data: product } = await supabaseAdmin
+      .from('products')
+      .select('id')
+      .eq('id', productId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!product) {
+      throw new Error('Product not found');
+    }
+
+    // Delete existing accessories for this product
+    await supabaseAdmin
+      .from('product_accessories')
+      .delete()
+      .eq('product_id', productId);
+
+    // Insert new accessories if any
+    if (accessories.length > 0) {
+      const accessoriesToInsert = accessories.map(acc => ({
+        product_id: productId,
+        variant_id: acc.variant_id || null,
+        item_id: acc.item_id,
+        quantity: acc.quantity,
+        applicable_order_types: acc.applicable_order_types || ['always'],
+        is_required: acc.is_required ?? true,
+        notes: acc.notes || null,
+      }));
+
+      const { error } = await supabaseAdmin
+        .from('product_accessories')
+        .insert(accessoriesToInsert);
+
+      if (error) {
+        console.error('Failed to update product accessories:', error);
+        throw new Error('Failed to update product accessories');
+      }
+    }
+
+    // Return updated accessories
+    return this.getProductAccessories(productId, businessId);
+  }
+
+  /**
+   * Calculate total accessory cost for a product
+   */
+  async calculateProductAccessoryCost(productId: number, businessId: number): Promise<number> {
+    const accessories = await this.getProductAccessories(productId, businessId);
+    
+    let totalCost = 0;
+    for (const acc of accessories) {
+      if (acc.item) {
+        const itemCost = (acc.item as any).effective_price ?? acc.item.cost_per_unit ?? 0;
+        totalCost += itemCost * acc.quantity;
+      }
+    }
+    
+    return totalCost;
+  }
+
+  /**
+   * Get accessories for a product filtered by order type
+   * Used by POS service to determine which accessories to deduct
+   */
+  async getApplicableAccessories(
+    productId: number, 
+    businessId: number, 
+    orderType: 'dine_in' | 'takeaway' | 'delivery'
+  ): Promise<ProductAccessory[]> {
+    const accessories = await this.getProductAccessories(productId, businessId);
+    
+    // Filter accessories that apply to this order type
+    return accessories.filter(acc => {
+      const types = acc.applicable_order_types || ['always'];
+      return types.includes('always') || types.includes(orderType as AccessoryOrderType);
+    });
   }
 }
 

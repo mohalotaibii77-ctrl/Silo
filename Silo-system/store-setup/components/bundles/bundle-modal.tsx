@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, Plus, Minus, Package, Search, Boxes } from 'lucide-react';
+import { X, Plus, Minus, Package, Search, Boxes, Camera, ImagePlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
 import { bundlesApi, type Bundle, type CreateBundleInput, type UpdateBundleInput } from '@/lib/bundles-api';
@@ -32,6 +32,8 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [selectedProducts, setSelectedProducts] = useState<SelectedProduct[]>([]);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   // Lock body scroll when modal is open
@@ -67,6 +69,8 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
           product: item.product as unknown as Product
         }))
       );
+      setImageUrl(editBundle.image_url || null);
+      setImagePreview(editBundle.image_url || null);
     } else {
       resetForm();
     }
@@ -87,8 +91,43 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
     setDescription('');
     setPrice('');
     setSelectedProducts([]);
+    setImageUrl(null);
+    setImagePreview(null);
     setError('');
     setSearchQuery('');
+  };
+
+  // Handle image selection
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setError(t('Please select an image file', 'يرجى اختيار ملف صورة'));
+      return;
+    }
+
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setError(t('Image must be less than 5MB', 'يجب أن تكون الصورة أقل من 5 ميجابايت'));
+      return;
+    }
+
+    // Convert to base64
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      setImageUrl(base64String);
+      setImagePreview(base64String);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Remove image
+  const handleRemoveImage = () => {
+    setImageUrl(null);
+    setImagePreview(null);
   };
 
   const handleClose = () => {
@@ -132,6 +171,11 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
     );
   };
 
+  /**
+   * Calculate original price for form preview
+   * Product prices come from backend API
+   * Backend recalculates and stores actual original_price on save
+   */
   const calculateOriginalPrice = (): number => {
     return selectedProducts.reduce((sum, item) => {
       const productPrice = parseFloat(item.product?.price?.toString() || '0');
@@ -167,6 +211,7 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
         description: description.trim() || undefined,
         price: parseFloat(price),
         compare_at_price: calculateOriginalPrice(),
+        image_url: imageUrl || undefined,
         items: selectedProducts.map(p => ({
           product_id: p.product_id,
           quantity: p.quantity
@@ -297,6 +342,62 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
                   rows={2}
                   className="w-full px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 border-none text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/30 outline-none resize-none"
                 />
+              </div>
+
+              {/* Bundle Image */}
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                  {t('Bundle Image', 'صورة الباقة')}
+                </label>
+                <div className="flex items-start gap-4">
+                  {/* Image Preview */}
+                  <div className="relative w-32 h-32 rounded-xl border-2 border-dashed border-zinc-300 dark:border-zinc-600 overflow-hidden bg-zinc-50 dark:bg-zinc-800/50 flex items-center justify-center">
+                    {imagePreview ? (
+                      <>
+                        <img
+                          src={imagePreview}
+                          alt="Bundle preview"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleRemoveImage}
+                          className="absolute top-1 right-1 p-1 rounded-full bg-red-500 text-white hover:bg-red-600 transition-colors shadow-lg"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-center p-2">
+                        <Camera className="w-8 h-8 mx-auto text-zinc-400 mb-1" />
+                        <span className="text-xs text-zinc-500">{t('No image', 'لا توجد صورة')}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Upload Button */}
+                  <div className="flex-1">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageChange}
+                        className="hidden"
+                      />
+                      <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-700 transition-colors">
+                        <ImagePlus className="w-5 h-5 text-zinc-500" />
+                        <span className="text-sm text-zinc-700 dark:text-zinc-300">
+                          {imagePreview 
+                            ? t('Change Image', 'تغيير الصورة') 
+                            : t('Upload Image', 'رفع صورة')}
+                        </span>
+                      </div>
+                    </label>
+                    <p className="text-xs text-zinc-500 mt-2">
+                      {t('PNG, JPG, or WEBP. Max 5MB.', 'PNG أو JPG أو WEBP. الحد الأقصى 5 ميجابايت.')}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {/* Product Selection */}

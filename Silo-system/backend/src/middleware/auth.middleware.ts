@@ -68,6 +68,54 @@ export function requireRole(...roles: UserRole[]) {
 }
 
 /**
+ * Require POS terminal access (for order editing)
+ * Only POS operators, cashiers, and owners can edit orders
+ */
+export function requirePOSAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required',
+    });
+  }
+
+  const allowedRoles: UserRole[] = ['pos', 'cashier', 'owner', 'super_admin'];
+  
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({
+      success: false,
+      error: 'POS access required. Only POS operators can edit orders.',
+    });
+  }
+
+  next();
+}
+
+/**
+ * Require Kitchen Display access (for completing orders)
+ * Only kitchen display role can mark orders as complete
+ */
+export function requireKitchenAccess(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      error: 'Authentication required',
+    });
+  }
+
+  const allowedRoles: UserRole[] = ['kitchen_display', 'super_admin'];
+  
+  if (!allowedRoles.includes(req.user.role)) {
+    return res.status(403).json({
+      success: false,
+      error: 'Kitchen Display access required. Only kitchen staff can complete orders.',
+    });
+  }
+
+  next();
+}
+
+/**
  * Require same business access
  * Supports workspace switching via X-Business-Id header for owners
  */

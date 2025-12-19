@@ -4,10 +4,10 @@
 
 $SiloRoot = "C:\Users\Mohal\OneDrive\Desktop\Silo\Silo-system"
 
-# k - Kill all common development ports (9000, 3000, 8081, 19000-19006)
+# k - Kill all common development ports (9000, 3000, 3001, 3002, 8081, 19000-19006)
 function k {
     Write-Host "Killing development ports..." -ForegroundColor Yellow
-    $ports = @(9000, 3000, 3002, 8081, 19000, 19001, 19002, 19003, 19004, 19005, 19006)
+    $ports = @(9000, 3000, 3001, 3002, 8081, 19000, 19001, 19002, 19003, 19004, 19005, 19006)
     
     foreach ($port in $ports) {
         $connections = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue
@@ -55,12 +55,28 @@ function bs {
     npm start
 }
 
+# bst - Run Business Frontend (Expo) with Tunnel (bypasses firewall)
+function bst {
+    Write-Host "Starting Business App (Expo) with Tunnel..." -ForegroundColor Cyan
+    Set-Location "$SiloRoot\business-app"
+    npm run start:tunnel
+}
+
+# m - Run Main Marketing Website (Next.js)
+function m {
+    Write-Host "Starting Main Marketing Website..." -ForegroundColor Cyan
+    Set-Location "$SiloRoot\Main"
+    npm run dev
+}
+
 Write-Host ""
 Write-Host "=== Silo Dev Shortcuts Loaded ===" -ForegroundColor Magenta
-Write-Host "  k   - Kill all dev ports (9000, 3000, 3002, 8081, 19000+)" -ForegroundColor White
+Write-Host "  k   - Kill all dev ports (9000, 3000, 3001, 3002, 8081, 19000+)" -ForegroundColor White
 Write-Host "  bb  - Run Backend" -ForegroundColor White
 Write-Host "  s   - Run SuperAdmin Frontend (Next.js)" -ForegroundColor White
 Write-Host "  ss  - Run Store Setup (Next.js)" -ForegroundColor White
 Write-Host "  bs  - Run Business App (Expo)" -ForegroundColor White
+Write-Host "  bst - Run Business App (Expo) with Tunnel (for mobile testing)" -ForegroundColor White
+Write-Host "  m   - Run Main Marketing Website (Next.js)" -ForegroundColor White
 Write-Host ""
 

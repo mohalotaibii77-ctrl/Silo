@@ -63,11 +63,36 @@ export interface UpdateBundleInput {
   items?: { product_id: number; quantity: number }[];
 }
 
+export interface DeliveryMargin {
+  partner_id: number;
+  partner_name: string;
+  partner_name_ar?: string;
+  margin_percent: number;
+}
+
+export interface BundleStats {
+  sold: number;
+  total_cost: number;
+  margin_percent?: number;
+  delivery_margins?: DeliveryMargin[];
+}
+
 export const bundlesApi = {
   // Get all bundles
   getAll: async (): Promise<Bundle[]> => {
     const response = await api.get('/bundles');
     return response.data.data || [];
+  },
+
+  // Get bundle stats (sold count, cost for margin)
+  getStats: async (): Promise<Record<number, BundleStats>> => {
+    try {
+      const response = await api.get('/bundles/stats');
+      return response.data.data || {};
+    } catch (error) {
+      console.error('Failed to fetch bundle stats:', error);
+      return {};
+    }
   },
 
   // Get a single bundle

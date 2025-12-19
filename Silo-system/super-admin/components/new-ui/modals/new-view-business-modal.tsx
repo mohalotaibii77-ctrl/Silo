@@ -40,19 +40,17 @@ export function NewViewBusinessModal({ business, isOpen, onClose }: NewViewBusin
   };
 
   const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'active': return 'text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700';
-      case 'trial': return 'text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700';
-      default: return 'text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700';
+    if (status === 'active') {
+      return 'text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800';
     }
+    return 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800';
   };
 
   const getStatusIcon = (status: string) => {
-    switch(status) {
-      case 'active': return <CheckCircle2 className="w-4 h-4" />;
-      case 'trial': return <Clock className="w-4 h-4" />;
-      default: return <AlertCircle className="w-4 h-4" />;
+    if (status === 'active') {
+      return <CheckCircle2 className="w-4 h-4" />;
     }
+    return <AlertCircle className="w-4 h-4" />;
   };
 
   return (

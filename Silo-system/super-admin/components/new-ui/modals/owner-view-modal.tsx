@@ -240,9 +240,9 @@ export function OwnerViewModal({ owner, isOpen, onClose, onUpdate }: OwnerViewMo
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                                 business.subscription_status === 'active'
                                   ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                                  : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400'
+                                  : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                               }`}>
-                                {business.subscription_status}
+                                {business.subscription_status === 'active' ? 'Active' : 'Inactive'}
                               </span>
                               <button
                                 onClick={() => handleUnlinkBusiness(business.id)}

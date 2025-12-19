@@ -3,29 +3,12 @@
  * Dashboard analytics endpoints for business owners
  */
 
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { analyticsService, TimePeriod } from '../services/analytics.service';
-import { businessAuthService } from '../services/business-auth.service';
 import { supabaseAdmin } from '../config/database';
+import { authenticateBusiness, AuthenticatedRequest } from '../middleware/business-auth.middleware';
 
 const router = Router();
-
-// Middleware to authenticate business user
-async function authenticateBusinessToken(req: any, res: Response, next: Function) {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, error: 'No token provided' });
-    }
-    
-    const token = authHeader.substring(7);
-    const payload = businessAuthService.verifyToken(token);
-    req.user = payload;
-    next();
-  } catch (error) {
-    return res.status(401).json({ success: false, error: 'Invalid token' });
-  }
-}
 
 /**
  * GET /api/analytics/dashboard
@@ -34,18 +17,18 @@ async function authenticateBusinessToken(req: any, res: Response, next: Function
  *   - period: 'today' | 'week' | 'month' | 'year' | 'all' (default: 'today')
  *   - combined: 'true' to get stats for all owner's businesses
  */
-router.get('/dashboard', authenticateBusinessToken, async (req: any, res: Response) => {
+router.get('/dashboard', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const period = (req.query.period as TimePeriod) || 'today';
     const combined = req.query.combined === 'true';
-    const businessId = parseInt(req.user.businessId);
+    const businessId = req.businessUser!.business_id;
 
-    if (combined && req.user.role === 'owner') {
+    if (combined && req.businessUser!.role === 'owner') {
       // Get all businesses this owner has access to
       const { data: ownerData } = await supabaseAdmin
         .from('owners')
         .select('id')
-        .eq('username', req.user.username)
+        .eq('username', req.businessUser!.username)
         .single();
 
       if (ownerData) {
@@ -76,9 +59,9 @@ router.get('/dashboard', authenticateBusinessToken, async (req: any, res: Respon
  * GET /api/analytics/low-stock
  * Get list of low stock items
  */
-router.get('/low-stock', authenticateBusinessToken, async (req: any, res: Response) => {
+router.get('/low-stock', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const businessId = parseInt(req.user.businessId);
+    const businessId = req.businessUser!.business_id;
     const limit = parseInt(req.query.limit as string) || 10;
 
     const items = await analyticsService.getLowStockItems(businessId, limit);
@@ -90,4 +73,8 @@ router.get('/low-stock', authenticateBusinessToken, async (req: any, res: Respon
 });
 
 export default router;
+
+
+
+
 

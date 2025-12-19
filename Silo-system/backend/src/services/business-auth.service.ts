@@ -33,6 +33,8 @@ export interface BusinessUser {
   preferred_language: string | null;
   preferred_theme: string | null;
   settings: Record<string, any> | null;
+  // Password tracking
+  password_changed: boolean;
 }
 
 export interface Branch {
@@ -76,10 +78,47 @@ export interface BusinessLoginResponse {
   branch: Branch | null;
   businesses?: BusinessInfo[];  // All businesses user can access (for workspace switching)
   userSettings: UserSettings;  // User-specific settings (language, theme, etc.)
+  requiresPasswordChange: boolean;  // True if user needs to change default password
 }
 
 export class BusinessAuthService {
   
+  /**
+   * Validate password meets security requirements:
+   * - Minimum 8 characters
+   * - At least 1 letter
+   * - At least 1 number
+   * - At least 1 symbol from: !@#$%&
+   */
+  validatePassword(password: string): { valid: boolean; error?: string } {
+    if (!password) {
+      return { valid: false, error: 'Password is required' };
+    }
+
+    if (password.length < 8) {
+      return { valid: false, error: 'Password must be at least 8 characters' };
+    }
+
+    if (!/[a-zA-Z]/.test(password)) {
+      return { valid: false, error: 'Password must contain at least 1 letter' };
+    }
+
+    if (!/[0-9]/.test(password)) {
+      return { valid: false, error: 'Password must contain at least 1 number' };
+    }
+
+    if (!/[!@#$%&]/.test(password)) {
+      return { valid: false, error: 'Password must contain at least 1 symbol (!@#$%&)' };
+    }
+
+    // Check for invalid characters (only allow letters, numbers, and !@#$%&)
+    if (/[^a-zA-Z0-9!@#$%&]/.test(password)) {
+      return { valid: false, error: 'Password can only contain letters, numbers, and symbols (!@#$%&)' };
+    }
+
+    return { valid: true };
+  }
+
   /**
    * Login business user with username and password
    */
@@ -125,9 +164,16 @@ export class BusinessAuthService {
     if (user.business_id) {
       const { data: bizData } = await supabaseAdmin
         .from('businesses')
-        .select('id, name, slug, country, currency, timezone, language, tax_rate, vat_enabled, tax_number, logo_url, branch_count')
+        .select('id, name, slug, country, currency, timezone, language, tax_rate, vat_enabled, tax_number, logo_url, branch_count, subscription_status')
         .eq('id', user.business_id)
         .single();
+      
+      // Check if the business subscription is active
+      if (bizData && bizData.subscription_status !== 'active') {
+        console.log('Business subscription is not active:', bizData.subscription_status);
+        throw new Error('Your business subscription is inactive. Please contact support.');
+      }
+      
       business = bizData;
     }
 
@@ -200,6 +246,9 @@ export class BusinessAuthService {
       settings: user.settings || {},
     };
 
+    // Check if user needs to change password (first-time login with default password)
+    const requiresPasswordChange = user.password_changed === false;
+
     return {
       token,
       user: safeUser,
@@ -207,7 +256,63 @@ export class BusinessAuthService {
       branch,
       businesses: businesses.length > 0 ? businesses : undefined,
       userSettings,
+      requiresPasswordChange,
     };
+  }
+
+  /**
+   * Change user password
+   * Used for first-time login password change and regular password updates
+   */
+  async changePassword(userId: string, newPassword: string, currentPassword?: string): Promise<{ success: boolean }> {
+    // Get the user
+    const { data: user, error } = await supabaseAdmin
+      .from('business_users')
+      .select('id, password_hash, password_changed')
+      .eq('id', userId)
+      .single();
+
+    if (error || !user) {
+      throw new Error('User not found');
+    }
+
+    // If this is not a first-time password change, verify current password
+    if (user.password_changed) {
+      if (!currentPassword) {
+        throw new Error('Current password is required');
+      }
+      const isValidCurrentPassword = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValidCurrentPassword) {
+        throw new Error('Current password is incorrect');
+      }
+    }
+
+    // Validate new password with strong requirements
+    const passwordValidation = this.validatePassword(newPassword);
+    if (!passwordValidation.valid) {
+      throw new Error(passwordValidation.error);
+    }
+
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update password and mark as changed
+    const { error: updateError } = await supabaseAdmin
+      .from('business_users')
+      .update({ 
+        password_hash: newPasswordHash, 
+        password_changed: true,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', userId);
+
+    if (updateError) {
+      console.error('Error updating password:', updateError);
+      throw new Error('Failed to update password');
+    }
+
+    console.log('Password changed successfully for user:', userId);
+    return { success: true };
   }
 
   /**
@@ -273,6 +378,48 @@ export class BusinessAuthService {
     } catch (err) {
       console.error('Exception checking owner business access:', err);
       return false;
+    }
+  }
+
+  /**
+   * Get all businesses an owner has access to
+   * Used for cross-business transfers
+   */
+  async getOwnerBusinesses(username: string): Promise<{ data: BusinessInfo[] | null }> {
+    try {
+      // Find owner record by username
+      const { data: ownerData } = await supabaseAdmin
+        .from('owners')
+        .select('id')
+        .ilike('username', username)
+        .single();
+      
+      if (!ownerData) {
+        return { data: null };
+      }
+
+      // Get all business IDs linked to this owner
+      const { data: businessOwnerLinks } = await supabaseAdmin
+        .from('business_owners')
+        .select('business_id')
+        .eq('owner_id', ownerData.id);
+      
+      if (!businessOwnerLinks || businessOwnerLinks.length === 0) {
+        return { data: null };
+      }
+
+      const businessIds = businessOwnerLinks.map((bo: any) => bo.business_id);
+      
+      // Fetch all businesses with basic info
+      const { data: businessList } = await supabaseAdmin
+        .from('businesses')
+        .select('id, name, slug, country, currency, timezone, language, tax_rate, vat_enabled, tax_number, logo_url, branch_count')
+        .in('id', businessIds);
+      
+      return { data: businessList };
+    } catch (err) {
+      console.error('Exception getting owner businesses:', err);
+      return { data: null };
     }
   }
 }

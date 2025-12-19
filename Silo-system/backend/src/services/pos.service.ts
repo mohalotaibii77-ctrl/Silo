@@ -14,16 +14,272 @@ import {
   CreateOrderItemInput,
   OrderStatus,
   PaymentStatus,
-  OrderSource
+  OrderSource,
+  StorageUnit
 } from '../types';
+import { storageToServing, ServingUnit } from '../utils/unit-conversion';
+import { inventoryStockService } from './inventory-stock.service';
+import { orderTimelineService } from './order-timeline.service';
+
+// Type for inventory check result
+interface InventoryCheckResult {
+  canFulfill: boolean;
+  insufficientItems: Array<{
+    productName: string;
+    variantName?: string;
+    ingredientName: string;
+    required: number;
+    available: number;
+    unit: string;
+  }>;
+}
 
 export class POSService {
+
+  /**
+   * Check inventory availability for all items in an order
+   * Returns whether the order can be fulfilled and details about any shortages
+   * Also checks product accessories based on order type
+   */
+  private async checkOrderInventory(
+    businessId: number,
+    branchId: number | undefined,
+    items: CreateOrderItemInput[],
+    orderType?: 'dine_in' | 'takeaway' | 'delivery'
+  ): Promise<InventoryCheckResult> {
+    const insufficientItems: InventoryCheckResult['insufficientItems'] = [];
+
+    // Get all stock levels for this business/branch
+    let stockQuery = supabaseAdmin
+      .from('inventory_stock')
+      .select('item_id, quantity')
+      .eq('business_id', businessId);
+    
+    if (branchId) {
+      stockQuery = stockQuery.eq('branch_id', branchId);
+    }
+
+    const { data: stockData } = await stockQuery;
+    
+    // Build stock map: item_id -> { quantity, storage_unit }
+    const stockMap = new Map<number, number>();
+    if (stockData) {
+      stockData.forEach((s: any) => {
+        const currentQty = stockMap.get(s.item_id) || 0;
+        stockMap.set(s.item_id, currentQty + (s.quantity || 0));
+      });
+    }
+
+    // Get item storage units
+    const { data: itemsData } = await supabaseAdmin
+      .from('items')
+      .select('id, name, unit, storage_unit');
+    
+    const itemInfoMap = new Map<number, { name: string; unit: string; storage_unit: string }>();
+    if (itemsData) {
+      itemsData.forEach((item: any) => {
+        itemInfoMap.set(item.id, {
+          name: item.name,
+          unit: item.unit || 'grams',
+          storage_unit: item.storage_unit || 'grams'
+        });
+      });
+    }
+
+    // Aggregate required ingredients across all items
+    const requiredIngredients = new Map<number, { 
+      quantity: number; 
+      productName: string; 
+      variantName?: string;
+    }>();
+
+    for (const item of items) {
+      // Skip bundles for now - they should check ingredients of contained products
+      if (item.is_combo && item.bundle_id) {
+        // Get bundle items and their ingredients
+        const { data: bundleData } = await supabaseAdmin
+          .from('bundles')
+          .select(`
+            bundle_items (
+              product_id,
+              quantity,
+              products (
+                name,
+                has_variants,
+                product_variants (id, name),
+                product_ingredients (item_id, variant_id, quantity)
+              )
+            )
+          `)
+          .eq('id', item.bundle_id)
+          .single();
+
+        if (bundleData?.bundle_items) {
+          for (const bundleItem of bundleData.bundle_items) {
+            const bundleProduct = bundleItem.products as any;
+            if (!bundleProduct) continue;
+            
+            const bundleQty = (bundleItem.quantity || 1) * item.quantity;
+            
+            // Get ingredients for the first variant or product-level ingredients
+            const ingredients = bundleProduct.product_ingredients || [];
+            for (const ing of ingredients) {
+              if (ing.variant_id && bundleProduct.has_variants) continue; // Skip variant-specific if product has variants
+              
+              const current = requiredIngredients.get(ing.item_id) || { quantity: 0, productName: '', variantName: undefined };
+              requiredIngredients.set(ing.item_id, {
+                quantity: current.quantity + (ing.quantity * bundleQty),
+                productName: current.productName || `${item.product_name} (${bundleProduct.name})`,
+                variantName: current.variantName
+              });
+            }
+          }
+        }
+        continue;
+      }
+
+      // For regular products with variants
+      if (item.product_id && item.variant_id) {
+        // Get variant ingredients
+        const { data: ingredientsData } = await supabaseAdmin
+          .from('product_ingredients')
+          .select('item_id, quantity')
+          .eq('variant_id', item.variant_id);
+
+        const { data: variantData } = await supabaseAdmin
+          .from('product_variants')
+          .select('name')
+          .eq('id', item.variant_id)
+          .single();
+
+        if (ingredientsData && ingredientsData.length > 0) {
+          for (const ing of ingredientsData) {
+            const current = requiredIngredients.get(ing.item_id) || { quantity: 0, productName: '', variantName: undefined };
+            requiredIngredients.set(ing.item_id, {
+              quantity: current.quantity + (ing.quantity * item.quantity),
+              productName: current.productName || item.product_name,
+              variantName: current.variantName || variantData?.name
+            });
+          }
+        }
+      } 
+      // For products without variants
+      else if (item.product_id) {
+        // Get product-level ingredients (not variant-specific)
+        const { data: ingredientsData } = await supabaseAdmin
+          .from('product_ingredients')
+          .select('item_id, quantity')
+          .eq('product_id', item.product_id)
+          .is('variant_id', null);
+
+        if (ingredientsData && ingredientsData.length > 0) {
+          for (const ing of ingredientsData) {
+            const current = requiredIngredients.get(ing.item_id) || { quantity: 0, productName: '', variantName: undefined };
+            requiredIngredients.set(ing.item_id, {
+              quantity: current.quantity + (ing.quantity * item.quantity),
+              productName: current.productName || item.product_name,
+              variantName: undefined
+            });
+          }
+        }
+      }
+
+      // Also check product accessories (non-food items like packaging)
+      if (item.product_id) {
+        const { data: accessoriesData } = await supabaseAdmin
+          .from('product_accessories')
+          .select('item_id, quantity, applicable_order_types')
+          .eq('product_id', item.product_id);
+
+        if (accessoriesData && accessoriesData.length > 0) {
+          for (const acc of accessoriesData) {
+            // Filter by order type - include if 'always' or matches order type
+            const applicableTypes = acc.applicable_order_types || ['always'];
+            
+            // Determine if this accessory should be included:
+            // - Always include if 'always' is in applicable types
+            // - If orderType is defined, include if it matches
+            // - If orderType is undefined, only include 'always' accessories (safe default)
+            const hasAlways = applicableTypes.includes('always');
+            const matchesOrderType = orderType ? applicableTypes.includes(orderType) : false;
+            
+            if (!hasAlways && !matchesOrderType) {
+              continue; // Skip this accessory - doesn't apply to this order type
+            }
+
+            const current = requiredIngredients.get(acc.item_id) || { quantity: 0, productName: '', variantName: undefined };
+            requiredIngredients.set(acc.item_id, {
+              quantity: current.quantity + (acc.quantity * item.quantity),
+              productName: current.productName || `${item.product_name} (accessory)`,
+              variantName: undefined
+            });
+          }
+        }
+      }
+    }
+
+    // Check each required ingredient against stock
+    for (const [itemId, required] of requiredIngredients) {
+      const itemInfo = itemInfoMap.get(itemId);
+      if (!itemInfo) continue;
+
+      const stockQty = stockMap.get(itemId) || 0;
+      
+      // Convert storage units to serving units for comparison
+      const storageUnit = (itemInfo.storage_unit || 'grams') as StorageUnit;
+      const servingUnit = (itemInfo.unit || 'grams') as ServingUnit;
+      
+      let availableInServingUnits: number;
+      try {
+        availableInServingUnits = storageToServing(stockQty, storageUnit, servingUnit);
+      } catch {
+        // If units are incompatible, compare directly
+        availableInServingUnits = stockQty;
+      }
+
+      if (availableInServingUnits < required.quantity) {
+        insufficientItems.push({
+          productName: required.productName,
+          variantName: required.variantName,
+          ingredientName: itemInfo.name,
+          required: required.quantity,
+          available: availableInServingUnits,
+          unit: servingUnit
+        });
+      }
+    }
+
+    return {
+      canFulfill: insufficientItems.length === 0,
+      insufficientItems
+    };
+  }
   
   /**
    * Create new order
    * Works for POS terminal orders, delivery app orders, phone orders, etc.
    */
   async createOrder(input: CreateOrderInput): Promise<Order> {
+    // INVENTORY CHECK: Validate all items have sufficient stock before creating order
+    // Also checks product accessories based on order type
+    const inventoryCheck = await this.checkOrderInventory(
+      input.business_id,
+      input.branch_id,
+      input.items,
+      input.order_type as 'dine_in' | 'takeaway' | 'delivery'
+    );
+
+    if (!inventoryCheck.canFulfill) {
+      const shortages = inventoryCheck.insufficientItems
+        .map(item => {
+          const variantInfo = item.variantName ? ` (${item.variantName})` : '';
+          return `${item.productName}${variantInfo}: needs ${item.required} ${item.unit} of ${item.ingredientName}, only ${item.available.toFixed(2)} available`;
+        })
+        .join('; ');
+      
+      throw new Error(`Insufficient inventory: ${shortages}`);
+    }
+
     // Generate order number
     const orderNumber = await this.generateOrderNumber(input.business_id);
     const displayNumber = await this.generateDisplayNumber(input.business_id);
@@ -66,15 +322,54 @@ export class POSService {
     const serviceCharge = input.service_charge || 0;
     const tipAmount = input.tip_amount || 0;
     
-    // Calculate tax (15% VAT in KSA by default)
-    const taxRate = 15;
+    // Get business VAT settings - ONLY apply tax if VAT is enabled
+    const { data: businessData } = await supabaseAdmin
+      .from('businesses')
+      .select('vat_enabled, tax_rate')
+      .eq('id', input.business_id)
+      .single();
+
+    // Calculate tax ONLY if VAT is enabled for this business
+    const taxRate = businessData?.vat_enabled ? (businessData?.tax_rate || 0) : 0;
     const taxAmount = afterDiscount * (taxRate / 100);
     
     // Calculate total
     const total = afterDiscount + taxAmount + deliveryFee + packagingFee + serviceCharge + tipAmount;
 
-    // Determine initial payment status
-    const paymentStatus: PaymentStatus = input.payment_method ? 'pending' : 'pending';
+    // Determine if this is an API order (from delivery partners)
+    const isPOSOrder = ['pos', 'phone', 'walk_in'].includes(input.order_source);
+    const isApiOrder = !isPOSOrder;
+
+    // Determine initial payment status based on order source and type
+    // Payment Workflow:
+    // - API orders: Delivery partner handles all payments → 'app_payment'
+    // - POS Delivery Partner orders: Partner handles payment → 'app_payment'
+    // - POS Dine-in with pay_later: Customer pays after eating → 'pending'
+    // - POS In-house Delivery with cash (own driver COD): Driver collects, hands to cashier → 'pending'
+    // - All other POS orders: Payment received upfront → 'paid'
+    let paymentStatus: PaymentStatus;
+    
+    if (isApiOrder) {
+      // Delivery partner handles payment (settled weekly/monthly)
+      paymentStatus = 'app_payment';
+    } else if (input.order_type === 'delivery' && input.delivery_partner_id) {
+      // POS Delivery Partner order (Talabat, etc.) - partner handles all payments
+      paymentStatus = 'app_payment';
+    } else if (input.order_type === 'dine_in' && input.is_pay_later) {
+      // Dine-in pay later: customer pays after eating
+      paymentStatus = 'pending';
+    } else if (input.order_type === 'delivery' && input.payment_method === 'cash') {
+      // In-house delivery with cash: driver collects, returns to cashier
+      paymentStatus = 'pending';
+    } else {
+      // All other POS orders: payment upfront (cash or card)
+      paymentStatus = 'paid';
+    }
+
+    // All orders start as 'in_progress' (being prepared)
+    // - POS orders: in_progress → completed
+    // - Delivery partner API orders: in_progress → completed (food ready) → picked_up (driver collected)
+    const initialOrderStatus = 'in_progress';
 
     // Create order - using correct column names from existing schema
     const { data: order, error } = await supabaseAdmin
@@ -90,7 +385,7 @@ export class POSService {
         order_source: input.order_source,
         order_type: input.order_type,
         
-        order_status: 'pending',  // Using existing column name
+        order_status: initialOrderStatus,  // POS = in_progress, API = pending
         
         order_date: new Date().toISOString().split('T')[0],
         order_time: new Date().toISOString().split('T')[1],
@@ -114,6 +409,7 @@ export class POSService {
         driver_name: input.driver_name,
         driver_phone: input.driver_phone,
         driver_id: input.driver_id,
+        delivery_partner_id: input.delivery_partner_id,
         
         subtotal,
         discount_amount: discountAmount,
@@ -262,8 +558,43 @@ export class POSService {
       orderItems.push(orderItem as OrderItem);
     }
 
+    // Reserve ingredients for this order
+    try {
+      const itemsForReservation = orderItems.map(oi => ({
+        product_id: oi.product_id,
+        variant_id: (oi as any).variant_id,
+        quantity: oi.quantity,
+        product_name: oi.product_name,
+      }));
+      
+      await inventoryStockService.reserveForOrder(
+        input.business_id,
+        input.branch_id,
+        itemsForReservation,
+        order.id,
+        input.created_by
+      );
+    } catch (reserveError) {
+      console.error('Failed to reserve ingredients:', reserveError);
+      // Don't fail order creation, just log the error
+    }
+
+    // Log timeline event
+    try {
+      await orderTimelineService.logOrderCreated(order.id, {
+        order_number: orderNumber,
+        order_source: input.order_source,
+        order_type: input.order_type,
+        items_count: orderItems.length,
+        total_amount: total,
+        customer_name: input.customer_name,
+      }, input.created_by);
+    } catch (timelineError) {
+      console.error('Failed to log timeline:', timelineError);
+    }
+
     // Log status history
-    await this.logStatusChange(order.id, undefined, 'pending', input.created_by, 'Order created');
+    await this.logStatusChange(order.id, undefined, initialOrderStatus, input.created_by, 'Order created');
 
     return {
       ...order,
@@ -320,6 +651,7 @@ export class POSService {
 
   /**
    * Get orders by business with filters
+   * Supports pagination with page and limit options
    */
   async getOrders(businessId: number, filters?: {
     branch_id?: number;
@@ -331,12 +663,15 @@ export class POSService {
     date_to?: string;
     customer_phone?: string;
     external_order_id?: string;
+    page?: number;
     limit?: number;
-    offset?: number;
-  }): Promise<Order[]> {
+    fields?: string[];
+  }): Promise<Order[] | { data: Order[]; total: number }> {
+    const { page, limit, fields } = filters || {};
+    
     let query = supabaseAdmin
       .from('orders')
-      .select('*, order_items(*, order_item_modifiers(*))')
+      .select('*, order_items(*, order_item_modifiers(*))', { count: page && limit ? 'exact' : undefined })
       .eq('business_id', businessId)
       .order('created_at', { ascending: false });
 
@@ -376,17 +711,103 @@ export class POSService {
     if (filters?.external_order_id) {
       query = query.eq('external_order_id', filters.external_order_id);
     }
-    if (filters?.limit) {
-      query = query.limit(filters.limit);
+
+    // Apply pagination if provided
+    if (page && limit) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
     }
-    if (filters?.offset) {
-      query = query.range(filters.offset, filters.offset + (filters.limit || 10) - 1);
+
+    const { data, error, count } = await query;
+    if (error) throw new Error(`Failed to fetch orders: ${error.message}`);
+    
+    // Return paginated response if pagination was requested
+    if (page && limit && count !== null) {
+      return {
+        data: data as Order[],
+        total: count,
+      };
+    }
+
+    return data as Order[];
+  }
+
+  /**
+   * Get order list stats for filters (without pagination)
+   * Used to get accurate stats when paginating order lists
+   */
+  async getOrderListStats(businessId: number, filters?: {
+    branch_id?: number;
+    status?: OrderStatus | OrderStatus[];
+    order_source?: OrderSource | OrderSource[];
+    order_type?: string;
+    date?: string;
+    date_from?: string;
+    date_to?: string;
+    customer_phone?: string;
+    external_order_id?: string;
+  }): Promise<{
+    total_orders: number;
+    completed_orders: number;
+    in_progress_orders: number;
+    total_revenue: number;
+  }> {
+    let query = supabaseAdmin
+      .from('orders')
+      .select('order_status, total_amount')
+      .eq('business_id', businessId);
+
+    // Apply same filters as getOrders
+    if (filters?.branch_id) {
+      query = query.eq('branch_id', filters.branch_id);
+    }
+    if (filters?.status) {
+      if (Array.isArray(filters.status)) {
+        query = query.in('order_status', filters.status);
+      } else {
+        query = query.eq('order_status', filters.status);
+      }
+    }
+    if (filters?.order_source) {
+      if (Array.isArray(filters.order_source)) {
+        query = query.in('order_source', filters.order_source);
+      } else {
+        query = query.eq('order_source', filters.order_source);
+      }
+    }
+    if (filters?.order_type) {
+      query = query.eq('order_type', filters.order_type);
+    }
+    if (filters?.date) {
+      query = query.eq('order_date', filters.date);
+    }
+    if (filters?.date_from) {
+      query = query.gte('order_date', filters.date_from);
+    }
+    if (filters?.date_to) {
+      query = query.lte('order_date', filters.date_to);
+    }
+    if (filters?.customer_phone) {
+      query = query.eq('customer_phone', filters.customer_phone);
+    }
+    if (filters?.external_order_id) {
+      query = query.eq('external_order_id', filters.external_order_id);
     }
 
     const { data, error } = await query;
-    if (error) throw new Error(`Failed to fetch orders: ${error.message}`);
-    
-    return data as Order[];
+    if (error) throw new Error(`Failed to fetch order stats: ${error.message}`);
+
+    const orders = data || [];
+    const completedOrders = orders.filter(o => o.order_status === 'completed');
+    const inProgressOrders = orders.filter(o => o.order_status === 'in_progress' || o.order_status === 'pending');
+    const totalRevenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.total_amount || '0'), 0);
+
+    return {
+      total_orders: orders.length,
+      completed_orders: completedOrders.length,
+      in_progress_orders: inProgressOrders.length,
+      total_revenue: totalRevenue,
+    };
   }
 
   /**
@@ -453,8 +874,10 @@ export class POSService {
       updateData.cancelled_by = changedBy;
       updateData.cancellation_reason = reason;
     }
-    if (status === 'ready') {
-      updateData.actual_ready_time = new Date().toISOString();
+    if (status === 'rejected') {
+      updateData.cancelled_at = new Date().toISOString();
+      updateData.cancelled_by = changedBy;
+      updateData.cancellation_reason = reason || 'Order rejected';
     }
 
     const { data, error } = await supabaseAdmin
@@ -473,19 +896,205 @@ export class POSService {
   }
 
   /**
+   * Accept an API order (pending → in_progress)
+   * Only applicable for orders with status 'pending' from delivery partner APIs
+   */
+  async acceptOrder(orderId: number, acceptedBy: number): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+    
+    if (order.order_status !== 'pending') {
+      throw new Error(`Cannot accept order: order is not in pending status (current: ${order.order_status})`);
+    }
+
+    return this.updateOrderStatus(orderId, 'in_progress', acceptedBy, 'Order accepted');
+  }
+
+  /**
+   * Reject an API order (pending → rejected)
+   * Only applicable for orders with status 'pending' from delivery partner APIs
+   */
+  async rejectOrder(orderId: number, rejectedBy: number, reason?: string): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+    
+    if (order.order_status !== 'pending') {
+      throw new Error(`Cannot reject order: order is not in pending status (current: ${order.order_status})`);
+    }
+
+    return this.updateOrderStatus(orderId, 'rejected', rejectedBy, reason || 'Order rejected by store');
+  }
+
+  /**
+   * Complete an order (in_progress → completed)
+   * Kitchen marks food as ready
+   * For delivery orders, this means "ready for pickup" - driver still needs to collect
+   * Consumes inventory for all items in the order
+   */
+  async completeOrder(orderId: number, completedBy: number): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+    
+    if (order.order_status !== 'in_progress') {
+      throw new Error(`Cannot complete order: order is not in progress (current: ${order.order_status})`);
+    }
+
+    // Consume inventory for all items
+    try {
+      const itemsForConsumption = (order.items || []).map(oi => ({
+        product_id: oi.product_id,
+        variant_id: (oi as any).variant_id,
+        quantity: oi.quantity,
+        product_name: oi.product_name,
+      }));
+      
+      await inventoryStockService.consumeForOrder(
+        order.business_id,
+        order.branch_id,
+        itemsForConsumption,
+        orderId,
+        completedBy
+      );
+    } catch (consumeError) {
+      console.error('Failed to consume inventory:', consumeError);
+      // Log but don't fail - inventory can be adjusted manually
+    }
+
+    // Log timeline event
+    try {
+      await orderTimelineService.logOrderCompleted(orderId, {
+        completed_by_kitchen: true,
+        items_completed: (order.items || []).length,
+      }, completedBy);
+    } catch (timelineError) {
+      console.error('Failed to log timeline:', timelineError);
+    }
+
+    return this.updateOrderStatus(orderId, 'completed', completedBy);
+  }
+
+  /**
+   * Mark a delivery order as picked up (completed → picked_up)
+   * POS marks order when delivery driver has collected the food
+   * Only applicable for delivery orders from delivery partner APIs
+   */
+  async pickupOrder(orderId: number, pickedUpBy: number): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+    
+    // Only delivery orders can be marked as picked up
+    if (order.order_type !== 'delivery') {
+      throw new Error('Only delivery orders can be marked as picked up');
+    }
+
+    // Order must be completed (food ready) before it can be picked up
+    if (order.order_status !== 'completed') {
+      throw new Error(`Cannot mark order as picked up: order must be completed first (current: ${order.order_status})`);
+    }
+
+    // Log timeline event
+    try {
+      await orderTimelineService.logStatusChanged(
+        orderId,
+        'completed',
+        'picked_up',
+        'Delivery driver picked up the order',
+        pickedUpBy
+      );
+    } catch (timelineError) {
+      console.error('Failed to log timeline:', timelineError);
+    }
+
+    return this.updateOrderStatus(orderId, 'picked_up', pickedUpBy, 'Order picked up by driver');
+  }
+
+  /**
+   * Cancel an order (in_progress → cancelled)
+   * Releases reserved ingredients immediately and creates queue for kitchen to decide waste vs return
+   */
+  async cancelOrder(orderId: number, cancelledBy: number, reason?: string): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+    
+    if (order.order_status !== 'in_progress' && order.order_status !== 'pending') {
+      throw new Error(`Cannot cancel order: order must be pending or in progress (current: ${order.order_status})`);
+    }
+
+    // Calculate ingredients and handle reservation + cancellation queue
+    try {
+      const itemsForCancellation = (order.items || []).map(oi => ({
+        product_id: oi.product_id,
+        variant_id: (oi as any).variant_id,
+        quantity: oi.quantity,
+        product_name: oi.product_name,
+      }));
+      
+      // Calculate ingredients
+      const ingredients = await inventoryStockService.calculateOrderIngredients(
+        order.business_id,
+        itemsForCancellation
+      );
+
+      // IMMEDIATELY release all reservations to free up inventory
+      // Kitchen will later decide if items should be wasted (deducted from actual stock)
+      await inventoryStockService.releaseReservation(
+        order.business_id,
+        order.branch_id,
+        ingredients.map(ing => ({
+          item_id: ing.item_id,
+          quantity_in_storage: ing.quantity_in_storage,
+          item_name: ing.item_name,
+        })),
+        orderId,
+        cancelledBy,
+        `Order #${orderId} cancelled - reservation released`
+      );
+
+      // Create cancellation queue entries for kitchen to decide waste vs return
+      for (const ing of ingredients) {
+        await supabaseAdmin
+          .from('cancelled_order_items')
+          .insert({
+            order_id: orderId,
+            item_id: ing.item_id,
+            product_id: ing.product_id,
+            product_name: ing.product_name,
+            quantity: ing.quantity_in_storage,
+            unit: ing.storage_unit,
+            decision: null, // Kitchen will decide: waste (deduct stock) or return (do nothing)
+          });
+      }
+    } catch (cancelError) {
+      console.error('Failed to process cancellation:', cancelError);
+    }
+
+    // Log timeline event
+    try {
+      await orderTimelineService.logOrderCancelled(orderId, reason || 'Order cancelled', cancelledBy);
+    } catch (timelineError) {
+      console.error('Failed to log timeline:', timelineError);
+    }
+
+    return this.updateOrderStatus(orderId, 'cancelled', cancelledBy, reason || 'Order cancelled');
+  }
+
+  /**
    * Process payment for order
+   * For cash payments: tracks amount_received and change_given for cash drawer reconciliation
    */
   async processPayment(
     orderId: number,
     paymentMethod: string,
     amount: number,
     reference?: string,
-    processedBy?: number
+    processedBy?: number,
+    cashDetails?: { amount_received: number; change_given: number },
+    posSessionId?: number
   ): Promise<Order> {
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
 
-    // Create payment record
+    // Create payment record with cash details if provided
     await supabaseAdmin
       .from('order_payments')
       .insert({
@@ -496,6 +1105,11 @@ export class POSService {
         status: 'paid',
         paid_at: new Date().toISOString(),
         processed_by: processedBy,
+        // Cash-specific fields for drawer reconciliation
+        amount_received: cashDetails?.amount_received,
+        change_given: cashDetails?.change_given,
+        // Link to POS session for shift tracking
+        pos_session_id: posSessionId,
       });
 
     // Update order payment status
@@ -507,6 +1121,7 @@ export class POSService {
         paid_at: new Date().toISOString(),
         payment_reference: reference,
         cashier_id: processedBy,
+        pos_session_id: posSessionId,
       })
       .eq('id', orderId)
       .select('*, order_items(*, order_item_modifiers(*))')
@@ -572,7 +1187,7 @@ export class POSService {
 
     if (error) throw new Error(`Failed to refund order: ${error.message}`);
 
-    await this.logStatusChange(orderId, order.order_status as OrderStatus, 'refunded', processedBy, `Refund: ${reason}`);
+    await this.logStatusChange(orderId, order.order_status as OrderStatus, 'completed', processedBy, `Refund processed: ${reason}`);
 
     return data as Order;
   }
@@ -678,6 +1293,734 @@ export class POSService {
         changed_by: changedBy,
         change_reason: reason,
       });
+  }
+
+  /**
+   * Calculate order totals from cart items
+   * This should be used by frontends instead of calculating on client-side
+   */
+  async calculateOrderTotals(
+    businessId: number,
+    items: Array<{
+      product_id?: number;
+      bundle_id?: number;
+      variant_id?: number;
+      quantity: number;
+      modifiers?: Array<{
+        modifier_id?: number;
+        extra_price: number;
+        quantity: number;
+      }>;
+    }>,
+    options?: {
+      discount_type?: 'percentage' | 'fixed';
+      discount_value?: number;
+      delivery_fee?: number;
+      packaging_fee?: number;
+      service_charge?: number;
+      tip_amount?: number;
+    }
+  ): Promise<{
+    subtotal: number;
+    discount_amount: number;
+    tax_amount: number;
+    delivery_fee: number;
+    packaging_fee: number;
+    service_charge: number;
+    tip_amount: number;
+    total: number;
+    items: Array<{
+      product_id?: number;
+      bundle_id?: number;
+      unit_price: number;
+      quantity: number;
+      item_total: number;
+    }>;
+  }> {
+    // Get business settings for tax rate
+    const { data: businessData } = await supabaseAdmin
+      .from('businesses')
+      .select('vat_enabled, tax_rate')
+      .eq('id', businessId)
+      .single();
+
+    const taxRate = businessData?.vat_enabled ? (businessData?.tax_rate || 0) : 0;
+
+    // Get product prices
+    const productIds = items.filter(i => i.product_id).map(i => i.product_id!);
+    const bundleIds = items.filter(i => i.bundle_id).map(i => i.bundle_id!);
+    const variantIds = items.filter(i => i.variant_id).map(i => i.variant_id!);
+
+    // Fetch product prices
+    const productPriceMap = new Map<number, number>();
+    if (productIds.length > 0) {
+      const { data: products } = await supabaseAdmin
+        .from('products')
+        .select('id, price')
+        .in('id', productIds);
+      
+      products?.forEach(p => productPriceMap.set(p.id, p.price));
+    }
+
+    // Fetch variant price adjustments
+    const variantAdjustmentMap = new Map<number, number>();
+    if (variantIds.length > 0) {
+      const { data: variants } = await supabaseAdmin
+        .from('product_variants')
+        .select('id, product_id, price_adjustment')
+        .in('id', variantIds);
+      
+      variants?.forEach(v => variantAdjustmentMap.set(v.id, v.price_adjustment || 0));
+    }
+
+    // Fetch bundle prices
+    const bundlePriceMap = new Map<number, number>();
+    if (bundleIds.length > 0) {
+      const { data: bundles } = await supabaseAdmin
+        .from('bundles')
+        .select('id, price')
+        .in('id', bundleIds);
+      
+      bundles?.forEach(b => bundlePriceMap.set(b.id, b.price));
+    }
+
+    // Calculate each item's price
+    const calculatedItems = items.map(item => {
+      let unitPrice = 0;
+
+      if (item.bundle_id) {
+        unitPrice = bundlePriceMap.get(item.bundle_id) || 0;
+      } else if (item.product_id) {
+        unitPrice = productPriceMap.get(item.product_id) || 0;
+        
+        // Add variant adjustment if applicable
+        if (item.variant_id) {
+          unitPrice += variantAdjustmentMap.get(item.variant_id) || 0;
+        }
+      }
+
+      // Add modifier prices
+      if (item.modifiers) {
+        for (const mod of item.modifiers) {
+          unitPrice += (mod.extra_price || 0) * (mod.quantity || 1);
+        }
+      }
+
+      const itemTotal = unitPrice * item.quantity;
+
+      return {
+        product_id: item.product_id,
+        bundle_id: item.bundle_id,
+        unit_price: unitPrice,
+        quantity: item.quantity,
+        item_total: itemTotal,
+      };
+    });
+
+    // Calculate subtotal
+    const subtotal = calculatedItems.reduce((sum, item) => sum + item.item_total, 0);
+
+    // Calculate discount
+    let discountAmount = 0;
+    if (options?.discount_value && options.discount_value > 0) {
+      if (options.discount_type === 'percentage') {
+        discountAmount = subtotal * (options.discount_value / 100);
+      } else {
+        discountAmount = options.discount_value;
+      }
+    }
+
+    // Calculate tax on subtotal after discount
+    const taxableAmount = subtotal - discountAmount;
+    const taxAmount = taxableAmount * (taxRate / 100);
+
+    // Get fees
+    const deliveryFee = options?.delivery_fee || 0;
+    const packagingFee = options?.packaging_fee || 0;
+    const serviceCharge = options?.service_charge || 0;
+    const tipAmount = options?.tip_amount || 0;
+
+    // Calculate total
+    const total = taxableAmount + taxAmount + deliveryFee + packagingFee + serviceCharge + tipAmount;
+
+    return {
+      subtotal,
+      discount_amount: discountAmount,
+      tax_amount: taxAmount,
+      delivery_fee: deliveryFee,
+      packaging_fee: packagingFee,
+      service_charge: serviceCharge,
+      tip_amount: tipAmount,
+      total,
+      items: calculatedItems,
+    };
+  }
+
+  /**
+   * Calculate delivery margin after commission
+   * @param price - Product selling price
+   * @param cost - Product cost
+   * @param commissionType - 'percentage' or 'fixed'
+   * @param commissionValue - Commission amount or percentage
+   */
+  calculateDeliveryMargin(
+    price: number,
+    cost: number,
+    commissionType: 'percentage' | 'fixed',
+    commissionValue: number
+  ): number {
+    if (price <= 0) return 0;
+    const commission = commissionType === 'percentage'
+      ? price * (commissionValue / 100)
+      : commissionValue;
+    return ((price - cost - commission) / price) * 100;
+  }
+
+  // ==================== ORDER EDITING (POS ONLY) ====================
+
+  /**
+   * Edit an order (POS orders only)
+   * Handles adding, removing, and modifying items
+   * Updates inventory reservations accordingly
+   */
+  async editOrder(
+    orderId: number,
+    updates: {
+      items_to_add?: CreateOrderItemInput[];
+      items_to_remove?: number[];           // order_item_ids to remove
+      items_to_modify?: Array<{
+        order_item_id: number;
+        quantity?: number;
+        modifiers?: Array<{
+          modifier_id: number;
+          quantity: number;
+          modifier_name: string;
+          unit_price: number;
+          modifier_type: 'extra' | 'removal';
+        }>;
+      }>;
+    },
+    editedBy: number
+  ): Promise<Order> {
+    const order = await this.getOrderById(orderId);
+    if (!order) throw new Error('Order not found');
+
+    // Only POS orders can be edited for items
+    if (order.order_source !== 'pos') {
+      throw new Error('Only POS orders can have items edited');
+    }
+
+    // Can only edit pending or in_progress orders
+    if (!['pending', 'in_progress'].includes(order.order_status || '')) {
+      throw new Error(`Cannot edit order: order must be pending or in progress (current: ${order.order_status})`);
+    }
+
+    const previousTotal = parseFloat(String(order.total_amount || order.total || 0));
+    let totalChange = 0;
+
+    // Handle items to remove
+    if (updates.items_to_remove && updates.items_to_remove.length > 0) {
+      for (const orderItemId of updates.items_to_remove) {
+        const orderItem = (order.items || []).find(oi => oi.id === orderItemId);
+        if (!orderItem) continue;
+
+        // Calculate ingredients for removed item
+        const itemsForCancellation = [{
+          product_id: orderItem.product_id,
+          variant_id: (orderItem as any).variant_id,
+          quantity: orderItem.quantity,
+          product_name: orderItem.product_name,
+        }];
+
+        const ingredients = await inventoryStockService.calculateOrderIngredients(
+          order.business_id,
+          itemsForCancellation
+        );
+
+        // IMMEDIATELY release reservations for removed items
+        await inventoryStockService.releaseReservation(
+          order.business_id,
+          order.branch_id,
+          ingredients.map(ing => ({
+            item_id: ing.item_id,
+            quantity_in_storage: ing.quantity_in_storage,
+            item_name: ing.item_name,
+          })),
+          orderId,
+          editedBy,
+          `Item removed from order #${orderId}`
+        );
+
+        // Create cancellation queue for kitchen to decide waste vs no-action
+        for (const ing of ingredients) {
+          await supabaseAdmin
+            .from('cancelled_order_items')
+            .insert({
+              order_id: orderId,
+              order_item_id: orderItemId,
+              item_id: ing.item_id,
+              product_id: ing.product_id,
+              product_name: ing.product_name,
+              quantity: ing.quantity_in_storage,
+              unit: ing.storage_unit,
+              decision: null,
+            });
+        }
+
+        // Subtract from total
+        totalChange -= parseFloat(String(orderItem.total || 0));
+
+        // Log timeline
+        await orderTimelineService.logItemRemoved(orderId, {
+          product_id: orderItem.product_id!,
+          product_name: orderItem.product_name,
+          quantity: orderItem.quantity,
+        }, editedBy);
+
+        // Delete the order item
+        await supabaseAdmin
+          .from('order_items')
+          .delete()
+          .eq('id', orderItemId);
+      }
+    }
+
+    // Handle items to add
+    if (updates.items_to_add && updates.items_to_add.length > 0) {
+      for (const newItem of updates.items_to_add) {
+        // Get product details
+        const { data: product } = await supabaseAdmin
+          .from('products')
+          .select('*')
+          .eq('id', newItem.product_id)
+          .single();
+
+        if (!product) continue;
+
+        // Calculate price
+        let unitPrice = product.price || 0;
+        if (newItem.variant_id) {
+          const { data: variant } = await supabaseAdmin
+            .from('product_variants')
+            .select('*')
+            .eq('id', newItem.variant_id)
+            .single();
+          if (variant) unitPrice = variant.price || unitPrice;
+        }
+
+        const itemTotal = unitPrice * newItem.quantity;
+        totalChange += itemTotal;
+
+        // Create order item
+        const { data: orderItem, error } = await supabaseAdmin
+          .from('order_items')
+          .insert({
+            order_id: orderId,
+            product_id: newItem.product_id,
+            variant_id: newItem.variant_id,
+            product_name: newItem.product_name || product.name,
+            product_sku: product.sku,
+            quantity: newItem.quantity,
+            original_quantity: newItem.quantity,
+            unit_price: unitPrice,
+            subtotal: itemTotal,
+            total: itemTotal,
+          })
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Failed to add order item:', error);
+          continue;
+        }
+
+        // Reserve ingredients for new item
+        await inventoryStockService.reserveForOrder(
+          order.business_id,
+          order.branch_id,
+          [{
+            product_id: newItem.product_id,
+            variant_id: newItem.variant_id,
+            quantity: newItem.quantity,
+            product_name: newItem.product_name || product.name,
+          }],
+          orderId,
+          editedBy
+        );
+
+        // Log timeline
+        await orderTimelineService.logItemAdded(orderId, {
+          product_id: newItem.product_id,
+          product_name: newItem.product_name || product.name,
+          quantity: newItem.quantity,
+          unit_price: unitPrice,
+          variant_id: newItem.variant_id,
+        }, editedBy);
+      }
+    }
+
+    // Handle item modifications (quantity changes and modifier changes)
+    if (updates.items_to_modify && updates.items_to_modify.length > 0) {
+      for (const mod of updates.items_to_modify) {
+        const orderItem = (order.items || []).find(oi => oi.id === mod.order_item_id);
+        if (!orderItem) continue;
+
+        // Handle quantity changes
+        if (mod.quantity !== undefined && mod.quantity !== orderItem.quantity) {
+          const qtyDiff = mod.quantity - orderItem.quantity;
+          const unitPrice = parseFloat(String(orderItem.unit_price || 0));
+          const priceChange = qtyDiff * unitPrice;
+          totalChange += priceChange;
+
+          if (qtyDiff > 0) {
+            // Reserve additional ingredients
+            await inventoryStockService.reserveForOrder(
+              order.business_id,
+              order.branch_id,
+              [{
+                product_id: orderItem.product_id,
+                variant_id: (orderItem as any).variant_id,
+                quantity: qtyDiff,
+                product_name: orderItem.product_name,
+              }],
+              orderId,
+              editedBy
+            );
+          } else {
+            // Quantity reduced - calculate ingredients for the reduced amount
+            const ingredients = await inventoryStockService.calculateOrderIngredients(
+              order.business_id,
+              [{
+                product_id: orderItem.product_id,
+                variant_id: (orderItem as any).variant_id,
+                quantity: Math.abs(qtyDiff),
+                product_name: orderItem.product_name,
+              }]
+            );
+
+            // IMMEDIATELY release reservations for reduced quantity
+            await inventoryStockService.releaseReservation(
+              order.business_id,
+              order.branch_id,
+              ingredients.map(ing => ({
+                item_id: ing.item_id,
+                quantity_in_storage: ing.quantity_in_storage,
+                item_name: ing.item_name,
+              })),
+              orderId,
+              editedBy,
+              `Quantity reduced in order #${orderId}`
+            );
+
+            // Create cancellation entries for kitchen to decide waste vs no-action
+            for (const ing of ingredients) {
+              await supabaseAdmin
+                .from('cancelled_order_items')
+                .insert({
+                  order_id: orderId,
+                  order_item_id: mod.order_item_id,
+                  item_id: ing.item_id,
+                  product_id: ing.product_id,
+                  product_name: ing.product_name,
+                  quantity: ing.quantity_in_storage,
+                  unit: ing.storage_unit,
+                  decision: null,
+                });
+            }
+          }
+
+          // Update order item quantity
+          await supabaseAdmin
+            .from('order_items')
+            .update({
+              quantity: mod.quantity,
+              subtotal: unitPrice * mod.quantity,
+              total: unitPrice * mod.quantity,
+            })
+            .eq('id', mod.order_item_id);
+
+          // Log timeline
+          await orderTimelineService.logItemModified(orderId, {
+            product_id: orderItem.product_id!,
+            product_name: orderItem.product_name,
+            changes: [{
+              field: 'quantity',
+              from: orderItem.quantity,
+              to: mod.quantity,
+            }],
+            price_difference: priceChange,
+          }, editedBy);
+        }
+
+        // Handle modifier changes
+        if (mod.modifiers !== undefined) {
+          // Get current modifiers for this item
+          const { data: currentModifiers } = await supabaseAdmin
+            .from('order_item_modifiers')
+            .select('*')
+            .eq('order_item_id', mod.order_item_id);
+
+          const currentMods = currentModifiers || [];
+          
+          // Calculate old modifiers total
+          const oldModifiersTotal = currentMods
+            .filter((m: any) => m.modifier_type === 'extra')
+            .reduce((sum: number, m: any) => sum + (parseFloat(m.unit_price || 0) * (m.quantity || 1)), 0);
+
+          // Delete existing modifiers for this item
+          await supabaseAdmin
+            .from('order_item_modifiers')
+            .delete()
+            .eq('order_item_id', mod.order_item_id);
+
+          // Insert new modifiers
+          let newModifiersTotal = 0;
+          const modifierNames: string[] = [];
+          
+          for (const newMod of mod.modifiers) {
+            const modTotal = (newMod.unit_price || 0) * (newMod.quantity || 1);
+            
+            await supabaseAdmin
+              .from('order_item_modifiers')
+              .insert({
+                order_item_id: mod.order_item_id,
+                modifier_name: newMod.modifier_name,
+                quantity: newMod.quantity || 1,
+                unit_price: newMod.unit_price || 0,
+                total: modTotal,
+                modifier_type: newMod.modifier_type,
+              });
+
+            if (newMod.modifier_type === 'extra') {
+              newModifiersTotal += modTotal;
+              modifierNames.push(`+${newMod.modifier_name}`);
+            } else if (newMod.modifier_type === 'removal') {
+              modifierNames.push(`No ${newMod.modifier_name}`);
+            }
+          }
+
+          // Calculate modifier price difference
+          const modifierPriceDiff = newModifiersTotal - oldModifiersTotal;
+          totalChange += modifierPriceDiff;
+
+          // Update order item with new modifiers total
+          const unitPrice = parseFloat(String(orderItem.unit_price || 0));
+          const quantity = orderItem.quantity || 1;
+          const newSubtotal = unitPrice * quantity;
+          const newTotal = newSubtotal + newModifiersTotal;
+          
+          // Build special instructions string
+          const specialInstructions = modifierNames.join(', ') || null;
+
+          await supabaseAdmin
+            .from('order_items')
+            .update({
+              modifiers_total: newModifiersTotal,
+              has_modifiers: mod.modifiers.length > 0,
+              subtotal: newSubtotal,
+              total: newTotal,
+              special_instructions: specialInstructions,
+            })
+            .eq('id', mod.order_item_id);
+
+          // Log timeline for modifier changes
+          if (modifierPriceDiff !== 0 || mod.modifiers.length !== currentMods.length) {
+            await orderTimelineService.logItemModified(orderId, {
+              product_id: orderItem.product_id!,
+              product_name: orderItem.product_name,
+              changes: [{
+                field: 'modifiers',
+                from: currentMods.map((m: any) => m.modifier_name).join(', ') || 'none',
+                to: modifierNames.join(', ') || 'none',
+              }],
+              price_difference: modifierPriceDiff,
+            }, editedBy);
+          }
+        }
+      }
+    }
+
+    // Update order totals and is_edited flag
+    const newTotal = previousTotal + totalChange;
+    const paidAmount = parseFloat(String(order.paid_amount || previousTotal));
+    let remainingAmount = 0;
+    let paymentStatus = order.payment_status;
+
+    if (newTotal > paidAmount) {
+      remainingAmount = newTotal - paidAmount;
+      paymentStatus = 'pending';  // Additional payment required
+
+      // Log payment status change
+      await orderTimelineService.logPaymentUpdated(orderId, {
+        previous_status: order.payment_status || 'paid',
+        new_status: 'pending',
+        remaining_amount: remainingAmount,
+        reason: 'Order edited - additional payment required',
+      }, editedBy);
+    } else if (newTotal < paidAmount) {
+      // Credit to customer (less to pay)
+      remainingAmount = newTotal - paidAmount; // Negative = credit
+    }
+
+    await supabaseAdmin
+      .from('orders')
+      .update({
+        total_amount: newTotal,
+        is_edited: true,
+        remaining_amount: remainingAmount,
+        payment_status: paymentStatus,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', orderId);
+
+    // Get and return updated order
+    return this.getOrderById(orderId) as Promise<Order>;
+  }
+
+  // ==================== KITCHEN WASTE/RETURN PROCESSING ====================
+
+  /**
+   * Get cancelled order items pending kitchen decision
+   */
+  async getCancelledItemsPendingDecision(businessId: number, branchId?: number): Promise<any[]> {
+    let query = supabaseAdmin
+      .from('cancelled_order_items')
+      .select(`
+        *,
+        orders!inner (
+          id,
+          order_number,
+          business_id,
+          branch_id,
+          order_status,
+          created_at
+        ),
+        items (
+          id,
+          name,
+          name_ar,
+          unit,
+          storage_unit
+        )
+      `)
+      .is('decision', null)
+      .eq('orders.business_id', businessId);
+
+    if (branchId) {
+      query = query.eq('orders.branch_id', branchId);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('Failed to fetch cancelled items:', error);
+      throw new Error('Failed to fetch cancelled items');
+    }
+
+    return data || [];
+  }
+
+  /**
+   * Process waste/return decisions from kitchen
+   * Kitchen decides for each cancelled/removed item whether it's waste or can return to inventory
+   */
+  async processWasteDecisions(
+    decisions: Array<{
+      cancelled_item_id: number;
+      decision: 'waste' | 'return';
+    }>,
+    decidedBy: number
+  ): Promise<{ processed: number; errors: string[] }> {
+    const errors: string[] = [];
+    let processed = 0;
+
+    for (const { cancelled_item_id, decision } of decisions) {
+      try {
+        // Get the cancelled item
+        const { data: cancelledItem, error: fetchError } = await supabaseAdmin
+          .from('cancelled_order_items')
+          .select(`
+            *,
+            orders (
+              id,
+              business_id,
+              branch_id
+            )
+          `)
+          .eq('id', cancelled_item_id)
+          .single();
+
+        if (fetchError || !cancelledItem) {
+          errors.push(`Cancelled item ${cancelled_item_id} not found`);
+          continue;
+        }
+
+        const orderInfo = cancelledItem.orders as any;
+
+        if (decision === 'waste') {
+          // Process as waste - only deduct from actual quantity
+          // (reservation was already released when order/item was cancelled)
+          await inventoryStockService.deductWasteOnly(
+            orderInfo.business_id,
+            orderInfo.branch_id,
+            [{
+              item_id: cancelledItem.item_id,
+              quantity_in_storage: cancelledItem.quantity,
+              item_name: cancelledItem.product_name,
+            }],
+            cancelledItem.order_id,
+            decidedBy,
+            'Marked as waste by kitchen'
+          );
+
+          // Log timeline
+          await orderTimelineService.logIngredientWasted(cancelledItem.order_id, {
+            item_id: cancelledItem.item_id,
+            item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
+            quantity: cancelledItem.quantity,
+            unit: cancelledItem.unit || 'units',
+            reason: 'Marked as waste by kitchen',
+          }, decidedBy);
+
+        } else {
+          // Process as return - no action needed
+          // Reservation was already released when order/item was cancelled
+          // Actual stock quantity doesn't need to change (items weren't used)
+
+          // Log timeline for audit
+          await orderTimelineService.logIngredientReturned(cancelledItem.order_id, {
+            item_id: cancelledItem.item_id,
+            item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
+            quantity: cancelledItem.quantity,
+            unit: cancelledItem.unit || 'units',
+          }, decidedBy);
+        }
+
+        // Update the cancelled item record
+        await supabaseAdmin
+          .from('cancelled_order_items')
+          .update({
+            decision,
+            decided_by: decidedBy,
+            decided_at: new Date().toISOString(),
+          })
+          .eq('id', cancelled_item_id);
+
+        processed++;
+
+      } catch (err: any) {
+        errors.push(`Failed to process item ${cancelled_item_id}: ${err.message}`);
+      }
+    }
+
+    return { processed, errors };
+  }
+
+  /**
+   * Get order timeline
+   */
+  async getOrderTimeline(orderId: number): Promise<any[]> {
+    return orderTimelineService.getTimeline(orderId);
   }
 }
 

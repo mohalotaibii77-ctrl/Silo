@@ -98,7 +98,7 @@ export interface CreateBusinessInput {
 }
 
 export interface UpdateBusinessInput extends Partial<CreateBusinessInput> {
-  subscription_status?: 'active' | 'inactive' | 'suspended' | 'trial';
+  subscription_status?: 'active' | 'inactive';
   deleteUserIds?: number[];  // IDs of users to delete
 }
 
@@ -206,6 +206,11 @@ export class BusinessService {
         max_products: input.max_products || 100,
         user_count: input.users?.length || 0,
         branch_count: branchCount,
+        // Default localization settings
+        country: 'Kuwait',
+        currency: 'KWD',
+        timezone: 'Asia/Kuwait',
+        language: 'en',
       })
       .select()
       .single();
@@ -335,6 +340,7 @@ export class BusinessService {
             email: user.email || null,
             phone: user.phone || null,
             status: 'active',
+            password_changed: false, // Requires password change on first login
           });
 
         if (userError) {
@@ -535,6 +541,7 @@ export class BusinessService {
             email: user.email || null,
             phone: user.phone || null,
             status: 'active',
+            password_changed: false, // Requires password change on first login
           });
 
         if (!userError) {

@@ -166,8 +166,12 @@ export const clearStoredCartId = async () => {
   await AsyncStorage.removeItem('medusa_cart_id');
 };
 
-// Format price helper
-export const formatPrice = (amount: number, currencyCode: string = 'usd'): string => {
+// Format price helper - currency must be passed from business settings
+export const formatPrice = (amount: number, currencyCode: string): string => {
+  if (!currencyCode) {
+    // If no currency, just format the number
+    return (amount / 100).toFixed(2);
+  }
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: currencyCode.toUpperCase(),
@@ -175,6 +179,11 @@ export const formatPrice = (amount: number, currencyCode: string = 'usd'): strin
 };
 
 export default medusaApi;
+
+
+
+
+
 
 
 

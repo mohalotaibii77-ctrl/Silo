@@ -263,12 +263,27 @@ router.put('/change-requests/:id/approve', async (req: Request, res: Response): 
 
     // Apply the changes to the business
     const updateData: any = {};
+    
+    // Profile fields
     if (request.new_name) updateData.name = request.new_name;
     if (request.new_email) updateData.email = request.new_email;
     if (request.new_phone) updateData.phone = request.new_phone;
     if (request.new_address) updateData.address = request.new_address;
     if (request.new_logo_url) updateData.logo_url = request.new_logo_url;
     if (request.new_certificate_url) updateData.certificate_url = request.new_certificate_url;
+    
+    // Localization fields
+    if (request.new_currency) updateData.currency = request.new_currency;
+    if (request.new_language) updateData.language = request.new_language;
+    if (request.new_timezone) updateData.timezone = request.new_timezone;
+    
+    // Tax/VAT fields
+    if (request.new_vat_enabled !== null && request.new_vat_enabled !== undefined) {
+      updateData.vat_enabled = request.new_vat_enabled;
+    }
+    if (request.new_vat_rate !== null && request.new_vat_rate !== undefined) {
+      updateData.tax_rate = request.new_vat_rate;
+    }
 
     if (Object.keys(updateData).length > 0) {
       updateData.updated_at = new Date().toISOString();

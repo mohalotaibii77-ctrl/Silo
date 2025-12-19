@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { Store, LogOut, User, Command, ArrowLeft, Upload, Send, CheckCircle, Clock, XCircle, Loader2 } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
@@ -54,7 +54,6 @@ export default function StoreProfilePage() {
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
     const storedUser = localStorage.getItem('setup_user');
-    const storedBusiness = localStorage.getItem('setup_business');
 
     if (!token || !storedUser) {
       router.push('/login');
@@ -67,6 +66,35 @@ export default function StoreProfilePage() {
         router.push('/login');
         return;
       }
+      // Fetch fresh business data from server
+      fetchBusinessData();
+    } catch {
+      router.push('/login');
+      return;
+    }
+
+    fetchRequests();
+  }, [router]);
+
+  const fetchBusinessData = async () => {
+    try {
+      const response = await api.get('/business-settings');
+      const biz = response.data.data;
+      if (biz) {
+        setBusiness(biz);
+        setFormData({
+          name: biz.name || '',
+          email: biz.email || '',
+          phone: biz.phone || '',
+          address: biz.address || '',
+        });
+        // Update localStorage with fresh data
+        localStorage.setItem('setup_business', JSON.stringify(biz));
+      }
+    } catch (err) {
+      console.error('Failed to fetch business data:', err);
+      // Fallback to localStorage if server fails
+      const storedBusiness = localStorage.getItem('setup_business');
       if (storedBusiness) {
         const biz = JSON.parse(storedBusiness);
         setBusiness(biz);
@@ -77,14 +105,10 @@ export default function StoreProfilePage() {
           address: biz.address || '',
         });
       }
-    } catch {
-      router.push('/login');
-      return;
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-    fetchRequests();
-  }, [router]);
+  };
 
   const fetchRequests = async () => {
     try {
@@ -132,12 +156,18 @@ export default function StoreProfilePage() {
     setMessage({ type: '', text: '' });
 
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('request_type', type);
+      // Convert file to base64
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
 
-      await api.post('/business-settings/upload-request', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      await api.post('/business-settings/upload-request', {
+        request_type: type,
+        file_data: base64Data,
+        file_name: file.name,
       });
 
       const successMsg = type === 'logo' 
@@ -186,7 +216,9 @@ export default function StoreProfilePage() {
 
   return (
     <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950 font-sans" dir={isRTL ? 'rtl' : 'ltr'}>
-      <Sidebar business={business} />
+      <Suspense fallback={<div className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hidden md:block" />}>
+        <Sidebar business={business} />
+      </Suspense>
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="h-16 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl sticky top-0 z-30 px-6 flex items-center justify-between">

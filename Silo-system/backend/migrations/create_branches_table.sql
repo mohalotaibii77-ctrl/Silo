@@ -48,3 +48,8 @@ COMMENT ON TABLE branches IS 'Store branches/locations for multi-branch business
 COMMENT ON COLUMN branches.is_main IS 'Indicates if this is the main/headquarters branch';
 COMMENT ON COLUMN branches.business_id IS 'Parent business that owns this branch';
 
+
+
+
+
+

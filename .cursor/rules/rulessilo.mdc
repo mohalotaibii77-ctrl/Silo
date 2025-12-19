@@ -1,42 +1,60 @@
----
-alwaysApply: true
----
-We are building a multi-tenant Restaurant Operating System similar to Foodics, but everything works inside a single unified platform.
+## Architecture Principles: Backend as the Engine
 
-The system architecture is:
+### Core Principle
+**The backend is the single engine that powers ALL frontends.** Every piece of business logic, data processing, calculation, validation, and transformation MUST happen in the backend. Frontends are purely visual interfaces that display what the backend provides.
 
-(1) One backend
-Contains all microservices: POS, inventory, HR, accounting, operations, QHSE, maintenance, training, customer care, and the AI Core.
-The backend controls all business logic and provides APIs for multiple restaurants (multi-tenant).
-The backend also includes the data warehouse + audit logs + AI models.
+### Backend Responsibilities (ALL business logic lives here)
+- **ALL calculations** - margins, costs, totals, taxes, discounts, commissions, conversions, aggregations
+- **ALL data processing** - filtering, sorting, grouping, transformations, formatting business data
+- **ALL validations** - business rules, constraints, permissions, data integrity
+- **ALL business rules** - pricing logic, inventory rules, order workflows, approval processes
+- **ALL derived/computed values** - anything that requires logic to determine its value
+- **Data warehouse, audit logs, and AI models**
 
-(2) SuperAdmin Frontend
-Used only by us (platform owner).
-We use it to create new businesses, manage subscriptions, control access, monitor system-wide analytics, and manage support.
+If it involves logic beyond simple display formatting, it belongs in the backend.
 
-(3) Business Frontend (Restaurant App)
-This is the main app used by each restaurant.
-The frontend contains multiple user interfaces depending on the role:
+### Frontend Responsibilities (UI layer ONLY)
+- **Display** data exactly as received from backend APIs
+- **Collect** user input and send raw values to backend
+- **Navigate** between screens and routes
+- **Style** the interface (colors, layouts, animations)
+- **Format for display** - date formatting, number formatting for locale (not business calculations)
 
-Owner UI: dashboard, HR, inventory, operations, accounting, AI reports.
+Frontends do NOT process, calculate, derive, aggregate, or transform business data.
 
-Operations Manager UI: daily tasks, checklists, shifts, incidents, waste, EOD.
+### The Only Exception: Form Preview for UX
+Frontends MAY show preview calculations while user fills a form for better UX experience.
+- **MUST** include comment: `// UI preview only - backend calculates actual value on save`
+- **MUST** send raw form data to backend
+- **MUST** use backend-returned values after save
+- Preview is for user feedback only, never for business decisions
 
-Employee UI: check-in, tasks, uploads, training, issues.
+### Implementation Pattern
 
-The system is NOT dependent on external POS or external accounting software — our backend includes both POS logic and accounting logic internally.
+// ❌ NEVER DO THIS - Frontend processing data
+const totalRevenue = orders.reduce((sum, o) => sum + o.amount, 0);
+const margin = ((price - cost) / price) * 100;
+const filteredItems = items.filter(i => i.status === 'active' && i.stock > 0);
 
-All modules (POS, Inventory, HR, Operations, QHSE, Accounting, AI) are internal backend microservices connected through the API Gateway and served to the Business Frontend.
+// ✅ ALWAYS DO THIS - Frontend displays backend values
+const totalRevenue = dashboardData.total_revenue;  // Backend calculated
+const margin = product.margin_percent;              // Backend calculated
+const activeItems = await api.get('/items?status=active&in_stock=true'); // Backend filtered### When Adding New Features
+1. Ask: "Does this involve any logic, calculation, or data processing?"
+2. If YES → Implement in backend, return result via API
+3. If NO (pure UI) → Implement in frontend
+4. When in doubt → Put it in backend
 
-The Business Frontend is where all operational activity happens.
-The SuperAdmin Frontend is for platform-level control.
-The backend is the single engine powering everything.
+### Project Scope
+This APP solely uses the project **Silo** from our database. Don't edit or do anything to other projects.
 
+When asked to implement something:
+1. Implement following these architecture principles
+2. Provide a brief summary in chat
+3. Do not create documentation files unless explicitly requested
 
-
-This APP solely uses the project Silo from our database. Dont edit or do anything to other projects.
-
-When I ask you to do something, implement and then give a brief summary within the chat, do not create a document unless it is a requirement that we need.
-
-
-the backend should be Modular Monolith
+### Backend Architecture
+The backend is a **Modular Monolith** containing all microservices:
+- POS, Inventory, HR, Accounting, Operations, QHSE, Maintenance, Training, Customer Care, AI Core, or any features we will add later.
+- Controls all business logic and Data proccesing to be the single source of truth that serves all frontends for unity.
+- Serves as the single source of truth for all three frontends (SuperAdmin, Business App, Main)

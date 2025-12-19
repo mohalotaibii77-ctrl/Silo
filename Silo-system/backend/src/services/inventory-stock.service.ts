@@ -1,16 +1,19 @@
 /**
  * INVENTORY STOCK MANAGEMENT SERVICE
  * Handles vendors, purchase orders, transfers, and inventory counts
+ * Updated: Force reload
  */
 
 import { supabaseAdmin } from '../config/database';
 import { inventoryService } from './inventory.service';
+import { convertUnits, StorageUnit, ServingUnit } from '../utils/unit-conversion';
 
 // ==================== TYPES ====================
 
 export interface Vendor {
   id: number;
   business_id: number;
+  branch_id?: number | null; // NULL = available to all branches, otherwise only for specific branch
   name: string;
   name_ar?: string | null;
   code?: string | null;
@@ -26,6 +29,8 @@ export interface Vendor {
   status: 'active' | 'inactive';
   created_at: string;
   updated_at: string;
+  // Joined data
+  branch?: { id: number; name: string; name_ar?: string } | null;
 }
 
 export interface InventoryStock {
@@ -35,6 +40,7 @@ export interface InventoryStock {
   item_id: number;
   quantity: number;
   reserved_quantity: number;
+  held_quantity: number; // Quantity held for pending transfers
   min_quantity: number;
   max_quantity?: number | null;
   last_count_date?: string | null;
@@ -52,7 +58,7 @@ export interface PurchaseOrder {
   branch_id?: number | null;
   vendor_id: number;
   order_number: string;
-  status: 'draft' | 'pending' | 'approved' | 'ordered' | 'partial' | 'received' | 'cancelled';
+  status: 'draft' | 'pending' | 'counted' | 'delivered' | 'cancelled' | 'approved' | 'ordered' | 'partial' | 'received'; // 'counted' added for two-step receiving
   order_date: string;
   expected_date?: string | null;
   received_date?: string | null;
@@ -61,6 +67,7 @@ export interface PurchaseOrder {
   discount_amount: number;
   total_amount: number;
   notes?: string | null;
+  invoice_image_url?: string | null; // URL to uploaded vendor invoice image
   created_by?: number | null;
   approved_by?: number | null;
   received_by?: number | null;
@@ -77,30 +84,39 @@ export interface PurchaseOrderItem {
   item_id: number;
   quantity: number;
   received_quantity: number;
-  unit_cost: number;
-  total_cost: number;
+  unit_cost: number | null;  // Calculated at receive: total_cost / received_quantity
+  total_cost: number | null; // Entered by employee at receive from invoice
+  variance_reason?: 'missing' | 'canceled' | 'rejected' | null; // Required if received < ordered
+  variance_note?: string | null; // Required if received > ordered (justification)
   notes?: string | null;
+  // Counting step fields
+  counted_quantity?: number | null; // Quantity entered during counting step
+  counted_at?: string | null; // When the item was counted
+  barcode_scanned?: boolean; // Whether at least one barcode was scanned for this item
   // Joined data
   item?: any;
 }
 
 export interface InventoryTransfer {
   id: number;
-  business_id: number;
+  business_id: number; // The business that initiated the transfer
+  from_business_id?: number | null; // Source business
+  to_business_id?: number | null; // Destination business
   transfer_number: string;
   from_branch_id?: number | null;
   to_branch_id?: number | null;
-  status: 'draft' | 'pending' | 'in_transit' | 'completed' | 'cancelled';
+  status: 'pending' | 'received' | 'cancelled';
   transfer_date: string;
   expected_date?: string | null;
   completed_date?: string | null;
   notes?: string | null;
   created_by?: number | null;
-  approved_by?: number | null;
-  completed_by?: number | null;
+  received_by?: number | null;
   created_at: string;
   updated_at: string;
   // Joined data
+  from_business?: any;
+  to_business?: any;
   from_branch?: any;
   to_branch?: any;
   items?: InventoryTransferItem[];
@@ -198,7 +214,7 @@ export interface POActivity {
   purchase_order_id: number;
   business_id: number;
   user_id?: number | null;
-  action: 'created' | 'status_changed' | 'items_updated' | 'notes_updated' | 'cancelled' | 'received';
+  action: 'created' | 'status_changed' | 'items_updated' | 'notes_updated' | 'cancelled' | 'counted' | 'received';
   old_status?: string | null;
   new_status?: string | null;
   changes?: any;
@@ -211,6 +227,31 @@ export interface POActivity {
     first_name?: string;
     last_name?: string;
   };
+}
+
+// Item barcode mapping (business-isolated)
+export interface ItemBarcode {
+  id: number;
+  item_id: number;
+  business_id: number;
+  barcode: string;
+  created_at: string;
+  created_by?: number | null;
+}
+
+/**
+ * Ingredient requirement from order calculation
+ */
+export interface IngredientRequirement {
+  item_id: number;
+  item_name: string;
+  quantity: number;          // In serving units (grams, mL, piece)
+  serving_unit: string;
+  storage_unit: string;
+  quantity_in_storage: number; // Converted to storage units for inventory
+  product_id?: number;
+  product_name?: string;
+  variant_id?: number;
 }
 
 export class InventoryStockService {
@@ -232,14 +273,25 @@ export class InventoryStockService {
 
   /**
    * Get all vendors for a business
+   * Vendors with null branch_id are available to all branches
+   * Vendors with a specific branch_id are only for that branch
+   * Supports pagination with page and limit options
    */
   async getVendors(businessId: number, filters?: {
     status?: 'active' | 'inactive';
     search?: string;
-  }): Promise<Vendor[]> {
+    branchId?: number;
+    page?: number;
+    limit?: number;
+  }): Promise<Vendor[] | { data: Vendor[]; total: number }> {
+    const { page, limit } = filters || {};
+    
     let query = supabaseAdmin
       .from('vendors')
-      .select('*')
+      .select(`
+        *,
+        branches (id, name, name_ar)
+      `, { count: page && limit ? 'exact' : undefined })
       .eq('business_id', businessId);
 
     if (filters?.status) {
@@ -250,14 +302,39 @@ export class InventoryStockService {
       query = query.or(`name.ilike.%${filters.search}%,name_ar.ilike.%${filters.search}%,code.ilike.%${filters.search}%,contact_person.ilike.%${filters.search}%`);
     }
 
-    const { data, error } = await query.order('name');
+    // Filter by branch: show vendors for this branch OR vendors available to all branches (null)
+    if (filters?.branchId) {
+      query = query.or(`branch_id.eq.${filters.branchId},branch_id.is.null`);
+    }
+
+    // Apply pagination if provided
+    if (page && limit) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
+    }
+
+    const { data, error, count } = await query.order('name');
 
     if (error) {
       console.error('Failed to fetch vendors:', error);
       throw new Error('Failed to fetch vendors');
     }
 
-    return data as Vendor[];
+    const vendors = (data || []).map((v: any) => ({
+      ...v,
+      branch: v.branches,
+      branches: undefined
+    })) as Vendor[];
+
+    // Return paginated response if pagination was requested
+    if (page && limit && count !== null) {
+      return {
+        data: vendors,
+        total: count,
+      };
+    }
+
+    return vendors;
   }
 
   /**
@@ -277,10 +354,13 @@ export class InventoryStockService {
 
   /**
    * Create vendor
+   * branch_id = null means vendor is available to all branches
+   * branch_id = number means vendor is only for that specific branch
    */
   async createVendor(businessId: number, data: {
     name: string;
     name_ar?: string;
+    branch_id?: number | null; // null = all branches, number = specific branch
     contact_person?: string;
     email?: string;
     phone?: string;
@@ -297,6 +377,7 @@ export class InventoryStockService {
       .from('vendors')
       .insert({
         business_id: businessId,
+        branch_id: data.branch_id || null,
         name: data.name,
         name_ar: data.name_ar || null,
         code,
@@ -387,30 +468,57 @@ export class InventoryStockService {
 
   /**
    * Get stock levels for all items
+   * Supports pagination with page and limit options
+   * 
+   * Branch filtering behavior:
+   * - If branchId is provided: return stock for that specific branch only
+   * - If branchId is undefined: return ALL stock records, then deduplicate by item_id
+   *   (prefer branch-specific stock over business-level stock to avoid duplicates)
    */
   async getStockLevels(businessId: number, filters?: {
     branchId?: number;
     itemId?: number;
     lowStock?: boolean;
-  }): Promise<InventoryStock[]> {
+    page?: number;
+    limit?: number;
+  }): Promise<InventoryStock[] | { data: InventoryStock[]; total: number }> {
+    const { page, limit, lowStock } = filters || {};
+    
+    // For lowStock filter with pagination, we need to filter at DB level
+    // to get accurate counts. Use a raw filter approach.
     let query = supabaseAdmin
       .from('inventory_stock')
       .select(`
         *,
         items (id, name, name_ar, unit, storage_unit, category, sku),
         branches (id, name, name_ar)
-      `)
+      `, { count: page && limit ? 'exact' : undefined })
       .eq('business_id', businessId);
 
+    // When specific branch is requested, only show that branch's stock
     if (filters?.branchId) {
       query = query.eq('branch_id', filters.branchId);
     }
+    // When no branch specified, we'll fetch all and dedupe below
 
     if (filters?.itemId) {
       query = query.eq('item_id', filters.itemId);
     }
 
-    const { data, error } = await query.order('item_id');
+    // Apply lowStock filter at database level using raw filter
+    // This ensures count reflects the filtered dataset
+    if (lowStock) {
+      // Filter where quantity <= min_quantity using raw SQL filter
+      query = query.filter('quantity', 'lte', 'min_quantity');
+    }
+
+    // Apply pagination AFTER filters to get correct count
+    if (page && limit) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
+    }
+
+    const { data, error, count } = await query.order('item_id');
 
     if (error) {
       console.error('Failed to fetch stock levels:', error);
@@ -423,44 +531,158 @@ export class InventoryStockService {
       branch: s.branches,
       items: undefined,
       branches: undefined,
-    }));
+    })) as InventoryStock[];
 
-    // Filter low stock if requested
-    if (filters?.lowStock) {
-      stocks = stocks.filter((s: InventoryStock) => s.quantity <= s.min_quantity);
+    // When no branch filter is provided, deduplicate by item_id
+    // This prevents the same item appearing twice when it has both branch-level and business-level stock
+    // Priority: branch-specific stock (has branch_id) over business-level stock (branch_id is null)
+    if (!filters?.branchId) {
+      const itemStockMap = new Map<number, InventoryStock>();
+      for (const stock of stocks) {
+        const existing = itemStockMap.get(stock.item_id);
+        if (!existing) {
+          // First time seeing this item
+          itemStockMap.set(stock.item_id, stock);
+        } else if (stock.branch_id && !existing.branch_id) {
+          // Current has branch_id, existing doesn't - prefer branch-specific
+          itemStockMap.set(stock.item_id, stock);
+        }
+        // If existing has branch_id or both are same type, keep existing (first one wins)
+      }
+      stocks = Array.from(itemStockMap.values());
     }
 
-    return stocks as InventoryStock[];
+    // Return paginated response if pagination was requested
+    if (page && limit && count !== null) {
+      return {
+        data: stocks,
+        total: stocks.length, // Use deduplicated count
+      };
+    }
+
+    // For non-paginated requests with lowStock filter, apply in-memory filter
+    // (database filter may not work without pagination mode)
+    if (lowStock && !(page && limit)) {
+      return stocks.filter((s: InventoryStock) => s.quantity <= s.min_quantity);
+    }
+
+    return stocks;
+  }
+
+  /**
+   * Get stock statistics - counts of low stock, out of stock, healthy items
+   * Backend calculation - frontend just displays these values
+   * 
+   * Branch filtering: Same as getStockLevels - filter by specific branch or dedupe all
+   */
+  async getStockStats(businessId: number, branchId?: number): Promise<{
+    total_items: number;
+    low_stock_count: number;
+    out_of_stock_count: number;
+    healthy_stock_count: number;
+    overstocked_count: number;
+  }> {
+    let query = supabaseAdmin
+      .from('inventory_stock')
+      .select('id, item_id, branch_id, quantity, min_quantity, max_quantity')
+      .eq('business_id', businessId);
+
+    // When specific branch is requested, only count that branch's stock
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+    // When no branch specified, we'll fetch all and dedupe below
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error('Failed to fetch stock stats:', error);
+      throw new Error('Failed to fetch stock statistics');
+    }
+
+    let stocks = data || [];
+    
+    // When no branch filter, deduplicate by item_id (same logic as getStockLevels)
+    if (!branchId) {
+      const itemStockMap = new Map<number, typeof stocks[0]>();
+      for (const stock of stocks) {
+        const existing = itemStockMap.get(stock.item_id);
+        if (!existing) {
+          itemStockMap.set(stock.item_id, stock);
+        } else if (stock.branch_id && !existing.branch_id) {
+          itemStockMap.set(stock.item_id, stock);
+        }
+      }
+      stocks = Array.from(itemStockMap.values());
+    }
+    
+    // Calculate counts - same logic as was in frontend, now in backend
+    const total_items = stocks.length;
+    const out_of_stock_count = stocks.filter(s => s.quantity === 0).length;
+    const low_stock_count = stocks.filter(s => s.quantity > 0 && s.quantity <= s.min_quantity).length;
+    const overstocked_count = stocks.filter(s => s.max_quantity && s.quantity >= s.max_quantity).length;
+    const healthy_stock_count = stocks.filter(s => 
+      s.quantity > s.min_quantity && 
+      (!s.max_quantity || s.quantity < s.max_quantity)
+    ).length;
+
+    return {
+      total_items,
+      low_stock_count,
+      out_of_stock_count,
+      healthy_stock_count,
+      overstocked_count,
+    };
   }
 
   /**
    * Get or create stock record for an item
+   * Uses upsert pattern to prevent race conditions and duplicate records
    */
   async getOrCreateStock(businessId: number, itemId: number, branchId?: number): Promise<InventoryStock> {
-    const { data: existing } = await supabaseAdmin
+    // Build query - use .is() for null comparison since .eq() doesn't work with NULL
+    let query = supabaseAdmin
       .from('inventory_stock')
       .select('*')
       .eq('business_id', businessId)
-      .eq('item_id', itemId)
-      .eq('branch_id', branchId || null)
-      .single();
+      .eq('item_id', itemId);
+    
+    // Handle null branch_id properly (PostgreSQL requires IS NULL, not = NULL)
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    } else {
+      query = query.is('branch_id', null);
+    }
+    
+    const { data: existing } = await query.single();
 
     if (existing) return existing as InventoryStock;
 
+    // Use upsert to prevent race conditions creating duplicates
+    // The unique partial indexes will ensure only one record exists
     const { data: newStock, error } = await supabaseAdmin
       .from('inventory_stock')
-      .insert({
+      .upsert({
         business_id: businessId,
         branch_id: branchId || null,
         item_id: itemId,
         quantity: 0,
         reserved_quantity: 0,
+        held_quantity: 0,
         min_quantity: 0,
+      }, {
+        onConflict: branchId ? 'business_id,branch_id,item_id' : 'business_id,item_id',
+        ignoreDuplicates: false, // Return existing record if conflict
       })
       .select()
       .single();
 
     if (error) {
+      // If upsert failed due to race condition, try to fetch the existing record
+      console.warn('Upsert conflict, fetching existing record:', error.message);
+      const { data: retryExisting } = await query.single();
+      if (retryExisting) return retryExisting as InventoryStock;
+      
       console.error('Failed to create stock record:', error);
       throw new Error('Failed to create stock record');
     }
@@ -470,6 +692,7 @@ export class InventoryStockService {
 
   /**
    * Update stock quantity
+   * Prevents inventory from going negative - minimum is 0
    */
   async updateStock(
     businessId: number,
@@ -487,7 +710,10 @@ export class InventoryStockService {
   ): Promise<InventoryStock> {
     const stock = await this.getOrCreateStock(businessId, itemId, options?.branchId);
     const quantityBefore = stock.quantity;
-    const quantityAfter = quantityBefore + quantityChange;
+    
+    // SAFEGUARD: Prevent inventory from going negative
+    // If the change would result in negative quantity, cap at 0
+    const quantityAfter = Math.max(0, quantityBefore + quantityChange);
 
     // Update stock
     const { data: updatedStock, error } = await supabaseAdmin
@@ -505,7 +731,7 @@ export class InventoryStockService {
       throw new Error('Failed to update stock');
     }
 
-    // Record movement
+    // Record movement (legacy table)
     await supabaseAdmin
       .from('inventory_movements')
       .insert({
@@ -523,6 +749,77 @@ export class InventoryStockService {
         notes: options?.notes || null,
         created_by: options?.userId || null,
       });
+
+    // Also record in the new inventory_transactions table for timeline
+    try {
+      // Map movementType to transaction_type
+      let transactionType: string;
+      switch (movementType) {
+        case 'purchase_receive':
+          transactionType = 'po_receive';
+          break;
+        case 'sale':
+        case 'order':
+          transactionType = 'order_sale';
+          break;
+        case 'transfer_in':
+          transactionType = 'transfer_in';
+          break;
+        case 'transfer_out':
+          transactionType = 'transfer_out';
+          break;
+        case 'production_consume':
+          transactionType = 'production_consume';
+          break;
+        case 'production_yield':
+          transactionType = 'production_yield';
+          break;
+        case 'inventory_count':
+        case 'count_adjustment':
+          transactionType = 'inventory_count_adjustment';
+          break;
+        case 'void':
+        case 'return':
+          transactionType = 'order_void_return';
+          break;
+        case 'manual_addition':
+          transactionType = 'manual_addition';
+          break;
+        case 'manual_deduction':
+          transactionType = 'manual_deduction';
+          break;
+        default:
+          transactionType = quantityChange >= 0 ? 'manual_addition' : 'manual_deduction';
+      }
+
+      // Get item info for unit
+      const { data: itemInfo } = await supabaseAdmin
+        .from('items')
+        .select('storage_unit, unit, cost_per_unit')
+        .eq('id', itemId)
+        .single();
+
+      await supabaseAdmin
+        .from('inventory_transactions')
+        .insert({
+          business_id: businessId,
+          branch_id: options?.branchId || null,
+          item_id: itemId,
+          transaction_type: transactionType,
+          quantity: Math.abs(quantityChange),
+          unit: itemInfo?.storage_unit || itemInfo?.unit || 'unit',
+          reference_type: options?.referenceType || null,
+          reference_id: options?.referenceId || null,
+          notes: options?.notes || null,
+          performed_by: options?.userId || null,
+          quantity_before: quantityBefore,
+          quantity_after: quantityAfter,
+          cost_per_unit_at_time: options?.unitCost || itemInfo?.cost_per_unit || null,
+        });
+    } catch (txError) {
+      // Don't fail the main operation if transaction logging fails
+      console.error('Failed to log inventory transaction:', txError);
+    }
 
     return updatedStock as InventoryStock;
   }
@@ -638,19 +935,24 @@ export class InventoryStockService {
 
   /**
    * Get purchase orders
+   * POs are strictly branch-specific - each branch only sees its own POs
    */
   async getPurchaseOrders(businessId: number, filters?: {
     status?: string;
     vendorId?: number;
     branchId?: number;
-  }): Promise<PurchaseOrder[]> {
+    page?: number;
+    limit?: number;
+  }): Promise<PurchaseOrder[] | { data: PurchaseOrder[]; total: number }> {
+    const { page, limit } = filters || {};
+    
     let query = supabaseAdmin
       .from('purchase_orders')
       .select(`
         *,
         vendors (id, name, name_ar, code),
         branches (id, name, name_ar)
-      `)
+      `, { count: page && limit ? 'exact' : undefined })
       .eq('business_id', businessId);
 
     if (filters?.status) {
@@ -660,23 +962,40 @@ export class InventoryStockService {
       query = query.eq('vendor_id', filters.vendorId);
     }
     if (filters?.branchId) {
+      // Strictly filter by branch - each branch only sees its own POs
       query = query.eq('branch_id', filters.branchId);
     }
 
-    const { data, error } = await query.order('created_at', { ascending: false });
+    // Apply pagination if provided
+    if (page && limit) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
+    }
+
+    const { data, error, count } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('Failed to fetch purchase orders:', error);
       throw new Error('Failed to fetch purchase orders');
     }
 
-    return (data || []).map((po: any) => ({
+    const purchaseOrders = (data || []).map((po: any) => ({
       ...po,
       vendor: po.vendors,
       branch: po.branches,
       vendors: undefined,
       branches: undefined,
     })) as PurchaseOrder[];
+
+    // Return paginated response if pagination was requested
+    if (page && limit && count !== null) {
+      return {
+        data: purchaseOrders,
+        total: count,
+      };
+    }
+
+    return purchaseOrders;
   }
 
   /**
@@ -721,38 +1040,19 @@ export class InventoryStockService {
 
   /**
    * Create purchase order
+   * NOTE: PO is created with quantities only - prices are entered at receive time
    */
   async createPurchaseOrder(businessId: number, data: {
     vendor_id: number;
     branch_id?: number;
     expected_date?: string;
     notes?: string;
-    items: { item_id: number; quantity: number; unit_cost: number }[];
+    items: { item_id: number; quantity: number }[]; // No prices at creation
     created_by?: number;
   }): Promise<PurchaseOrder> {
     const orderNumber = await this.generatePONumber(businessId);
 
-    // Get business tax settings
-    const { data: business } = await supabaseAdmin
-      .from('businesses')
-      .select('vat_enabled, tax_rate')
-      .eq('id', businessId)
-      .single();
-    
-    const taxRate = business?.vat_enabled ? (parseFloat(business.tax_rate) || 0) / 100 : 0;
-
-    // Calculate totals
-    let subtotal = 0;
-    const orderItems = data.items.map(item => {
-      const totalCost = item.quantity * item.unit_cost;
-      subtotal += totalCost;
-      return { ...item, total_cost: totalCost };
-    });
-
-    const taxAmount = subtotal * taxRate;
-    const totalAmount = subtotal + taxAmount;
-
-    // Create order
+    // Create order with zero totals (calculated at receive time)
     const { data: order, error } = await supabaseAdmin
       .from('purchase_orders')
       .insert({
@@ -763,10 +1063,10 @@ export class InventoryStockService {
         status: 'pending',
         order_date: new Date().toISOString().split('T')[0],
         expected_date: data.expected_date || null,
-        subtotal,
-        tax_amount: taxAmount,
+        subtotal: 0,           // Calculated at receive
+        tax_amount: 0,         // Calculated at receive
         discount_amount: 0,
-        total_amount: totalAmount,
+        total_amount: 0,       // Calculated at receive
         notes: data.notes || null,
         created_by: data.created_by || null,
       })
@@ -778,14 +1078,14 @@ export class InventoryStockService {
       throw new Error('Failed to create purchase order');
     }
 
-    // Create order items
-    const itemsToInsert = orderItems.map(item => ({
+    // Create order items with quantities only (no prices)
+    const itemsToInsert = data.items.map(item => ({
       purchase_order_id: order.id,
       item_id: item.item_id,
       quantity: item.quantity,
       received_quantity: 0,
-      unit_cost: item.unit_cost,
-      total_cost: item.total_cost,
+      unit_cost: null,    // Entered at receive
+      total_cost: null,   // Entered at receive
     }));
 
     const { error: itemsError } = await supabaseAdmin
@@ -809,7 +1109,6 @@ export class InventoryStockService {
       changes: {
         vendor_id: data.vendor_id,
         items_count: data.items.length,
-        total_amount: totalAmount,
       },
     });
 
@@ -818,6 +1117,8 @@ export class InventoryStockService {
 
   /**
    * Update purchase order status
+   * NOTE: To receive a PO, use receivePurchaseOrder() which handles counting and pricing
+   * This function only handles: pending, cancelled status changes
    */
   async updatePurchaseOrderStatus(
     orderId: number,
@@ -830,15 +1131,19 @@ export class InventoryStockService {
     const currentOrder = await this.getPurchaseOrder(orderId, businessId);
     if (!currentOrder) throw new Error('Purchase order not found');
     
+    // Validate status - 'received' is set via receivePurchaseOrder, 'counted' via countPurchaseOrder
+    const validManualStatuses = ['pending', 'counted', 'cancelled', 'received'];
+    if (!validManualStatuses.includes(status)) {
+      throw new Error(`Invalid status. Use countPurchaseOrder() or receivePurchaseOrder() for processing.`);
+    }
+
+    // Prevent cancelling already received orders
+    if (status === 'cancelled' && currentOrder.status === 'received') {
+      throw new Error('Cannot cancel a received order');
+    }
+    
     const oldStatus = currentOrder.status;
     const updates: any = { status, updated_at: new Date().toISOString() };
-
-    if (status === 'approved') {
-      updates.approved_by = userId;
-    } else if (status === 'received') {
-      updates.received_by = userId;
-      updates.received_date = new Date().toISOString().split('T')[0];
-    }
 
     const { error } = await supabaseAdmin
       .from('purchase_orders')
@@ -867,7 +1172,8 @@ export class InventoryStockService {
   }
 
   /**
-   * Update purchase order details (notes, expected date, items)
+   * Update purchase order details (notes, expected date, item quantities)
+   * NOTE: Prices are only entered at receive time, not during update
    */
   async updatePurchaseOrder(
     orderId: number,
@@ -875,7 +1181,7 @@ export class InventoryStockService {
     data: {
       notes?: string;
       expected_date?: string;
-      items?: { item_id: number; quantity: number; unit_cost: number }[];
+      items?: { item_id: number; quantity: number }[]; // No prices - only quantities can be updated
     },
     userId?: number
   ): Promise<PurchaseOrder> {
@@ -902,45 +1208,21 @@ export class InventoryStockService {
       updates.expected_date = data.expected_date || null;
     }
 
-    // Update items if provided
+    // Update items if provided (quantities only - no prices)
     if (data.items && data.items.length > 0) {
-      // Get business tax settings
-      const { data: business } = await supabaseAdmin
-        .from('businesses')
-        .select('vat_enabled, tax_rate')
-        .eq('id', businessId)
-        .single();
-      
-      const taxRate = business?.vat_enabled ? (parseFloat(business.tax_rate) || 0) / 100 : 0;
-
-      // Calculate new totals
-      let subtotal = 0;
-      const orderItems = data.items.map(item => {
-        const totalCost = item.quantity * item.unit_cost;
-        subtotal += totalCost;
-        return { ...item, total_cost: totalCost };
-      });
-
-      const taxAmount = subtotal * taxRate;
-      const totalAmount = subtotal + taxAmount;
-
-      updates.subtotal = subtotal;
-      updates.tax_amount = taxAmount;
-      updates.total_amount = totalAmount;
-
-      // Delete old items and insert new ones
+      // Delete old items and insert new ones with updated quantities
       await supabaseAdmin
         .from('purchase_order_items')
         .delete()
         .eq('purchase_order_id', orderId);
 
-      const itemsToInsert = orderItems.map(item => ({
+      const itemsToInsert = data.items.map(item => ({
         purchase_order_id: orderId,
         item_id: item.item_id,
         quantity: item.quantity,
         received_quantity: 0,
-        unit_cost: item.unit_cost,
-        total_cost: item.total_cost,
+        unit_cost: null,   // Prices entered at receive time
+        total_cost: null,  // Prices entered at receive time
       }));
 
       await supabaseAdmin
@@ -950,8 +1232,6 @@ export class InventoryStockService {
       changes.items = {
         old_count: currentOrder.items?.length || 0,
         new_count: data.items.length,
-        old_total: currentOrder.total_amount,
-        new_total: totalAmount,
       };
     }
 
@@ -984,6 +1264,232 @@ export class InventoryStockService {
     return this.getPurchaseOrder(orderId, businessId) as Promise<PurchaseOrder>;
   }
 
+  // ==================== ITEM BARCODES ====================
+
+  /**
+   * Get barcode for an item within a business
+   */
+  async getItemBarcode(itemId: number, businessId: number): Promise<ItemBarcode | null> {
+    const { data, error } = await supabaseAdmin
+      .from('item_barcodes')
+      .select('*')
+      .eq('item_id', itemId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (error) return null;
+    return data as ItemBarcode;
+  }
+
+  /**
+   * Lookup item by barcode within a business
+   * Barcodes are unique per business, not globally
+   */
+  async lookupItemByBarcode(barcode: string, businessId: number): Promise<{ item_id: number; item?: any } | null> {
+    const { data, error } = await supabaseAdmin
+      .from('item_barcodes')
+      .select(`
+        *,
+        items (id, name, name_ar, sku, unit, storage_unit)
+      `)
+      .eq('barcode', barcode)
+      .eq('business_id', businessId)
+      .single();
+
+    if (error || !data) return null;
+    
+    return {
+      item_id: data.item_id,
+      item: (data as any).items,
+    };
+  }
+
+  /**
+   * Associate a barcode with an item for a specific business
+   * Each item can have one barcode per business, and each barcode must be unique within a business
+   * Different businesses can use the same barcode for different items
+   */
+  async associateBarcode(itemId: number, barcode: string, businessId: number, userId?: number): Promise<ItemBarcode> {
+    // Check if barcode already exists for another item in this business
+    const { data: existing } = await supabaseAdmin
+      .from('item_barcodes')
+      .select('id, item_id')
+      .eq('barcode', barcode)
+      .eq('business_id', businessId)
+      .single();
+
+    if (existing) {
+      if (existing.item_id === itemId) {
+        // Already associated with this item in this business
+        return existing as ItemBarcode;
+      }
+      throw new Error('This barcode is already associated with another item in your business');
+    }
+
+    // Check if item already has a barcode in this business
+    const { data: itemExisting } = await supabaseAdmin
+      .from('item_barcodes')
+      .select('id')
+      .eq('item_id', itemId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (itemExisting) {
+      // Update existing barcode for this item in this business
+      const { data: updated, error } = await supabaseAdmin
+        .from('item_barcodes')
+        .update({ barcode, created_by: userId || null })
+        .eq('item_id', itemId)
+        .eq('business_id', businessId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Failed to update barcode:', error);
+        throw new Error('Failed to update barcode');
+      }
+      return updated as ItemBarcode;
+    }
+
+    // Create new barcode association for this business
+    const { data, error } = await supabaseAdmin
+      .from('item_barcodes')
+      .insert({
+        item_id: itemId,
+        barcode,
+        business_id: businessId,
+        created_by: userId || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to associate barcode:', error);
+      throw new Error('Failed to associate barcode');
+    }
+
+    return data as ItemBarcode;
+  }
+
+  // ==================== PO COUNTING (Two-Step Receiving) ====================
+
+  /**
+   * Count purchase order items (Step 1 of receiving)
+   * Employee counts items, enters quantities, scans barcodes
+   * Status changes from 'pending' to 'counted'
+   */
+  async countPurchaseOrder(
+    orderId: number,
+    businessId: number,
+    data: {
+      items: {
+        item_id: number;
+        counted_quantity: number;
+        variance_reason?: 'missing' | 'canceled' | 'rejected'; // Required if counted < ordered
+        variance_note?: string; // Required if counted > ordered
+        barcode_scanned: boolean; // At least one barcode must be scanned per item
+      }[];
+    },
+    userId?: number
+  ): Promise<PurchaseOrder> {
+    const order = await this.getPurchaseOrder(orderId, businessId);
+    if (!order) throw new Error('Purchase order not found');
+    
+    // Only pending orders can be counted
+    if (order.status !== 'pending') {
+      throw new Error('Only pending orders can be counted');
+    }
+
+    // Validate each item
+    for (const counted of data.items) {
+      const orderItem = order.items?.find(i => i.item_id === counted.item_id);
+      if (!orderItem) {
+        throw new Error(`Item ${counted.item_id} not found in this purchase order`);
+      }
+
+      // Validate barcode was scanned
+      if (!counted.barcode_scanned) {
+        const itemName = orderItem.item?.name || `Item ${counted.item_id}`;
+        throw new Error(`${itemName}: At least one barcode must be scanned for this item`);
+      }
+
+      // Validate counted_quantity
+      if (counted.counted_quantity === undefined || counted.counted_quantity < 0) {
+        const itemName = orderItem.item?.name || `Item ${counted.item_id}`;
+        throw new Error(`${itemName}: Counted quantity is required`);
+      }
+
+      // Validate variance_reason if under-counted
+      if (counted.counted_quantity < orderItem.quantity) {
+        if (!counted.variance_reason) {
+          const itemName = orderItem.item?.name || `Item ${counted.item_id}`;
+          throw new Error(`${itemName}: Reason required for shortage (counted ${counted.counted_quantity} of ${orderItem.quantity}). Select: missing, canceled, or rejected`);
+        }
+        const validReasons = ['missing', 'canceled', 'rejected'];
+        if (!validReasons.includes(counted.variance_reason)) {
+          throw new Error(`Invalid variance reason. Must be: missing, canceled, or rejected`);
+        }
+      }
+
+      // Validate variance_note if over-counted
+      if (counted.counted_quantity > orderItem.quantity) {
+        if (!counted.variance_note || counted.variance_note.trim() === '') {
+          const itemName = orderItem.item?.name || `Item ${counted.item_id}`;
+          throw new Error(`${itemName}: Justification note required when counting more than ordered (counted ${counted.counted_quantity} of ${orderItem.quantity})`);
+        }
+      }
+    }
+
+    // Update each item with counting data
+    const countedAt = new Date().toISOString();
+    for (const counted of data.items) {
+      const orderItem = order.items?.find(i => i.item_id === counted.item_id);
+      if (!orderItem) continue;
+
+      await supabaseAdmin
+        .from('purchase_order_items')
+        .update({
+          counted_quantity: counted.counted_quantity,
+          counted_at: countedAt,
+          barcode_scanned: counted.barcode_scanned,
+          variance_reason: counted.variance_reason || null,
+          variance_note: counted.variance_note || null,
+          updated_at: countedAt,
+        })
+        .eq('id', orderItem.id);
+    }
+
+    // Update PO status to 'counted'
+    await supabaseAdmin
+      .from('purchase_orders')
+      .update({
+        status: 'counted',
+        updated_at: countedAt,
+      })
+      .eq('id', orderId);
+
+    // Log activity
+    await this.logPOActivity({
+      purchaseOrderId: orderId,
+      businessId,
+      userId,
+      action: 'counted',
+      oldStatus: 'pending',
+      newStatus: 'counted',
+      changes: {
+        items_counted: data.items.map(i => ({
+          item_id: i.item_id,
+          counted_quantity: i.counted_quantity,
+          barcode_scanned: i.barcode_scanned,
+          variance_reason: i.variance_reason,
+          variance_note: i.variance_note,
+        })),
+      },
+    });
+
+    return this.getPurchaseOrder(orderId, businessId) as Promise<PurchaseOrder>;
+  }
+
   /**
    * Calculate Weighted Average Cost (WAC)
    * Formula: New WAC = (Existing Stock Value + New Stock Value) / Total Quantity
@@ -1001,85 +1507,212 @@ export class InventoryStockService {
     if (totalQuantity <= 0) return newCostPerUnit; // If no stock, use new cost
     
     const wac = (existingValue + newValue) / totalQuantity;
-    return Math.round(wac * 10000) / 10000; // Round to 4 decimal places
+    // Round to 8 decimal places to preserve precision for very small per-gram costs
+    // e.g., 50 KD/kg = 0.00005 KD/gram needs at least 5 decimal places
+    return Math.round(wac * 100000000) / 100000000;
   }
 
   /**
-   * Receive purchase order (add items to stock)
-   * Uses Weighted Average Cost (WAC) for cost calculation
+   * Receive purchase order (Step 2 of receiving - add items to stock)
+   * Employee enters total costs from invoice and attaches invoice image
+   * Uses Weighted Average Cost (WAC) for cost calculation with storage→serving unit conversion
+   * 
+   * For 'counted' orders: Uses counted_quantity, only requires pricing and invoice
+   * For 'pending' orders (legacy): Requires quantities, variance info, pricing, and invoice
    */
   async receivePurchaseOrder(
     orderId: number,
     businessId: number,
-    receivedItems: { item_id: number; received_quantity: number }[],
+    data: {
+      invoice_image_url: string;  // Required: URL to uploaded invoice image
+      items: {
+        item_id: number;
+        received_quantity?: number;  // Optional for 'counted' orders (uses counted_quantity)
+        total_cost: number;          // Total cost from invoice (e.g., 625 for 50kg)
+        variance_reason?: 'missing' | 'canceled' | 'rejected'; // Required if received < ordered (for pending orders)
+        variance_note?: string;      // Required if received > ordered (for pending orders)
+      }[];
+    },
     userId?: number
   ): Promise<PurchaseOrder> {
     const order = await this.getPurchaseOrder(orderId, businessId);
     if (!order) throw new Error('Purchase order not found');
-    if (order.status === 'received' || order.status === 'cancelled') {
-      throw new Error('Cannot receive this order');
+    
+    // Only counted or pending orders can be received
+    if (!['counted', 'pending'].includes(order.status)) {
+      throw new Error('Cannot receive this order - must be pending or counted');
     }
 
-    // Update received quantities and add to stock
-    for (const received of receivedItems) {
+    const isCounted = order.status === 'counted';
+
+    // Validate invoice image is provided
+    if (!data.invoice_image_url || data.invoice_image_url.trim() === '') {
+      throw new Error('Invoice image is required');
+    }
+
+    // Validate each item
+    for (const received of data.items) {
+      const orderItem = order.items?.find(i => i.item_id === received.item_id);
+      if (!orderItem) {
+        throw new Error(`Item ${received.item_id} not found in this purchase order`);
+      }
+
+      // Validate total_cost is provided
+      if (received.total_cost === undefined || received.total_cost === null || received.total_cost < 0) {
+        const itemName = orderItem.item?.name || `Item ${received.item_id}`;
+        throw new Error(`${itemName}: Total cost from invoice is required`);
+      }
+
+      // For counted orders, use counted_quantity; for pending orders, use received_quantity
+      const finalQuantity = isCounted 
+        ? (orderItem.counted_quantity ?? received.received_quantity ?? 0)
+        : (received.received_quantity ?? 0);
+
+      // Validate quantity for pending orders
+      if (!isCounted) {
+        if (received.received_quantity === undefined || received.received_quantity < 0) {
+          const itemName = orderItem.item?.name || `Item ${received.item_id}`;
+          throw new Error(`${itemName}: Received quantity is required`);
+        }
+
+        // Validate variance_reason if under-received
+        if (received.received_quantity < orderItem.quantity) {
+          if (!received.variance_reason) {
+            const itemName = orderItem.item?.name || `Item ${received.item_id}`;
+            throw new Error(`${itemName}: Reason required for shortage (received ${received.received_quantity} of ${orderItem.quantity}). Select: missing, canceled, or rejected`);
+          }
+          const validReasons = ['missing', 'canceled', 'rejected'];
+          if (!validReasons.includes(received.variance_reason)) {
+            throw new Error(`Invalid variance reason. Must be: missing, canceled, or rejected`);
+          }
+        }
+
+        // Validate variance_note if over-received
+        if (received.received_quantity > orderItem.quantity) {
+          if (!received.variance_note || received.variance_note.trim() === '') {
+            const itemName = orderItem.item?.name || `Item ${received.item_id}`;
+            throw new Error(`${itemName}: Justification note required when receiving more than ordered (received ${received.received_quantity} of ${orderItem.quantity})`);
+          }
+        }
+      }
+    }
+
+    // Get business tax settings for calculating totals
+    const { data: business } = await supabaseAdmin
+      .from('businesses')
+      .select('vat_enabled, tax_rate')
+      .eq('id', businessId)
+      .single();
+    
+    const taxRate = business?.vat_enabled ? (parseFloat(business.tax_rate) || 0) / 100 : 0;
+
+    let poSubtotal = 0;
+
+    // Process each received item
+    for (const received of data.items) {
       const orderItem = order.items?.find(i => i.item_id === received.item_id);
       if (!orderItem) continue;
 
-      // Update order item received quantity
+      // For counted orders, use counted_quantity; for pending orders, use received_quantity
+      const finalQuantity = isCounted 
+        ? (orderItem.counted_quantity ?? received.received_quantity ?? 0)
+        : (received.received_quantity ?? 0);
+
+      // Calculate storage unit cost from total_cost / finalQuantity
+      // e.g., 625 SAR / 50 Kg = 12.50 SAR/Kg
+      const storageUnitCost = finalQuantity > 0 
+        ? received.total_cost / finalQuantity 
+        : 0;
+
+      // Update order item with costs and final received quantity
+      const updateData: any = {
+        received_quantity: finalQuantity,
+        total_cost: received.total_cost,
+        unit_cost: storageUnitCost,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Only update variance info if not already set (from counting step) or if legacy pending
+      if (!isCounted) {
+        updateData.variance_reason = received.variance_reason || null;
+        updateData.variance_note = received.variance_note || null;
+      }
+
       await supabaseAdmin
         .from('purchase_order_items')
-        .update({
-          received_quantity: received.received_quantity,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq('id', orderItem.id);
 
-      // Calculate Weighted Average Cost (WAC) and update item
-      if (orderItem.unit_cost && orderItem.unit_cost > 0) {
-        // Get current item data for WAC calculation
-        const { data: currentItem } = await supabaseAdmin
-          .from('items')
-          .select('cost_per_unit, total_stock_quantity, total_stock_value')
-          .eq('id', received.item_id)
-          .eq('business_id', businessId)
-          .single();
+      poSubtotal += received.total_cost;
 
-        const existingQuantity = currentItem?.total_stock_quantity || 0;
-        const existingCostPerUnit = currentItem?.cost_per_unit || 0;
-        const newQuantity = received.received_quantity;
-        const newCostPerUnit = orderItem.unit_cost;
+      // Get item info for unit conversion
+      const { data: itemInfo } = await supabaseAdmin
+        .from('items')
+        .select('id, name, unit, storage_unit, cost_per_unit, total_stock_quantity, total_stock_value')
+        .eq('id', received.item_id)
+        .single();
 
-        // Calculate new Weighted Average Cost
+      if (itemInfo && finalQuantity > 0 && received.total_cost > 0) {
+        // Convert storage unit cost to serving unit cost for WAC
+        // e.g., 12.50 SAR/Kg → 0.0125 SAR/gram
+        const storageUnit = (itemInfo.storage_unit || 'Kg') as StorageUnit;
+        const servingUnit = (itemInfo.unit || 'grams') as ServingUnit;
+        
+        let servingUnitCost = storageUnitCost;
+        try {
+          // Convert 1 storage unit to serving units to get the factor
+          const conversionFactor = convertUnits(1, storageUnit, servingUnit);
+          servingUnitCost = storageUnitCost / conversionFactor;
+        } catch (convErr) {
+          // If conversion fails (e.g., same unit), use storage cost as-is
+          console.log(`Unit conversion not needed for ${itemInfo.name}: ${storageUnit} to ${servingUnit}`);
+        }
+
+        // Get existing inventory for WAC calculation (in serving units)
+        const existingQuantity = itemInfo.total_stock_quantity || 0;
+        const existingCostPerUnit = itemInfo.cost_per_unit || 0;
+        
+        // Convert received quantity to serving units for WAC
+        let receivedInServingUnits = finalQuantity;
+        try {
+          receivedInServingUnits = convertUnits(finalQuantity, storageUnit, servingUnit);
+        } catch {
+          // If conversion fails, use as-is
+        }
+
+        // Calculate new Weighted Average Cost (in serving units)
         const newWAC = this.calculateWeightedAverageCost(
           existingQuantity,
           existingCostPerUnit,
-          newQuantity,
-          newCostPerUnit
+          receivedInServingUnits,
+          servingUnitCost
         );
 
         // Calculate new totals for inventory value tracking
-        const newTotalQuantity = existingQuantity + newQuantity;
+        const newTotalQuantity = existingQuantity + receivedInServingUnits;
         const newTotalValue = newTotalQuantity * newWAC;
 
-        // Update item with new WAC and inventory values
+        // Update item with new WAC (serving unit cost) and inventory values
         await supabaseAdmin
           .from('items')
           .update({
             cost_per_unit: newWAC,
             total_stock_quantity: newTotalQuantity,
             total_stock_value: newTotalValue,
-            last_purchase_cost: newCostPerUnit,
+            last_purchase_cost: servingUnitCost,
             last_purchase_date: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
-          .eq('id', received.item_id)
-          .eq('business_id', businessId);
+          .eq('id', received.item_id);
 
-        console.log(`WAC Update for item ${received.item_id}:`, {
+        console.log(`WAC Update for item ${received.item_id} (${itemInfo.name}):`, {
+          storageUnit,
+          servingUnit,
+          storageUnitCost,
+          servingUnitCost,
           existingQty: existingQuantity,
           existingCost: existingCostPerUnit,
-          newQty: newQuantity,
-          newCost: newCostPerUnit,
+          receivedInServingUnits,
           calculatedWAC: newWAC,
         });
 
@@ -1088,25 +1721,42 @@ export class InventoryStockService {
           await inventoryService.cascadeItemCostUpdate(received.item_id, businessId);
         } catch (cascadeErr) {
           console.error(`Failed to cascade cost update for item ${received.item_id}:`, cascadeErr);
-          // Don't fail the whole operation if cascade fails
         }
       }
 
       // Add to stock (inventory_stock table for branch-level tracking)
+      // Stock is tracked in storage units
       await this.updateStock(
         businessId,
         received.item_id,
-        received.received_quantity,
+        finalQuantity,
         'purchase_receive',
         {
           branchId: order.branch_id || undefined,
           referenceType: 'purchase_order',
           referenceId: orderId,
-          unitCost: orderItem.unit_cost,
+          unitCost: storageUnitCost,
           userId,
         }
       );
     }
+
+    // Update PO totals and invoice image
+    const poTaxAmount = poSubtotal * taxRate;
+    const poTotalAmount = poSubtotal + poTaxAmount;
+
+    await supabaseAdmin
+      .from('purchase_orders')
+      .update({
+        invoice_image_url: data.invoice_image_url,
+        subtotal: poSubtotal,
+        tax_amount: poTaxAmount,
+        total_amount: poTotalAmount,
+        received_date: new Date().toISOString().split('T')[0],
+        received_by: userId || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', orderId);
 
     // Log activity for received items
     await this.logPOActivity({
@@ -1115,26 +1765,21 @@ export class InventoryStockService {
       userId,
       action: 'received',
       changes: {
-        items_received: receivedItems.map(i => ({
+        invoice_image_url: data.invoice_image_url,
+        subtotal: poSubtotal,
+        total_amount: poTotalAmount,
+        items_received: data.items.map(i => ({
           item_id: i.item_id,
-          quantity: i.received_quantity,
+          received_quantity: i.received_quantity,
+          total_cost: i.total_cost,
+          variance_reason: i.variance_reason,
+          variance_note: i.variance_note,
         })),
       },
     });
 
-    // Check if all items received
-    const updatedOrder = await this.getPurchaseOrder(orderId, businessId);
-    const allReceived = updatedOrder?.items?.every(i => i.received_quantity >= i.quantity);
-    const partialReceived = updatedOrder?.items?.some(i => i.received_quantity > 0);
-
-    let newStatus = order.status;
-    if (allReceived) {
-      newStatus = 'received';
-    } else if (partialReceived) {
-      newStatus = 'partial';
-    }
-
-    return this.updatePurchaseOrderStatus(orderId, businessId, newStatus, userId);
+    // Update status to received
+    return this.updatePurchaseOrderStatus(orderId, businessId, 'received', userId);
   }
 
   // ==================== TRANSFERS ====================
@@ -1156,13 +1801,17 @@ export class InventoryStockService {
   }
 
   /**
-   * Get transfers
+   * Get transfers - supports cross-business for owners
+   * For PM: filters by current business only
+   * For Owner: can see transfers from/to any of their businesses
    */
   async getTransfers(businessId: number, filters?: {
     status?: string;
     fromBranchId?: number;
     toBranchId?: number;
+    allOwnerBusinesses?: number[]; // For owners: list of all their business IDs
   }): Promise<InventoryTransfer[]> {
+    // Use simple query that works with existing schema (falls back if new columns don't exist)
     let query = supabaseAdmin
       .from('inventory_transfers')
       .select(`
@@ -1194,18 +1843,37 @@ export class InventoryStockService {
 
   /**
    * Get single transfer with items
+   * Supports cross-business transfers (owner can access if they own either business)
    */
-  async getTransfer(transferId: number, businessId: number): Promise<InventoryTransfer | null> {
-    const { data: transfer, error } = await supabaseAdmin
+  async getTransfer(transferId: number, businessId: number, allOwnerBusinesses?: number[]): Promise<InventoryTransfer | null> {
+    // Build query to find transfer
+    let query = supabaseAdmin
       .from('inventory_transfers')
       .select(`
         *,
-        from_branch:branches!inventory_transfers_from_branch_id_fkey (id, name, name_ar),
-        to_branch:branches!inventory_transfers_to_branch_id_fkey (id, name, name_ar)
+        from_branch:branches!inventory_transfers_from_branch_id_fkey (id, name, name_ar, business_id),
+        to_branch:branches!inventory_transfers_to_branch_id_fkey (id, name, name_ar, business_id)
       `)
-      .eq('id', transferId)
-      .eq('business_id', businessId)
-      .single();
+      .eq('id', transferId);
+
+    // If owner has multiple businesses, search across all of them
+    if (allOwnerBusinesses && allOwnerBusinesses.length > 0) {
+      // Owner can access transfers where any of their businesses is involved
+      query = query.or(
+        `business_id.in.(${allOwnerBusinesses.join(',')}),` +
+        `from_business_id.in.(${allOwnerBusinesses.join(',')}),` +
+        `to_business_id.in.(${allOwnerBusinesses.join(',')})`
+      );
+    } else {
+      // For non-owners, check if their business is the source, destination, or creator
+      query = query.or(
+        `business_id.eq.${businessId},` +
+        `from_business_id.eq.${businessId},` +
+        `to_business_id.eq.${businessId}`
+      );
+    }
+
+    const { data: transfer, error } = await query.single();
 
     if (error || !transfer) return null;
 
@@ -1229,32 +1897,46 @@ export class InventoryStockService {
   }
 
   /**
-   * Create transfer
+   * Create transfer - supports cross-business for owners
+   * @param businessId - The initiating business ID
+   * @param data - Transfer data including source/destination
+   * @param userRole - 'owner' or 'pm' - determines if cross-business is allowed
+   * @param ownerBusinesses - For owners: list of all their business IDs for validation
    */
   async createTransfer(businessId: number, data: {
+    from_business_id: number;
     from_branch_id: number;
+    to_business_id: number;
     to_branch_id: number;
-    expected_date?: string;
     notes?: string;
     items: { item_id: number; quantity: number }[];
     created_by?: number;
-  }): Promise<InventoryTransfer> {
+  }, userRole?: string, ownerBusinesses?: number[]): Promise<InventoryTransfer> {
+    // Validate source and destination are different
     if (data.from_branch_id === data.to_branch_id) {
       throw new Error('Source and destination branches must be different');
     }
 
+    // For PM role, ensure both source and destination are within the same business
+    if (userRole === 'pm' || userRole === 'manager') {
+      // PM can only transfer within same business - branches are already validated via getTransferDestinations
+    }
+
     const transferNumber = await this.generateTransferNumber(businessId);
 
+    // Create the transfer with pending status
+    // Stock is deducted from source immediately when transfer is created
     const { data: transfer, error } = await supabaseAdmin
       .from('inventory_transfers')
       .insert({
         business_id: businessId,
+        from_business_id: data.from_business_id,
+        to_business_id: data.to_business_id,
         transfer_number: transferNumber,
         from_branch_id: data.from_branch_id,
         to_branch_id: data.to_branch_id,
-        status: 'draft',
+        status: 'pending',
         transfer_date: new Date().toISOString().split('T')[0],
-        expected_date: data.expected_date || null,
         notes: data.notes || null,
         created_by: data.created_by || null,
       })
@@ -1284,65 +1966,41 @@ export class InventoryStockService {
       throw new Error('Failed to create transfer items');
     }
 
-    return this.getTransfer(transfer.id, businessId) as Promise<InventoryTransfer>;
+    // NOTE: Stock is NOT deducted when transfer is created
+    // Stock will be deducted from source and added to destination when transfer is RECEIVED
+    // This ensures items remain in source inventory until receiving branch confirms receipt
+
+    return this.getTransfer(transfer.id, businessId, ownerBusinesses) as Promise<InventoryTransfer>;
   }
 
   /**
-   * Start transfer (deduct from source)
+   * Receive transfer - marks transfer as received, deducts from source, adds to destination
+   * Stock movement happens only when receiving (not when creating transfer)
    */
-  async startTransfer(transferId: number, businessId: number, userId?: number): Promise<InventoryTransfer> {
-    const transfer = await this.getTransfer(transferId, businessId);
-    if (!transfer) throw new Error('Transfer not found');
-    if (transfer.status !== 'draft' && transfer.status !== 'pending') {
-      throw new Error('Cannot start this transfer');
-    }
-
-    // Deduct from source branch
-    for (const item of transfer.items || []) {
-      await this.updateStock(
-        businessId,
-        item.item_id,
-        -item.quantity,
-        'transfer_out',
-        {
-          branchId: transfer.from_branch_id || undefined,
-          referenceType: 'transfer',
-          referenceId: transferId,
-          userId,
-        }
-      );
-    }
-
-    // Update status
-    const { error } = await supabaseAdmin
-      .from('inventory_transfers')
-      .update({ status: 'in_transit', updated_at: new Date().toISOString() })
-      .eq('id', transferId);
-
-    if (error) {
-      console.error('Failed to start transfer:', error);
-      throw new Error('Failed to start transfer');
-    }
-
-    return this.getTransfer(transferId, businessId) as Promise<InventoryTransfer>;
-  }
-
-  /**
-   * Complete transfer (add to destination)
-   */
-  async completeTransfer(
+  async receiveTransfer(
     transferId: number,
     businessId: number,
     receivedItems: { item_id: number; received_quantity: number }[],
-    userId?: number
+    userId?: number,
+    allOwnerBusinesses?: number[]
   ): Promise<InventoryTransfer> {
-    const transfer = await this.getTransfer(transferId, businessId);
+    const transfer = await this.getTransfer(transferId, businessId, allOwnerBusinesses);
     if (!transfer) throw new Error('Transfer not found');
-    if (transfer.status !== 'in_transit') {
-      throw new Error('Transfer is not in transit');
+    
+    if (transfer.status !== 'pending') {
+      throw new Error('Transfer is not pending');
     }
 
-    // Add to destination branch
+    // Determine the source and destination business IDs
+    const sourceBusinessId = transfer.from_business_id || 
+      (transfer.from_branch as any)?.business_id || 
+      transfer.business_id;
+    
+    const destinationBusinessId = transfer.to_business_id || 
+      (transfer.to_branch as any)?.business_id || 
+      businessId;
+
+    // Process each received item
     for (const received of receivedItems) {
       const transferItem = transfer.items?.find(i => i.item_id === received.item_id);
       if (!transferItem) continue;
@@ -1356,9 +2014,23 @@ export class InventoryStockService {
         })
         .eq('id', transferItem.id);
 
-      // Add to destination stock
+      // DEDUCT from source branch/business using the original transfer quantity
       await this.updateStock(
-        businessId,
+        sourceBusinessId,
+        transferItem.item_id,
+        -transferItem.quantity,
+        'transfer_out',
+        {
+          branchId: transfer.from_branch_id || undefined,
+          referenceType: 'transfer',
+          referenceId: transferId,
+          userId,
+        }
+      );
+
+      // ADD to destination branch/business using the received quantity
+      await this.updateStock(
+        destinationBusinessId,
         received.item_id,
         received.received_quantity,
         'transfer_in',
@@ -1371,11 +2043,11 @@ export class InventoryStockService {
       );
     }
 
-    // Update status
+    // Update status to received
     const { error } = await supabaseAdmin
       .from('inventory_transfers')
       .update({
-        status: 'completed',
+        status: 'received',
         completed_date: new Date().toISOString().split('T')[0],
         completed_by: userId || null,
         updated_at: new Date().toISOString(),
@@ -1383,11 +2055,46 @@ export class InventoryStockService {
       .eq('id', transferId);
 
     if (error) {
-      console.error('Failed to complete transfer:', error);
-      throw new Error('Failed to complete transfer');
+      console.error('Failed to receive transfer:', error);
+      throw new Error('Failed to receive transfer');
     }
 
-    return this.getTransfer(transferId, businessId) as Promise<InventoryTransfer>;
+    return this.getTransfer(transferId, businessId, allOwnerBusinesses) as Promise<InventoryTransfer>;
+  }
+
+  /**
+   * Cancel transfer - simply marks transfer as cancelled
+   * No stock movement needed since stock is only moved when transfer is received
+   */
+  async cancelTransfer(
+    transferId: number,
+    businessId: number,
+    userId?: number,
+    allOwnerBusinesses?: number[]
+  ): Promise<InventoryTransfer> {
+    const transfer = await this.getTransfer(transferId, businessId, allOwnerBusinesses);
+    if (!transfer) throw new Error('Transfer not found');
+    
+    if (transfer.status !== 'pending') {
+      throw new Error('Can only cancel pending transfers');
+    }
+
+    // Update status to cancelled - no stock movement needed
+    // Stock is only deducted from source and added to destination when transfer is received
+    const { error } = await supabaseAdmin
+      .from('inventory_transfers')
+      .update({
+        status: 'cancelled',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', transferId);
+
+    if (error) {
+      console.error('Failed to cancel transfer:', error);
+      throw new Error('Failed to cancel transfer');
+    }
+
+    return this.getTransfer(transferId, businessId, allOwnerBusinesses) as Promise<InventoryTransfer>;
   }
 
   // ==================== INVENTORY COUNTS ====================
@@ -1928,6 +2635,393 @@ export class InventoryStockService {
     if (error) {
       console.error('Failed to delete PO template:', error);
       throw new Error('Failed to delete PO template');
+    }
+  }
+
+  // ==================== ORDER INVENTORY WORKFLOW ====================
+
+  /**
+   * Calculate all ingredients required for an order's items
+   * Gets ingredients from product_ingredients table, handles variants and quantities
+   */
+  async calculateOrderIngredients(
+    businessId: number,
+    orderItems: Array<{
+      product_id?: number;
+      variant_id?: number;
+      quantity: number;
+      product_name?: string;
+    }>
+  ): Promise<IngredientRequirement[]> {
+    const ingredients: IngredientRequirement[] = [];
+
+    for (const orderItem of orderItems) {
+      if (!orderItem.product_id) continue;
+
+      // Get ingredients for this product (variant-specific if applicable, else product-level)
+      let query = supabaseAdmin
+        .from('product_ingredients')
+        .select(`
+          item_id,
+          quantity,
+          variant_id,
+          items:item_id (
+            id,
+            name,
+            name_ar,
+            unit,
+            storage_unit
+          )
+        `)
+        .eq('product_id', orderItem.product_id);
+
+      if (orderItem.variant_id) {
+        // Get variant-specific ingredients
+        query = query.eq('variant_id', orderItem.variant_id);
+      } else {
+        // Get product-level ingredients (no variant)
+        query = query.is('variant_id', null);
+      }
+
+      const { data: productIngredients, error } = await query;
+
+      if (error) {
+        console.error(`Failed to get ingredients for product ${orderItem.product_id}:`, error);
+        continue;
+      }
+
+      for (const ing of productIngredients || []) {
+        const item = ing.items as any;
+        if (!item) continue;
+
+        const servingUnit = item.unit || 'grams';
+        const storageUnit = item.storage_unit || servingUnit;
+        
+        // Calculate total quantity needed (ingredient qty per product × order qty)
+        const totalQuantityInServing = ing.quantity * orderItem.quantity;
+        
+        // Convert to storage units for inventory tracking
+        let quantityInStorage = totalQuantityInServing;
+        try {
+          quantityInStorage = convertUnits(totalQuantityInServing, servingUnit as StorageUnit, storageUnit as StorageUnit);
+        } catch {
+          // If conversion fails, use as-is (same units)
+          quantityInStorage = totalQuantityInServing;
+        }
+
+        // Check if this ingredient already exists (aggregate)
+        const existing = ingredients.find(i => i.item_id === ing.item_id);
+        if (existing) {
+          existing.quantity += totalQuantityInServing;
+          existing.quantity_in_storage += quantityInStorage;
+        } else {
+          ingredients.push({
+            item_id: ing.item_id,
+            item_name: item.name,
+            quantity: totalQuantityInServing,
+            serving_unit: servingUnit,
+            storage_unit: storageUnit,
+            quantity_in_storage: quantityInStorage,
+            product_id: orderItem.product_id,
+            product_name: orderItem.product_name,
+            variant_id: orderItem.variant_id,
+          });
+        }
+      }
+    }
+
+    return ingredients;
+  }
+
+  /**
+   * Reserve ingredients for an order
+   * Increases reserved_quantity for each ingredient needed
+   */
+  async reserveForOrder(
+    businessId: number,
+    branchId: number | undefined,
+    orderItems: Array<{
+      product_id?: number;
+      variant_id?: number;
+      quantity: number;
+      product_name?: string;
+    }>,
+    orderId: number,
+    userId?: number
+  ): Promise<{ success: boolean; reserved: IngredientRequirement[] }> {
+    const ingredients = await this.calculateOrderIngredients(businessId, orderItems);
+
+    for (const ing of ingredients) {
+      // Get or create stock record
+      const stock = await this.getOrCreateStock(businessId, ing.item_id, branchId);
+      
+      // Update reserved_quantity
+      const newReservedQty = (stock.reserved_quantity || 0) + ing.quantity_in_storage;
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          reserved_quantity: newReservedQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to reserve ingredient ${ing.item_id}:`, error);
+        throw new Error(`Failed to reserve ingredient: ${ing.item_name}`);
+      }
+
+      // Log the reservation movement (optional - for audit)
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: ing.item_id,
+          movement_type: 'sale_reserve',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: ing.quantity_in_storage,
+          quantity_before: stock.reserved_quantity || 0,
+          quantity_after: newReservedQty,
+          notes: `Reserved for order #${orderId}`,
+          created_by: userId || null,
+        });
+    }
+
+    return { success: true, reserved: ingredients };
+  }
+
+  /**
+   * Release reserved ingredients (for cancelled orders or removed items)
+   * Decreases reserved_quantity without touching actual quantity
+   */
+  async releaseReservation(
+    businessId: number,
+    branchId: number | undefined,
+    ingredients: Array<{ item_id: number; quantity_in_storage: number; item_name?: string }>,
+    orderId: number,
+    userId?: number,
+    reason?: string
+  ): Promise<void> {
+    for (const ing of ingredients) {
+      const stock = await this.getOrCreateStock(businessId, ing.item_id, branchId);
+      
+      // Decrease reserved_quantity (don't go below 0)
+      const newReservedQty = Math.max(0, (stock.reserved_quantity || 0) - ing.quantity_in_storage);
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          reserved_quantity: newReservedQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to release reservation for item ${ing.item_id}:`, error);
+        throw new Error(`Failed to release reservation: ${ing.item_name || ing.item_id}`);
+      }
+
+      // Log the release movement
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: ing.item_id,
+          movement_type: 'sale_cancel_return',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: -ing.quantity_in_storage,
+          quantity_before: stock.reserved_quantity || 0,
+          quantity_after: newReservedQty,
+          notes: reason || `Released reservation for order #${orderId}`,
+          created_by: userId || null,
+        });
+    }
+  }
+
+  /**
+   * Consume stock when order is completed
+   * Decreases both quantity and reserved_quantity, logs sale_consume movement
+   */
+  async consumeForOrder(
+    businessId: number,
+    branchId: number | undefined,
+    orderItems: Array<{
+      product_id?: number;
+      variant_id?: number;
+      quantity: number;
+      product_name?: string;
+    }>,
+    orderId: number,
+    userId?: number
+  ): Promise<{ success: boolean; consumed: IngredientRequirement[] }> {
+    const ingredients = await this.calculateOrderIngredients(businessId, orderItems);
+
+    for (const ing of ingredients) {
+      const stock = await this.getOrCreateStock(businessId, ing.item_id, branchId);
+      
+      const quantityBefore = stock.quantity;
+      const reservedBefore = stock.reserved_quantity || 0;
+      
+      // Deduct from both quantity and reserved_quantity
+      const newQuantity = Math.max(0, quantityBefore - ing.quantity_in_storage);
+      const newReservedQty = Math.max(0, reservedBefore - ing.quantity_in_storage);
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          quantity: newQuantity,
+          reserved_quantity: newReservedQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to consume ingredient ${ing.item_id}:`, error);
+        throw new Error(`Failed to consume ingredient: ${ing.item_name}`);
+      }
+
+      // Log the consumption movement
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: ing.item_id,
+          movement_type: 'sale_consume',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: -ing.quantity_in_storage,
+          quantity_before: quantityBefore,
+          quantity_after: newQuantity,
+          notes: `Consumed for completed order #${orderId}`,
+          created_by: userId || null,
+        });
+    }
+
+    return { success: true, consumed: ingredients };
+  }
+
+  /**
+   * Process waste for cancelled items
+   * Deducts from quantity and reserved_quantity, logs as waste
+   */
+  async processWaste(
+    businessId: number,
+    branchId: number | undefined,
+    items: Array<{ item_id: number; quantity_in_storage: number; item_name?: string }>,
+    orderId: number,
+    userId?: number,
+    reason?: string
+  ): Promise<void> {
+    for (const item of items) {
+      const stock = await this.getOrCreateStock(businessId, item.item_id, branchId);
+      
+      const quantityBefore = stock.quantity;
+      const reservedBefore = stock.reserved_quantity || 0;
+      
+      // Deduct from both quantity and reserved_quantity
+      const newQuantity = Math.max(0, quantityBefore - item.quantity_in_storage);
+      const newReservedQty = Math.max(0, reservedBefore - item.quantity_in_storage);
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          quantity: newQuantity,
+          reserved_quantity: newReservedQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to process waste for item ${item.item_id}:`, error);
+        throw new Error(`Failed to process waste: ${item.item_name || item.item_id}`);
+      }
+
+      // Log the waste movement
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: item.item_id,
+          movement_type: 'sale_cancel_waste',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: -item.quantity_in_storage,
+          quantity_before: quantityBefore,
+          quantity_after: newQuantity,
+          notes: reason || `Waste from cancelled order #${orderId}`,
+          created_by: userId || null,
+        });
+    }
+  }
+
+  /**
+   * Get available quantity (quantity - reserved - held)
+   */
+  async getAvailableQuantity(
+    businessId: number,
+    itemId: number,
+    branchId?: number
+  ): Promise<number> {
+    const stock = await this.getOrCreateStock(businessId, itemId, branchId);
+    const available = stock.quantity - (stock.reserved_quantity || 0) - (stock.held_quantity || 0);
+    return Math.max(0, available);
+  }
+
+  /**
+   * Deduct from actual stock quantity ONLY (for waste when reservation already released)
+   * Used when kitchen marks cancelled order items as waste after reservation was already released
+   */
+  async deductWasteOnly(
+    businessId: number,
+    branchId: number | undefined,
+    items: Array<{ item_id: number; quantity_in_storage: number; item_name?: string }>,
+    orderId: number,
+    userId?: number,
+    reason?: string
+  ): Promise<void> {
+    for (const item of items) {
+      const stock = await this.getOrCreateStock(businessId, item.item_id, branchId);
+      
+      const quantityBefore = stock.quantity;
+      
+      // Only deduct from quantity (reservation was already released separately)
+      const newQuantity = Math.max(0, quantityBefore - item.quantity_in_storage);
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          quantity: newQuantity,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to deduct waste for item ${item.item_id}:`, error);
+        throw new Error(`Failed to deduct waste: ${item.item_name || item.item_id}`);
+      }
+
+      // Log the waste movement
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: item.item_id,
+          movement_type: 'sale_cancel_waste',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: -item.quantity_in_storage,
+          quantity_before: quantityBefore,
+          quantity_after: newQuantity,
+          notes: reason || `Waste from cancelled order #${orderId}`,
+          created_by: userId || null,
+        });
     }
   }
 }

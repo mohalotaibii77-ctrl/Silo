@@ -17,7 +17,21 @@ import {
   Command,
   TrendingUp,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  FileText,
+  Clock,
+  CheckCircle,
+  XCircle,
+  ChevronDown,
+  User,
+  Store,
+  Mail,
+  Phone,
+  MapPin,
+  ImageIcon,
+  MessageSquare,
+  StickyNote,
+  Loader2
 } from "lucide-react";
 import { useBusinessData } from "@/hooks/use-business-data";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -32,7 +46,34 @@ import { useState as useStateNotif, useEffect as useEffectNotif } from "react";
 import api, { ownerApi } from "@/lib/api";
 import type { Owner } from "@/types";
 
-type ActiveTab = 'dashboard' | 'businesses' | 'users' | 'settings';
+type ActiveTab = 'dashboard' | 'businesses' | 'users' | 'requests' | 'settings';
+
+interface ChangeRequest {
+  id: number;
+  request_type: string;
+  status: string;
+  new_name?: string;
+  new_email?: string;
+  new_phone?: string;
+  new_address?: string;
+  new_logo_url?: string;
+  new_certificate_url?: string;
+  requester_notes?: string;
+  admin_notes?: string;
+  created_at: string;
+  updated_at?: string;
+  business?: {
+    id: number;
+    name: string;
+    slug: string;
+  };
+  requester?: {
+    id: number;
+    username: string;
+    first_name: string;
+    last_name: string;
+  };
+}
 
 export function NewDashboard() {
   const {
@@ -64,6 +105,24 @@ export function NewDashboard() {
   const [showOwnerViewModal, setShowOwnerViewModal] = useState(false);
   const [showOwnerCreateModal, setShowOwnerCreateModal] = useState(false);
 
+  // Requests state
+  const [requests, setRequests] = useState<ChangeRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [expandedRequestId, setExpandedRequestId] = useState<number | null>(null);
+  const [adminNotes, setAdminNotes] = useState<Record<number, string>>({});
+  const [processingRequestId, setProcessingRequestId] = useState<number | null>(null);
+
+  // Platform stats from backend - all calculations done server-side
+  const [platformStats, setPlatformStats] = useState<{
+    total_businesses: number;
+    active_businesses: number;
+    inactive_businesses: number;
+    total_owners: number;
+    total_users: number;
+    total_revenue: number;
+    businesses_by_tier: Record<string, number>;
+  } | null>(null);
+
   // Fetch pending requests count
   useEffectNotif(() => {
     const fetchPendingCount = async () => {
@@ -76,6 +135,21 @@ export function NewDashboard() {
     };
     fetchPendingCount();
   }, []);
+
+  // Fetch platform stats from backend - all calculations done server-side
+  useEffectNotif(() => {
+    const fetchPlatformStats = async () => {
+      try {
+        const response = await api.get('/api/owners/platform-stats');
+        if (response.data.success) {
+          setPlatformStats(response.data.stats);
+        }
+      } catch (err) {
+        console.error('Failed to fetch platform stats:', err);
+      }
+    };
+    fetchPlatformStats();
+  }, [businesses]); // Refresh when businesses change
 
   // Load owners when Users tab is active
   const loadOwners = async () => {
@@ -94,6 +168,9 @@ export function NewDashboard() {
     if (activeTab === 'users') {
       loadOwners();
     }
+    if (activeTab === 'requests') {
+      loadRequests();
+    }
   }, [activeTab]);
 
   const handleViewOwner = (owner: Owner) => {
@@ -101,9 +178,129 @@ export function NewDashboard() {
     setShowOwnerViewModal(true);
   };
 
-  const activeCount = businesses.filter(b => b.subscription_status === 'active').length;
-  const suspendedCount = businesses.filter(b => b.subscription_status === 'suspended').length;
-  const totalRevenue = businesses.reduce((acc, b) => acc + (b.subscription_tier === 'enterprise' ? 299 : b.subscription_tier === 'pro' ? 99 : 0), 0); // Mock revenue calc
+  // Requests functions
+  const loadRequests = async () => {
+    setRequestsLoading(true);
+    try {
+      const response = await api.get('/api/businesses/change-requests/all');
+      setRequests(response.data.data || []);
+    } catch (err) {
+      console.error('Failed to fetch requests:', err);
+    } finally {
+      setRequestsLoading(false);
+    }
+  };
+
+  const handleApproveRequest = async (id: number) => {
+    setProcessingRequestId(id);
+    try {
+      await api.put(`/api/businesses/change-requests/${id}/approve`, {
+        admin_notes: adminNotes[id] || 'Approved by admin',
+      });
+      loadRequests();
+      // Update pending count
+      api.get('/api/businesses/change-requests/all')
+        .then(res => setPendingCount(res.data.data?.length || 0))
+        .catch(() => {});
+      setExpandedRequestId(null);
+      setAdminNotes(prev => {
+        const updated = { ...prev };
+        delete updated[id];
+        return updated;
+      });
+    } catch (err) {
+      console.error('Failed to approve:', err);
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const handleRejectRequest = async (id: number) => {
+    setProcessingRequestId(id);
+    try {
+      await api.put(`/api/businesses/change-requests/${id}/reject`, {
+        admin_notes: adminNotes[id] || 'Rejected by admin',
+      });
+      loadRequests();
+      // Update pending count
+      api.get('/api/businesses/change-requests/all')
+        .then(res => setPendingCount(res.data.data?.length || 0))
+        .catch(() => {});
+      setExpandedRequestId(null);
+      setAdminNotes(prev => {
+        const updated = { ...prev };
+        delete updated[id];
+        return updated;
+      });
+    } catch (err) {
+      console.error('Failed to reject:', err);
+    } finally {
+      setProcessingRequestId(null);
+    }
+  };
+
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    return {
+      date: date.toLocaleDateString('en-US', { 
+        weekday: 'short', 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric' 
+      }),
+      time: date.toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+      }),
+      relative: getRelativeTime(date)
+    };
+  };
+
+  const getRelativeTime = (date: Date) => {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  const getRequesterName = (req: ChangeRequest) => {
+    if (req.requester?.first_name && req.requester?.last_name) {
+      return `${req.requester.first_name} ${req.requester.last_name}`;
+    }
+    return req.requester?.username || 'Unknown User';
+  };
+
+  const getRequestTypeLabel = (type: string) => {
+    switch (type) {
+      case 'logo': return 'Logo Update';
+      case 'certificate': return 'Certificate Upload';
+      case 'profile':
+      case 'info': return 'Profile Update';
+      default: return 'Change Request';
+    }
+  };
+
+  const getRequestIcon = (type: string) => {
+    switch (type) {
+      case 'logo': return <ImageIcon className="w-5 h-5" />;
+      case 'certificate': return <FileText className="w-5 h-5" />;
+      default: return <Store className="w-5 h-5" />;
+    }
+  };
+
+  // Use backend-calculated stats - no frontend calculations for business metrics
+  const activeCount = platformStats?.active_businesses ?? 0;
+  const inactiveCount = platformStats?.inactive_businesses ?? 0;
+  const totalRevenue = platformStats?.total_revenue ?? 0;
+  const totalUsers = platformStats?.total_users ?? 0;
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -181,6 +378,25 @@ export function NewDashboard() {
           >
             <Users className="w-5 h-5" />
             Users
+          </button>
+
+          <button 
+            onClick={() => setActiveTab('requests')}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-all ${
+              activeTab === 'requests' 
+                ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white font-medium' 
+                : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <FileText className="w-5 h-5" />
+              Requests
+            </div>
+            {pendingCount > 0 && (
+              <span className="min-w-[20px] h-5 flex items-center justify-center bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-semibold rounded-full px-1.5">
+                {pendingCount}
+              </span>
+            )}
           </button>
 
           <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-4 mt-8 px-2">Settings</div>
@@ -325,26 +541,13 @@ export function NewDashboard() {
                 <motion.div variants={itemVariants} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-zinc-100 dark:bg-zinc-800">
-                        <TrendingUp className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                      <div className="p-2 rounded-lg bg-red-100 dark:bg-red-900/30">
+                        <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
                       </div>
                       <div>
-                        <p className="text-sm text-zinc-500">Trial Accounts</p>
+                        <p className="text-sm text-zinc-500">Inactive</p>
                         <p className="text-xl font-bold text-zinc-900 dark:text-white">
-                          {businesses.filter(b => b.subscription_status === 'trial').length}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
-                        <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-zinc-500">Suspended</p>
-                        <p className="text-xl font-bold text-zinc-900 dark:text-white">
-                          {businesses.filter(b => b.subscription_status === 'suspended').length}
+                          {inactiveCount}
                         </p>
                       </div>
                     </div>
@@ -357,7 +560,7 @@ export function NewDashboard() {
                       <div>
                         <p className="text-sm text-zinc-500">Total Users</p>
                         <p className="text-xl font-bold text-zinc-900 dark:text-white">
-                          {businesses.reduce((acc, b) => acc + (b.user_count || 0), 0)}
+                          {totalUsers}
                         </p>
                       </div>
                     </div>
@@ -493,18 +696,14 @@ export function NewDashboard() {
                                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${
                                   business.subscription_status === 'active' 
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-400 dark:border-emerald-800'
-                                    : business.subscription_status === 'trial'
-                                    ? 'bg-zinc-100 text-zinc-700 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-600'
-                                    : 'bg-zinc-50 text-zinc-700 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:border-zinc-700'
+                                    : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-800'
                                 }`}>
                                   <span className={`w-1.5 h-1.5 rounded-full ${
                                     business.subscription_status === 'active' 
                                       ? 'bg-emerald-500'
-                                      : business.subscription_status === 'trial'
-                                      ? 'bg-zinc-500'
-                                      : 'bg-zinc-500'
+                                      : 'bg-red-500'
                                   }`}></span>
-                                  {business.subscription_status}
+                                  {business.subscription_status === 'active' ? 'Active' : 'Inactive'}
                                 </span>
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -662,6 +861,299 @@ export function NewDashboard() {
                         </tbody>
                       </table>
                     </div>
+                  )}
+                </motion.div>
+              </>
+            )}
+
+            {/* Requests Tab */}
+            {activeTab === 'requests' && (
+              <>
+                <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h1 className="text-2xl font-bold text-zinc-900 dark:text-white tracking-tight">Change Requests</h1>
+                    <p className="text-zinc-500 dark:text-zinc-400 mt-1">Review and manage pending business change requests</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-sm font-medium">
+                      <Clock className="w-4 h-4" />
+                      {requests.length} pending
+                    </span>
+                  </div>
+                </motion.div>
+
+                {/* Requests List */}
+                <motion.div variants={itemVariants} className="space-y-4">
+                  {requestsLoading ? (
+                    <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-12 flex items-center justify-center">
+                      <Loader2 className="w-8 h-8 animate-spin text-zinc-400" />
+                    </div>
+                  ) : requests.length === 0 ? (
+                    <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-12 text-center">
+                      <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-4">
+                        <CheckCircle className="w-8 h-8 text-green-500" />
+                      </div>
+                      <p className="text-lg font-medium text-zinc-700 dark:text-zinc-300">All caught up!</p>
+                      <p className="text-sm text-zinc-500 mt-1">No pending requests to review</p>
+                    </div>
+                  ) : (
+                    requests.map((req) => {
+                      const isExpanded = expandedRequestId === req.id;
+                      const dateInfo = formatDateTime(req.created_at);
+                      
+                      return (
+                        <motion.div
+                          key={req.id}
+                          layout
+                          className={`bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden transition-shadow ${
+                            isExpanded ? 'shadow-lg ring-2 ring-amber-500/20' : 'shadow-sm hover:shadow-md'
+                          }`}
+                        >
+                          {/* Collapsed Header - Click to Expand */}
+                          <div 
+                            className="p-6 cursor-pointer"
+                            onClick={() => setExpandedRequestId(isExpanded ? null : req.id)}
+                          >
+                            <div className="flex items-start gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-600 dark:text-zinc-400 flex-shrink-0">
+                                {getRequestIcon(req.request_type)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-semibold text-lg text-zinc-900 dark:text-white">
+                                      {req.business?.name || 'Unknown Business'}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                                      <Clock className="w-3 h-3" />
+                                      Pending
+                                    </span>
+                                  </div>
+                                  <motion.div
+                                    animate={{ rotate: isExpanded ? 180 : 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                                  >
+                                    <ChevronDown className="w-5 h-5 text-zinc-400" />
+                                  </motion.div>
+                                </div>
+                                <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
+                                  {getRequestTypeLabel(req.request_type)}
+                                </p>
+                                <div className="flex items-center gap-4 mt-3 text-sm text-zinc-500">
+                                  <span className="flex items-center gap-1.5">
+                                    <User className="w-4 h-4" />
+                                    {getRequesterName(req)}
+                                  </span>
+                                  <span className="flex items-center gap-1.5">
+                                    <Calendar className="w-4 h-4" />
+                                    {dateInfo.relative}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Expanded Details */}
+                          {isExpanded && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              className="border-t border-zinc-200 dark:border-zinc-800 p-6 bg-zinc-50/50 dark:bg-zinc-800/30 space-y-6"
+                            >
+                              {/* Submission Details */}
+                              <div className="bg-white dark:bg-zinc-800 rounded-xl p-5 border border-zinc-200 dark:border-zinc-700">
+                                <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">
+                                  Submission Details
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  <div className="flex items-center gap-3">
+                                    <User className="w-5 h-5 text-zinc-400" />
+                                    <div>
+                                      <span className="text-sm text-zinc-500">Submitted by</span>
+                                      <p className="font-medium text-zinc-900 dark:text-white">
+                                        {getRequesterName(req)}
+                                        {req.requester?.username && (
+                                          <span className="text-zinc-500 font-normal ml-1">(@{req.requester.username})</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <Calendar className="w-5 h-5 text-zinc-400" />
+                                    <div>
+                                      <span className="text-sm text-zinc-500">Submitted on</span>
+                                      <p className="font-medium text-zinc-900 dark:text-white">
+                                        {dateInfo.date} <span className="text-zinc-500 font-normal">at {dateInfo.time}</span>
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <Building2 className="w-5 h-5 text-zinc-400" />
+                                    <div>
+                                      <span className="text-sm text-zinc-500">Business</span>
+                                      <p className="font-medium text-zinc-900 dark:text-white">
+                                        {req.business?.name}
+                                        {req.business?.slug && (
+                                          <span className="text-zinc-500 font-normal ml-1">({req.business.slug})</span>
+                                        )}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    <FileText className="w-5 h-5 text-zinc-400" />
+                                    <div>
+                                      <span className="text-sm text-zinc-500">Request Type</span>
+                                      <p className="font-medium text-zinc-900 dark:text-white">
+                                        {getRequestTypeLabel(req.request_type)}
+                                      </p>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Requested Changes */}
+                              <div className="bg-white dark:bg-zinc-800 rounded-xl p-5 border border-zinc-200 dark:border-zinc-700">
+                                <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-4">
+                                  Requested Changes
+                                </h4>
+                                <div className="space-y-3">
+                                  {req.new_name && (
+                                    <div className="flex items-start gap-3">
+                                      <Store className="w-5 h-5 text-zinc-400 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Name</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_name}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_email && (
+                                    <div className="flex items-start gap-3">
+                                      <Mail className="w-5 h-5 text-zinc-400 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Email</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_email}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_phone && (
+                                    <div className="flex items-start gap-3">
+                                      <Phone className="w-5 h-5 text-zinc-400 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Phone</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_phone}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_address && (
+                                    <div className="flex items-start gap-3">
+                                      <MapPin className="w-5 h-5 text-zinc-400 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Address</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_address}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_logo_url && (
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2 text-sm text-zinc-500">
+                                        <ImageIcon className="w-5 h-5 text-zinc-400" />
+                                        New Logo
+                                      </div>
+                                      <div className="ml-8 w-32 h-32 rounded-xl bg-zinc-100 dark:bg-zinc-700 overflow-hidden border-2 border-zinc-200 dark:border-zinc-600">
+                                        <img src={req.new_logo_url} alt="New logo" className="w-full h-full object-cover" />
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_certificate_url && (
+                                    <div className="flex items-start gap-3">
+                                      <FileText className="w-5 h-5 text-zinc-400 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Certificate</span>
+                                        <a 
+                                          href={req.new_certificate_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="mt-1 inline-flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-700 rounded-lg text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600 transition-colors"
+                                        >
+                                          <FileText className="w-4 h-4" />
+                                          View Certificate
+                                        </a>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {!req.new_name && !req.new_email && !req.new_phone && !req.new_address && !req.new_logo_url && !req.new_certificate_url && (
+                                    <p className="text-sm text-zinc-500 italic">No specific changes detailed</p>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Requester Notes */}
+                              {req.requester_notes && (
+                                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-5 border border-blue-200 dark:border-blue-800">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <StickyNote className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                                    <h4 className="text-sm font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wider">
+                                      Note from Business
+                                    </h4>
+                                  </div>
+                                  <p className="text-blue-800 dark:text-blue-200">
+                                    {req.requester_notes}
+                                  </p>
+                                </div>
+                              )}
+
+                              {/* Admin Notes Input */}
+                              <div className="bg-white dark:bg-zinc-800 rounded-xl p-5 border border-zinc-200 dark:border-zinc-700">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <MessageSquare className="w-5 h-5 text-zinc-500" />
+                                  <h4 className="text-sm font-semibold text-zinc-500 uppercase tracking-wider">
+                                    Admin Response Note
+                                  </h4>
+                                </div>
+                                <textarea
+                                  value={adminNotes[req.id] || ''}
+                                  onChange={(e) => setAdminNotes(prev => ({ ...prev, [req.id]: e.target.value }))}
+                                  placeholder="Add a note to your response (optional)..."
+                                  className="w-full px-4 py-3 text-sm rounded-xl border border-zinc-200 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-700 text-zinc-900 dark:text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-500/50 dark:focus:ring-amber-400/50 resize-none transition-all"
+                                  rows={3}
+                                />
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex items-center gap-4 pt-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleApproveRequest(req.id);
+                                  }}
+                                  disabled={processingRequestId === req.id}
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-green-600 hover:bg-green-700 text-white transition-colors disabled:opacity-50 shadow-sm"
+                                >
+                                  {processingRequestId === req.id ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <CheckCircle className="w-4 h-4" />
+                                  )}
+                                  Approve Request
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRejectRequest(req.id);
+                                  }}
+                                  disabled={processingRequestId === req.id}
+                                  className="flex-1 inline-flex items-center justify-center gap-2 px-6 py-3 text-sm font-medium rounded-xl bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50"
+                                >
+                                  <XCircle className="w-4 h-4" />
+                                  Reject Request
+                                </button>
+                              </div>
+                            </motion.div>
+                          )}
+                        </motion.div>
+                      );
+                    })
                   )}
                 </motion.div>
               </>

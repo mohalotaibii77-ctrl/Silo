@@ -20,3 +20,8 @@ CREATE TABLE IF NOT EXISTS product_modifiers (
 -- Index for faster lookups
 CREATE INDEX IF NOT EXISTS idx_product_modifiers_product_id ON product_modifiers(product_id);
 
+
+
+
+
+

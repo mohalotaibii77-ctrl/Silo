@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Check, Loader2, Command, LogOut, User } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
 import { useLanguage } from '@/lib/language-context';
@@ -69,9 +70,11 @@ export default function LocalizationPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const [country, setCountry] = useState('Kuwait');
-  const [currency, setCurrency] = useState('KWD');
+  const [country, setCountry] = useState('');
+  const [currency, setCurrency] = useState(''); // Loaded from business settings
   const [language, setLanguageState] = useState('en');
+  const [originalSettings, setOriginalSettings] = useState({ country: '', currency: '', language: 'en' });
+  const [message, setMessage] = useState({ type: '', text: '' });
 
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
@@ -92,8 +95,8 @@ export default function LocalizationPage() {
       if (storedBusiness) {
         const biz = JSON.parse(storedBusiness);
         setBusiness(biz);
-        setCountry(biz.country || 'Kuwait');
-        setCurrency(biz.currency || 'KWD');
+        setCountry(biz.country || '');
+        setCurrency(biz.currency || '');
         setLanguageState(biz.language || 'en');
       }
     } catch {
@@ -109,9 +112,15 @@ export default function LocalizationPage() {
     try {
       const response = await api.get('/business-settings/localization');
       if (response.data.data) {
-        setCountry(response.data.data.country || 'Kuwait');
-        setCurrency(response.data.data.currency || 'KWD');
-        setLanguageState(response.data.data.language || 'en');
+        const data = response.data.data;
+        setCountry(data.country || '');
+        setCurrency(data.currency || '');
+        setLanguageState(data.language || 'en');
+        setOriginalSettings({
+          country: data.country || '',
+          currency: data.currency || '',
+          language: data.language || 'en',
+        });
       }
     } catch (err) {
       console.error('Failed to fetch localization:', err);
@@ -127,24 +136,67 @@ export default function LocalizationPage() {
 
   const handleSave = async () => {
     setSaving(true);
+    setMessage({ type: '', text: '' });
+    
     try {
-      await api.put('/business-settings/localization', {
-        country,
-        currency,
-        language,
-      });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      const currencyChanged = currency !== originalSettings.currency;
+      const languageChanged = language !== originalSettings.language;
       
-      if (business) {
-        const updatedBusiness = { ...business, country, currency, language };
-        localStorage.setItem('setup_business', JSON.stringify(updatedBusiness));
-        setBusiness(updatedBusiness);
+      if (!currencyChanged && !languageChanged) {
+        setMessage({ type: 'info', text: t('No changes detected', 'لم يتم اكتشاف تغييرات') });
+        setSaving(false);
+        return;
+      }
+
+      // Language is a USER preference (not business-wide setting)
+      if (languageChanged) {
+        // Apply language change to UI and save to user settings in database
+        // setGlobalLanguage calls the /business-settings/user-settings endpoint
+        setGlobalLanguage(language);
+        
+        // Update original settings
+        setOriginalSettings(prev => ({ ...prev, language }));
+      }
+
+      // Only currency requires admin approval
+      if (currencyChanged) {
+        try {
+          await api.post('/business-settings/change-requests', {
+            request_type: 'localization',
+            new_currency: currency,
+          });
+          setMessage({ 
+            type: 'success', 
+            text: languageChanged 
+              ? t('Language saved. Currency change submitted for admin approval.', 'تم حفظ اللغة. تم إرسال طلب تغيير العملة للموافقة.')
+              : t('Currency change submitted for admin approval.', 'تم إرسال طلب تغيير العملة للموافقة.')
+          });
+        } catch (err: any) {
+          if (err.response?.data?.error?.includes('pending request')) {
+            setMessage({ 
+              type: 'warning', 
+              text: languageChanged
+                ? t('Language saved. You already have a pending currency change request.', 'تم حفظ اللغة. لديك بالفعل طلب تغيير عملة قيد الانتظار.')
+                : t('You already have a pending currency change request.', 'لديك بالفعل طلب تغيير عملة قيد الانتظار.')
+            });
+          } else {
+            throw err;
+          }
+        }
+      } else if (languageChanged) {
+        setMessage({ 
+          type: 'success', 
+          text: t('Language saved successfully!', 'تم حفظ اللغة بنجاح!')
+        });
       }
       
-      setGlobalLanguage(language);
-    } catch (err) {
-      console.error('Failed to save localization:', err);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (err: any) {
+      setMessage({ 
+        type: 'error', 
+        text: err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات') 
+      });
     } finally {
       setSaving(false);
     }
@@ -168,7 +220,9 @@ export default function LocalizationPage() {
 
   return (
     <div className="flex min-h-screen bg-zinc-50 dark:bg-zinc-950 font-sans" dir={isRTL ? 'rtl' : 'ltr'}>
-      <Sidebar business={business} />
+      <Suspense fallback={<div className="w-64 border-r border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 hidden md:block" />}>
+        <Sidebar business={business} />
+      </Suspense>
 
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <header className="h-16 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl sticky top-0 z-30 px-6 flex items-center justify-between">
@@ -199,54 +253,54 @@ export default function LocalizationPage() {
             animate={{ opacity: 1, y: 0 }}
             className="max-w-2xl mx-auto space-y-6"
           >
+            {/* Status Messages */}
+            {message.text && (
+              <div className={`p-4 rounded-xl flex items-start gap-3 ${
+                message.type === 'success' ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400' :
+                message.type === 'warning' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400' :
+                message.type === 'info' ? 'bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-400' :
+                'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+              }`}>
+                {message.text}
+              </div>
+            )}
+
             <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-6">
               {/* Country */}
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                  {t('Country', 'الدولة')}
-                </label>
-                <select
-                  value={country}
-                  onChange={(e) => handleCountryChange(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
-                >
-                  {COUNTRIES.map((c) => (
-                    <option key={c.code} value={c.name}>{c.name}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchableSelect
+                label={t('Country', 'الدولة')}
+                value={country}
+                onChange={(val) => handleCountryChange(val ? String(val) : 'Saudi Arabia')}
+                options={COUNTRIES.map((c) => ({
+                  id: c.name,
+                  name: c.name,
+                }))}
+                placeholder={t('Select country', 'اختر الدولة')}
+              />
 
               {/* Currency */}
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                  {t('Currency', 'العملة')}
-                </label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
-                >
-                  {CURRENCIES.map((c) => (
-                    <option key={c.code} value={c.code}>{c.code} - {c.name}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchableSelect
+                label={t('Currency', 'العملة')}
+                value={currency}
+                onChange={(val) => setCurrency(val ? String(val) : '')}
+                options={CURRENCIES.map((c) => ({
+                  id: c.code,
+                  name: `${c.code} - ${c.name}`,
+                }))}
+                placeholder={t('Select currency', 'اختر العملة')}
+              />
 
               {/* Language */}
-              <div>
-                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                  {t('Language', 'اللغة')}
-                </label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguageState(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
-                >
-                  {LANGUAGES.map((l) => (
-                    <option key={l.code} value={l.code}>{l.name}</option>
-                  ))}
-                </select>
-              </div>
+              <SearchableSelect
+                label={t('Language', 'اللغة')}
+                value={language}
+                onChange={(val) => setLanguageState(val ? String(val) : 'en')}
+                options={LANGUAGES.map((l) => ({
+                  id: l.code,
+                  name: l.name,
+                }))}
+                placeholder={t('Select language', 'اختر اللغة')}
+              />
             </div>
 
             <button

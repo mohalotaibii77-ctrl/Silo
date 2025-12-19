@@ -9,6 +9,13 @@
 
 import api from './api';
 
+export interface DeliveryMargin {
+  partner_id: number;
+  partner_name: string;
+  partner_name_ar?: string;
+  margin_percent: number;
+}
+
 export interface ProductVariant {
   id?: number;
   name: string;
@@ -17,6 +24,10 @@ export interface ProductVariant {
   sort_order?: number;
   ingredients: ProductIngredient[];
   total_cost?: number;
+  margin_percent?: number;
+  variant_price?: number;
+  in_stock?: boolean;
+  delivery_margins?: DeliveryMargin[];
 }
 
 export interface ProductIngredient {
@@ -63,6 +74,9 @@ export interface Product {
   ingredients?: ProductIngredient[];
   modifiers?: ProductModifier[];
   total_cost?: number;
+  margin_percent?: number;
+  delivery_margins?: DeliveryMargin[];
+  in_stock?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -153,4 +167,82 @@ export async function deleteProduct(productId: number): Promise<void> {
 export async function getProductCost(productId: number): Promise<{ cost: number; variantCosts?: { variantId: number; name: string; cost: number }[] }> {
   const response = await api.get(`/inventory/products/${productId}/cost`);
   return response.data.data;
+}
+
+/**
+ * Product stats type
+ */
+export interface ProductStats {
+  sold: number;
+  profit_margin: number;
+}
+
+/**
+ * Get product sales stats (sold count, profit margin)
+ */
+export async function getProductStats(): Promise<Record<number, ProductStats>> {
+  try {
+    const response = await api.get('/inventory/products/stats');
+    return response.data.data || {};
+  } catch (error) {
+    console.error('Failed to fetch product stats:', error);
+    return {};
+  }
+}
+
+// ============ PRODUCT ACCESSORIES ============
+
+export type AccessoryOrderType = 'always' | 'dine_in' | 'takeaway' | 'delivery';
+
+export interface ProductAccessory {
+  id?: number;
+  product_id?: number;
+  variant_id?: number | null;
+  item_id: number;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
+  is_required?: boolean;
+  notes?: string | null;
+  item?: {
+    id: number;
+    name: string;
+    name_ar?: string;
+    unit: string;
+    item_type?: string;
+    cost_per_unit: number;
+    effective_price?: number;
+  };
+}
+
+/**
+ * Get product accessories
+ */
+export async function getProductAccessories(productId: number): Promise<ProductAccessory[]> {
+  try {
+    const response = await api.get(`/inventory/products/${productId}/accessories`);
+    return response.data.data || [];
+  } catch (error: any) {
+    console.error('Failed to fetch product accessories:', error);
+    return [];
+  }
+}
+
+/**
+ * Update product accessories (replaces all existing)
+ */
+export async function updateProductAccessories(
+  productId: number,
+  accessories: Array<{
+    item_id: number;
+    quantity: number;
+    variant_id?: number | null;
+    applicable_order_types: AccessoryOrderType[];
+    is_required?: boolean;
+    notes?: string | null;
+  }>
+): Promise<ProductAccessory[]> {
+  const response = await api.put(`/inventory/products/${productId}/accessories`, {
+    accessories
+  });
+  return response.data.data || [];
 }

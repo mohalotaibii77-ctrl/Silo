@@ -47,3 +47,8 @@ COMMENT ON TABLE business_owners IS 'Junction table linking owners to their busi
 COMMENT ON COLUMN business_owners.role IS 'Role of the owner in the business (owner, co-owner, etc.)';
 COMMENT ON COLUMN businesses.primary_owner_id IS 'The primary owner of the business (optional reference)';
 
+
+
+
+
+

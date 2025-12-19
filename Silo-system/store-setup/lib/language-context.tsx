@@ -18,21 +18,23 @@ interface LanguageContextType {
   setLanguage: (lang: string) => void;
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   updateUserSettings: (settings: Partial<UserSettings>) => Promise<void>;
+  refreshBusinessSettings: () => Promise<void>;
   t: (en: string, ar: string) => string;
   formatCurrency: (amount: number) => string;
 }
 
 const LanguageContext = createContext<LanguageContextType>({
   language: 'en',
-  currency: 'SAR',
+  currency: '',
   isRTL: false,
   isLoading: true,
   userSettings: null,
   setLanguage: () => {},
   setTheme: () => {},
   updateUserSettings: async () => {},
+  refreshBusinessSettings: async () => {},
   t: (en) => en,
-  formatCurrency: (amount) => `${amount.toFixed(3)} SAR`,
+  formatCurrency: (amount) => `${amount.toFixed(3)}`,
 });
 
 // Loading spinner component
@@ -48,10 +50,38 @@ function LanguageLoadingSpinner() {
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<string | null>(null);
-  const [currency, setCurrency] = useState<string>('SAR');
+  const [currency, setCurrency] = useState<string>(''); // Loaded from business settings
   const [isLoading, setIsLoading] = useState(true);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const isRTL = language === 'ar';
+
+  // Fetch fresh business settings from API
+  const refreshBusinessSettings = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('setup_token');
+      if (!token) return;
+
+      const response = await api.get('/business-settings/localization');
+      if (response.data.data) {
+        const data = response.data.data;
+        // Update currency from backend (source of truth)
+        if (data.currency) {
+          setCurrency(data.currency);
+          // Also update localStorage for consistency
+          const storedBusiness = localStorage.getItem('setup_business');
+          if (storedBusiness) {
+            try {
+              const business = JSON.parse(storedBusiness);
+              business.currency = data.currency;
+              localStorage.setItem('setup_business', JSON.stringify(business));
+            } catch {}
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to refresh business settings:', error);
+    }
+  }, []);
 
   // Use useLayoutEffect to check language BEFORE paint
   useLayoutEffect(() => {
@@ -60,7 +90,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     const storedBusiness = localStorage.getItem('setup_business');
     
     let detectedLanguage = 'en'; // Default to English
-    let detectedCurrency = 'SAR'; // Default currency
+    let detectedCurrency = ''; // Loaded from business settings only
     let parsedUserSettings: UserSettings | null = null;
     
     // First, try to get from user settings (highest priority)
@@ -95,6 +125,15 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setCurrency(detectedCurrency);
     setIsLoading(false);
   }, []);
+
+  // Fetch fresh currency from backend on mount (after initial render)
+  useEffect(() => {
+    // Small delay to ensure token is available after login redirect
+    const timer = setTimeout(() => {
+      refreshBusinessSettings();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [refreshBusinessSettings]);
 
   // Update document direction when language changes
   useEffect(() => {
@@ -183,9 +222,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   // Simple translation helper
   const t = (en: string, ar: string) => (language === 'ar' ? ar : en);
 
-  // Currency formatter
-  const formatCurrency = (amount: number) => {
-    return `${amount.toFixed(3)} ${currency}`;
+  // Currency formatter - handles both normal prices and very small costs (e.g., cost per gram/ml)
+  const formatCurrency = (amount: number, options?: { minDecimals?: number }) => {
+    // For very small amounts (< 0.001), show more decimal places to avoid rounding to 0
+    if (amount > 0 && amount < 0.001) {
+      // Find how many decimals we need to show a non-zero value
+      const significantDecimals = Math.max(4, -Math.floor(Math.log10(amount)) + 2);
+      return `${amount.toFixed(Math.min(significantDecimals, 6))} ${currency}`;
+    }
+    // Standard 3 decimal places for normal amounts
+    return `${amount.toFixed(options?.minDecimals ?? 3)} ${currency}`;
   };
 
   // Show loading spinner until language is determined
@@ -203,6 +249,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
       setLanguage, 
       setTheme,
       updateUserSettings,
+      refreshBusinessSettings,
       t, 
       formatCurrency 
     }}>

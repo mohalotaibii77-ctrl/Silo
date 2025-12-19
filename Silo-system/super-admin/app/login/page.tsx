@@ -1,18 +1,41 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { authApi } from '@/lib/api';
 import { Lock, Mail, Command, ArrowRight } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { motion } from 'framer-motion';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Check for token in URL (from Main website redirect)
+  useEffect(() => {
+    const token = searchParams.get('token');
+    const userParam = searchParams.get('user');
+
+    if (token && userParam) {
+      try {
+        const user = JSON.parse(decodeURIComponent(userParam));
+        
+        // Store auth data
+        localStorage.setItem('token', token);
+        localStorage.setItem('user', JSON.stringify(user));
+        
+        // Clean URL and redirect to dashboard
+        window.history.replaceState({}, '', '/login');
+        router.push('/dashboard');
+      } catch (err) {
+        console.error('Error parsing auth data from URL:', err);
+      }
+    }
+  }, [searchParams, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,7 +173,7 @@ export default function LoginPage() {
               </p>
               <div className="flex items-center justify-center gap-2">
                 <code className="text-xs bg-white dark:bg-zinc-900 px-2 py-1 rounded border border-zinc-200 dark:border-zinc-700 font-mono text-zinc-700 dark:text-zinc-300">
-                  Mohalotaibii77@gmail.com
+                  admin@syloco.com
                 </code>
               </div>
             </div>
@@ -162,5 +185,17 @@ export default function LoginPage() {
         </p>
       </motion.div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+        <Command className="w-8 h-8 animate-spin text-zinc-400" />
+      </div>
+    }>
+      <LoginContent />
+    </Suspense>
   );
 }

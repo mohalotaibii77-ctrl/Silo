@@ -73,6 +73,7 @@ async function authenticateBusinessToken(req: AuthenticatedRequest, res: Respons
 }
 
 // GET /api/bundles - Get all bundles for the business
+// Query params: branch_id (optional) - for stock checking
 router.get('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
@@ -80,10 +81,27 @@ router.get('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res
       return res.status(400).json({ error: 'Business ID required' });
     }
 
-    const bundles = await bundlesService.getBundles(businessId);
+    const branchId = req.query.branch_id ? parseInt(req.query.branch_id as string) : undefined;
+    const bundles = await bundlesService.getBundles(businessId, branchId);
     res.json({ success: true, data: bundles });
   } catch (error: any) {
     console.error('Error fetching bundles:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /api/bundles/stats - Get bundle sales stats (sold count, cost for margin)
+router.get('/stats', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    if (!businessId) {
+      return res.status(400).json({ error: 'Business ID required' });
+    }
+
+    const stats = await bundlesService.getBundleStats(businessId);
+    res.json({ success: true, data: stats });
+  } catch (error: any) {
+    console.error('Error fetching bundle stats:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

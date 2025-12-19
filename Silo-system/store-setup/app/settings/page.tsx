@@ -15,7 +15,7 @@ export default function SettingsPage() {
     { title: t('Localization', 'التوطين'), desc: t('Language, currency, and timezone', 'اللغة والعملة والمنطقة الزمنية'), icon: Globe, href: '/settings/localization' },
     { title: t('Tax / VAT', 'الضريبة / ض.ق.م'), desc: t('Configure VAT rate and tax settings', 'إعداد نسبة ضريبة القيمة المضافة'), icon: Percent, href: '/settings/tax' },
     { title: t('Payment Methods', 'طرق الدفع'), desc: t('Configure accepted payment types', 'إعداد أنواع الدفع المقبولة'), icon: CreditCard, href: null, disabled: true },
-    { title: t('Printers & Devices', 'الطابعات والأجهزة'), desc: t('Set up receipt and kitchen printers', 'إعداد طابعات الإيصالات والمطبخ'), icon: Printer, href: null, disabled: true },
+    { title: t('Printers & Devices', 'الطابعات والأجهزة'), desc: t('Set up receipt and kitchen printers', 'إعداد طابعات الإيصالات والمطبخ'), icon: Printer, href: '/settings/printers-devices' },
   ];
 
   return (

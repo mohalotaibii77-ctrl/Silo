@@ -47,3 +47,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON business_change_requests TO authenticate
 GRANT USAGE, SELECT ON SEQUENCE business_change_requests_id_seq TO service_role;
 GRANT USAGE, SELECT ON SEQUENCE business_change_requests_id_seq TO authenticated;
 
+
+
+
+
+

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   TextInput,
   Modal,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { colors } from '../theme/colors';
 import {
@@ -22,6 +23,66 @@ import {
   Package,
   CheckCircle,
 } from 'lucide-react-native';
+
+// Skeleton component for storefront
+const StorefrontSkeleton = () => {
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmerAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+        Animated.timing(shimmerAnim, { toValue: 0, duration: 1000, useNativeDriver: true }),
+      ])
+    );
+    animation.start();
+    return () => animation.stop();
+  }, []);
+
+  const opacity = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.3, 0.7],
+  });
+
+  const SkeletonBox = ({ width, height, borderRadius = 8 }: { width: number | string; height: number; borderRadius?: number }) => (
+    <Animated.View style={{ width, height, borderRadius, backgroundColor: colors.border, opacity }} />
+  );
+
+  const ProductCardSkeleton = () => (
+    <View style={{ width: '48%', backgroundColor: colors.card, borderRadius: 12, overflow: 'hidden', marginBottom: 12, borderWidth: 1, borderColor: colors.border }}>
+      <SkeletonBox width="100%" height={120} borderRadius={0} />
+      <View style={{ padding: 12 }}>
+        <SkeletonBox width="80%" height={14} borderRadius={4} />
+        <SkeletonBox width="50%" height={18} borderRadius={4} />
+      </View>
+    </View>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      {/* Header Skeleton */}
+      <View style={{ padding: 16, paddingTop: 50, backgroundColor: colors.card, borderBottomWidth: 1, borderBottomColor: colors.border, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+        <View>
+          <SkeletonBox width={120} height={20} />
+          <SkeletonBox width={150} height={14} borderRadius={4} />
+        </View>
+        <SkeletonBox width={48} height={48} borderRadius={12} />
+      </View>
+      
+      {/* Search Skeleton */}
+      <View style={{ padding: 16 }}>
+        <SkeletonBox width="100%" height={48} borderRadius={12} />
+      </View>
+      
+      {/* Products Grid Skeleton */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 16 }}>
+        {[1, 2, 3, 4, 5, 6].map((_, i) => (
+          <ProductCardSkeleton key={i} />
+        ))}
+      </View>
+    </View>
+  );
+};
 import {
   getProducts,
   getRegions,
@@ -233,12 +294,7 @@ export default function StorefrontScreen({ navigation }: any) {
   );
 
   if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading store...</Text>
-      </View>
-    );
+    return <StorefrontSkeleton />;
   }
 
   return (

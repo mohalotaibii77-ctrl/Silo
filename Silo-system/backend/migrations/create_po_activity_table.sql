@@ -28,3 +28,8 @@ COMMENT ON TABLE purchase_order_activity IS 'Audit log for all purchase order ch
 COMMENT ON COLUMN purchase_order_activity.action IS 'Type of action: created, status_changed, items_updated, notes_updated, cancelled, received';
 COMMENT ON COLUMN purchase_order_activity.changes IS 'JSON object containing detailed changes for auditing';
 
+
+
+
+
+

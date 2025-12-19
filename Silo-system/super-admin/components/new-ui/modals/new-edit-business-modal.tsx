@@ -10,6 +10,7 @@ import {
 import { businessApi, UserCredentials } from '@/lib/api';
 import type { Business, UpdateBusinessInput, BusinessUser, Branch, BranchInput } from '@/types';
 import Image from 'next/image';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface NewEditBusinessModalProps {
   business: Business | null;
@@ -470,31 +471,27 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                     {activeTab === 'subscription' && (
                       <div className="space-y-6">
                         <div className="grid grid-cols-2 gap-4">
-                           <div className="space-y-1">
-                             <label className="text-xs font-medium text-zinc-500">Status</label>
-                             <select
-                               value={formData.subscription_status}
-                               onChange={(e) => setFormData({...formData, subscription_status: e.target.value as any})}
-                               className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg outline-none"
-                             >
-                               <option value="active">Active</option>
-                               <option value="trial">Trial</option>
-                               <option value="suspended">Suspended</option>
-                               <option value="inactive">Inactive</option>
-                             </select>
-                           </div>
-                           <div className="space-y-1">
-                             <label className="text-xs font-medium text-zinc-500">Tier</label>
-                             <select
-                               value={formData.subscription_tier}
-                               onChange={(e) => setFormData({...formData, subscription_tier: e.target.value as any})}
-                               className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg outline-none"
-                             >
-                               <option value="basic">Basic</option>
-                               <option value="pro">Pro</option>
-                               <option value="enterprise">Enterprise</option>
-                             </select>
-                           </div>
+                           <SearchableSelect
+                             label="Status"
+                             options={[
+                               { id: 'active', name: 'Active' },
+                               { id: 'inactive', name: 'Inactive' },
+                             ]}
+                             value={formData.subscription_status || 'active'}
+                             onChange={(value) => setFormData({...formData, subscription_status: value as any})}
+                             placeholder="Select status"
+                           />
+                           <SearchableSelect
+                             label="Tier"
+                             options={[
+                               { id: 'basic', name: 'Basic' },
+                               { id: 'pro', name: 'Pro' },
+                               { id: 'enterprise', name: 'Enterprise' },
+                             ]}
+                             value={formData.subscription_tier || 'basic'}
+                             onChange={(value) => setFormData({...formData, subscription_tier: value as any})}
+                             placeholder="Select tier"
+                           />
                         </div>
                         <div className="grid grid-cols-2 gap-4">
                            <div className="space-y-1">
@@ -527,24 +524,26 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                           <>
                             <div className="p-4 bg-white dark:bg-zinc-800 rounded-xl border border-zinc-200 dark:border-zinc-700 space-y-3">
                                <h4 className="text-xs font-bold uppercase text-zinc-400">Add New User</h4>
-                               <div className="flex gap-3">
+                               <div className="flex gap-3 items-end">
                                  <input 
                                    placeholder="Username" 
                                    value={newUser.username}
                                    onChange={(e) => setNewUser({...newUser, username: e.target.value})}
-                                   className="flex-1 px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
+                                   className="flex-1 px-4 py-3 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 transition-all"
                                  />
-                                 <select
-                                   value={newUser.role}
-                                   onChange={(e) => setNewUser({...newUser, role: e.target.value as any})}
-                                   className="w-32 px-3 py-2 bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm outline-none"
-                                 >
-                                   <option value="employee">Employee</option>
-                                   <option value="manager">Manager</option>
-                                   <option value="owner">Owner</option>
-                                   <option value="pos">POS Terminal</option>
-                                 </select>
-                                 <button onClick={handleAddUser} className="px-4 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg hover:bg-black dark:hover:bg-zinc-200 font-medium text-sm">Add</button>
+                                 <SearchableSelect
+                                   className="w-36"
+                                   options={[
+                                     { id: 'employee', name: 'Employee' },
+                                     { id: 'manager', name: 'Manager' },
+                                     { id: 'owner', name: 'Owner' },
+                                     { id: 'pos', name: 'POS Terminal' },
+                                   ]}
+                                   value={newUser.role || 'employee'}
+                                   onChange={(value) => setNewUser({...newUser, role: value as any})}
+                                   placeholder="Role"
+                                 />
+                                 <button onClick={handleAddUser} className="px-4 py-3 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-xl hover:bg-black dark:hover:bg-zinc-200 font-medium text-sm transition-colors">Add</button>
                                </div>
                             </div>
 

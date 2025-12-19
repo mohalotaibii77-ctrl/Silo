@@ -182,6 +182,21 @@ router.put('/:id', authenticateBusinessToken, async (req: AuthenticatedRequest, 
       return res.status(403).json({ error: 'Cannot edit categories from other businesses' });
     }
 
+    // Check for duplicate name if name is being updated
+    if (name && name.trim().toLowerCase() !== category.name.toLowerCase()) {
+      const { data: existing } = await supabase
+        .from('product_categories')
+        .select('id')
+        .eq('business_id', businessId)
+        .ilike('name', name.trim())
+        .neq('id', categoryId)
+        .single();
+
+      if (existing) {
+        return res.status(400).json({ error: 'A category with this name already exists' });
+      }
+    }
+
     const { data, error } = await supabase
       .from('product_categories')
       .update({

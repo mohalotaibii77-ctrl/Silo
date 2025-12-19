@@ -2,22 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Package, Loader2 } from 'lucide-react';
-import { 
-  CreateItemData, 
-  ITEM_CATEGORIES, 
-  ITEM_UNITS, 
-  STORAGE_UNITS,
-  ItemCategory, 
-  ItemUnit, 
-  StorageUnit,
-  CATEGORY_TRANSLATIONS,
-  getDefaultStorageUnit,
-  getCompatibleStorageUnits,
-  areUnitsCompatible
-} from '@/types/items';
+import { X, Package, Loader2, ShoppingBag } from 'lucide-react';
+import { CreateItemData, ItemCategory, ItemUnit, StorageUnit, ItemType } from '@/types/items';
 import { createItem } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { useConfig } from '@/lib/config-context';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface AddItemModalProps {
   isOpen: boolean;
@@ -25,31 +15,20 @@ interface AddItemModalProps {
   onSuccess: () => void;
   language?: string;
   currency?: string;
+  itemType?: ItemType; // Optional: pre-set item type (food or non_food)
 }
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
-};
-
-const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
-  grams: { en: 'Grams', ar: 'جرام' },
-  mL: { en: 'Milliliters', ar: 'مل' },
-  piece: { en: 'Piece', ar: 'قطعة' },
-};
-
-const STORAGE_UNIT_TRANSLATIONS: Record<StorageUnit, { en: string; ar: string }> = {
-  Kg: { en: 'Kilogram', ar: 'كيلوجرام' },
-  grams: { en: 'Grams', ar: 'جرام' },
-  L: { en: 'Liter', ar: 'لتر' },
-  mL: { en: 'Milliliters', ar: 'مل' },
-  piece: { en: 'Piece', ar: 'قطعة' },
-};
-
-export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: AddItemModalProps) {
-  const { isRTL, t } = useLanguage();
-  const currencySymbol = CURRENCY_SYMBOLS[currency] || currency;
+export function AddItemModal({ isOpen, onClose, onSuccess, currency, itemType }: AddItemModalProps) {
+  const { isRTL, t, currency: contextCurrency } = useLanguage();
+  const { config, getCategoryLabel, getCurrencySymbol, getServingUnit, getStorageUnit, getCompatibleStorageUnits, getDefaultStorageUnit } = useConfig();
+  // Use passed currency or fall back to context currency (from business settings)
+  const activeCurrency = currency || contextCurrency;
+  const currencySymbol = getCurrencySymbol(activeCurrency);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Determine if this is a non-food (accessory) item
+  const isNonFood = itemType === 'non_food';
 
   // Lock body scroll when modal is open
   useEffect(() => {
@@ -66,11 +45,27 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
   const [formData, setFormData] = useState<CreateItemData>({
     name: '',
     name_ar: '',
-    category: 'vegetable',
-    unit: 'grams',
-    storage_unit: 'Kg',
+    item_type: itemType || 'food',
+    category: isNonFood ? 'non_food' : 'vegetable',
+    unit: isNonFood ? 'piece' : 'grams', // Non-food items typically use pieces
+    storage_unit: isNonFood ? 'piece' : 'Kg',
     cost_per_unit: 0,
   });
+
+  // Reset form when itemType changes
+  useEffect(() => {
+    if (isOpen) {
+      setFormData({
+        name: '',
+        name_ar: '',
+        item_type: itemType || 'food',
+        category: isNonFood ? 'non_food' : 'vegetable',
+        unit: isNonFood ? 'piece' : 'grams',
+        storage_unit: isNonFood ? 'piece' : 'Kg',
+        cost_per_unit: 0,
+      });
+    }
+  }, [isOpen, itemType, isNonFood]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value, type } = e.target;
@@ -86,9 +81,11 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
         const newServingUnit = value as ItemUnit;
         const currentStorageUnit = prev.storage_unit as StorageUnit;
         
-        // Check if current storage unit is still compatible
-        if (!areUnitsCompatible(currentStorageUnit, newServingUnit)) {
-          updated.storage_unit = getDefaultStorageUnit(newServingUnit);
+        // Check if current storage unit is still compatible using config
+        const compatibleUnits = getCompatibleStorageUnits(newServingUnit);
+        const isCompatible = compatibleUnits.some(u => u.id === currentStorageUnit);
+        if (!isCompatible) {
+          updated.storage_unit = getDefaultStorageUnit(newServingUnit) as StorageUnit;
         }
       }
       
@@ -97,7 +94,8 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
   };
 
   const formatStorageUnitLabel = (unit: StorageUnit) => {
-    return isRTL ? STORAGE_UNIT_TRANSLATIONS[unit].ar : STORAGE_UNIT_TRANSLATIONS[unit].en;
+    const storageUnit = getStorageUnit(unit);
+    return isRTL ? storageUnit?.name_ar || unit : storageUnit?.name || unit;
   };
 
   // Get compatible storage units for current serving unit
@@ -120,9 +118,10 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
       setFormData({
         name: '',
         name_ar: '',
-        category: 'vegetable',
-        unit: 'grams',
-        storage_unit: 'Kg',
+        item_type: itemType || 'food',
+        category: isNonFood ? 'non_food' : 'vegetable',
+        unit: isNonFood ? 'piece' : 'grams',
+        storage_unit: isNonFood ? 'piece' : 'Kg',
         cost_per_unit: 0,
       });
     } catch (err: any) {
@@ -132,15 +131,13 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
     }
   };
 
-  const formatCategoryLabel = (category: ItemCategory) => {
-    if (CATEGORY_TRANSLATIONS[category]) {
-      return isRTL ? CATEGORY_TRANSLATIONS[category].ar : CATEGORY_TRANSLATIONS[category].en;
-    }
-    return category.charAt(0).toUpperCase() + category.slice(1);
+  const formatCategoryLabel = (category: string) => {
+    return getCategoryLabel(category, isRTL ? 'ar' : 'en');
   };
 
   const formatUnitLabel = (unit: ItemUnit) => {
-    return isRTL ? UNIT_TRANSLATIONS[unit].ar : UNIT_TRANSLATIONS[unit].en;
+    const servingUnit = getServingUnit(unit);
+    return isRTL ? servingUnit?.name_ar || unit : servingUnit?.name || unit;
   };
 
   return (
@@ -165,15 +162,29 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
               {/* Header */}
               <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                    <Package className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                    isNonFood 
+                      ? 'bg-amber-100 dark:bg-amber-900/30' 
+                      : 'bg-zinc-100 dark:bg-zinc-800'
+                  }`}>
+                    {isNonFood ? (
+                      <ShoppingBag className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                    ) : (
+                      <Package className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                    )}
                   </div>
                   <div>
                     <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-                      {t('Add New Item', 'إضافة مادة جديدة')}
+                      {isNonFood 
+                        ? t('Add Non-Food Item', 'إضافة مادة غير غذائية')
+                        : t('Add New Item', 'إضافة مادة جديدة')
+                      }
                     </h2>
                     <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                      {t('Create a new ingredient or raw material', 'إنشاء مكون جديد أو مادة خام')}
+                      {isNonFood
+                        ? t('Create a new accessory item (packaging, supplies, etc.)', 'إنشاء ملحق جديد (تعبئة، مستلزمات، إلخ)')
+                        : t('Create a new ingredient or raw material', 'إنشاء مكون جديد أو مادة خام')
+                      }
                     </p>
                   </div>
                 </div>
@@ -225,22 +236,21 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
                   />
                 </div>
 
-                {/* Category */}
-                <div>
-                  <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-                    {t('Category *', 'الفئة *')}
-                  </label>
-                  <select
-                    name="category"
+                {/* Category - Only show for food items */}
+                {!isNonFood && (
+                  <SearchableSelect
+                    label={t('Category *', 'الفئة *')}
                     value={formData.category}
-                    onChange={handleChange}
-                    className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
-                  >
-                    {ITEM_CATEGORIES.map(cat => (
-                      <option key={cat} value={cat}>{formatCategoryLabel(cat)}</option>
-                    ))}
-                  </select>
-                </div>
+                    onChange={(val) => handleChange({ target: { name: 'category', value: val || 'vegetable' } } as any)}
+                    options={(config?.itemCategories || [])
+                      .filter(cat => cat.item_type === 'food')
+                      .map(cat => ({
+                        id: cat.id,
+                        name: formatCategoryLabel(cat.id),
+                      }))}
+                    placeholder={t('Select category', 'اختر الفئة')}
+                  />
+                )}
 
                 {/* Storage Unit and Serving Unit Row */}
                 <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700">
@@ -249,37 +259,31 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency = 'USD' }: A
                   </p>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
-                        {t('Storage Unit *', 'وحدة التخزين *')}
-                      </label>
-                      <select
-                        name="storage_unit"
+                      <SearchableSelect
+                        label={t('Storage Unit *', 'وحدة التخزين *')}
                         value={formData.storage_unit}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
-                      >
-                        {compatibleStorageUnits.map(unit => (
-                          <option key={unit} value={unit}>{formatStorageUnitLabel(unit)}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleChange({ target: { name: 'storage_unit', value: val || 'kg' } } as any)}
+                        options={compatibleStorageUnits.map(unit => ({
+                          id: unit.id,
+                          name: formatStorageUnitLabel(unit.id as StorageUnit),
+                        }))}
+                        placeholder={t('Select unit', 'اختر الوحدة')}
+                      />
                       <p className="text-[10px] text-zinc-500 mt-1">
                         {t('How this item is stored in inventory', 'كيف يتم تخزين هذه المادة في المخزون')}
                       </p>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1.5">
-                        {t('Serving Unit *', 'وحدة التقديم *')}
-                      </label>
-                      <select
-                        name="unit"
+                      <SearchableSelect
+                        label={t('Serving Unit *', 'وحدة التقديم *')}
                         value={formData.unit}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-sm"
-                      >
-                        {ITEM_UNITS.map(unit => (
-                          <option key={unit} value={unit}>{formatUnitLabel(unit)}</option>
-                        ))}
-                      </select>
+                        onChange={(val) => handleChange({ target: { name: 'unit', value: val || 'g' } } as any)}
+                        options={(config?.servingUnits || []).map(unit => ({
+                          id: unit.id,
+                          name: formatUnitLabel(unit.id as ItemUnit),
+                        }))}
+                        placeholder={t('Select unit', 'اختر الوحدة')}
+                      />
                       <p className="text-[10px] text-zinc-500 mt-1">
                         {t('How this item is used in products', 'كيف يتم استخدام هذه المادة في المنتجات')}
                       </p>

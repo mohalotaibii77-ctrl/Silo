@@ -70,14 +70,18 @@ async function start() {
     console.log('⚠️  Database connection failed (will retry on requests)');
   }
 
-  // Start server
-  app.listen(parseInt(env.PORT), () => {
-    console.log(`✅ Server running on port ${env.PORT}`);
+  // Start server - listen on all interfaces (0.0.0.0) for mobile device access
+  const HOST = '0.0.0.0';
+  app.listen(parseInt(env.PORT), HOST, () => {
+    console.log(`✅ Server running on ${HOST}:${env.PORT}`);
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
     console.log('📍 Endpoints:');
     console.log(`   API:    http://localhost:${env.PORT}/api`);
     console.log(`   Health: http://localhost:${env.PORT}/api/health`);
+    console.log('');
+    console.log('📱 For mobile devices, use your local IP:');
+    console.log(`   http://<YOUR_IP>:${env.PORT}/api`);
     console.log('');
     console.log('🔧 Services:');
     console.log('   • Auth          - /api/auth (SuperAdmin)');

@@ -21,7 +21,12 @@ import {
   Truck,
   FileText,
   ArrowLeftRight,
-  ClipboardList
+  ClipboardList,
+  MessageSquareMore,
+  PackageCheck,
+  Armchair,
+  Car,
+  Receipt
 } from 'lucide-react';
 import { useLanguage } from '@/lib/language-context';
 
@@ -52,6 +57,7 @@ interface SidebarProps {
 }
 
 const navItems: NavItem[] = [
+  { name: 'Orders', nameAr: 'الطلبات', href: '/orders', icon: Receipt },
   { 
     name: 'Items', 
     nameAr: 'المواد', 
@@ -60,6 +66,7 @@ const navItems: NavItem[] = [
     subItems: [
       { name: 'Raw Items', nameAr: 'المواد الخام', href: '/items?tab=raw', icon: Package },
       { name: 'Composite Items', nameAr: 'المواد المركبة', href: '/items?tab=production', icon: Layers },
+      { name: 'Production of Composite Items', nameAr: 'إنتاج المواد المركبة', href: '/items?tab=composite-production', icon: ClipboardList },
     ]
   },
   { name: 'Products', nameAr: 'المنتجات', href: '/products', icon: ShoppingBag },
@@ -71,14 +78,19 @@ const navItems: NavItem[] = [
     href: '/inventory', 
     icon: Warehouse,
     subItems: [
+      { name: 'Inventory', nameAr: 'المخزون', href: '/inventory?tab=inventory', icon: PackageCheck },
       { name: 'Vendors', nameAr: 'الموردين', href: '/inventory?tab=vendors', icon: Truck },
       { name: 'Purchase Orders', nameAr: 'أوامر الشراء', href: '/inventory?tab=purchase-orders', icon: FileText },
       { name: 'Transfers', nameAr: 'التحويلات', href: '/inventory?tab=transfers', icon: ArrowLeftRight },
       { name: 'Inventory Counts', nameAr: 'جرد المخزون', href: '/inventory?tab=counts', icon: ClipboardList },
     ]
   },
+  { name: 'Delivery', nameAr: 'التوصيل', href: '/delivery', icon: Truck },
+  { name: 'Tables', nameAr: 'الطاولات', href: '/tables', icon: Armchair },
+  { name: 'Drivers', nameAr: 'السائقين', href: '/drivers', icon: Car },
   { name: 'Discounts', nameAr: 'الخصومات', href: '/discounts', icon: Percent },
   { name: 'Users-Roles', nameAr: 'المستخدمين', href: '/users-roles', icon: UserCog },
+  { name: 'Requests', nameAr: 'طلبات الدعم', href: '/requests', icon: MessageSquareMore },
   { name: 'Settings', nameAr: 'الإعدادات', href: '/settings', icon: Settings },
 ];
 
@@ -88,6 +100,10 @@ export function Sidebar({ business }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const { language, isRTL, t } = useLanguage();
+
+  // Store-setup is exclusively for owners - no filtering needed
+  // All nav items are accessible to logged-in users (who must be owners)
+  const filteredNavItems = navItems;
 
   // Check if a href matches the current URL (including query params)
   const isLinkActive = (href: string) => {
@@ -138,7 +154,7 @@ export function Sidebar({ business }: SidebarProps) {
           {collapsed ? '—' : t('Menu Setup', 'إعداد القائمة')}
         </div>
         
-        {navItems.map((item) => {
+        {filteredNavItems.map((item) => {
           const hasSubItems = item.subItems && item.subItems.length > 0;
           const isSubActive = hasSubItems && item.subItems?.some(sub => isLinkActive(sub.href));
           const isExpanded = hoveredItem === item.name || isSubActive;
@@ -228,6 +244,7 @@ export function Sidebar({ business }: SidebarProps) {
                               <Link
                                 key={subItem.name}
                                 href={subItem.href}
+                                prefetch={false}
                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative ${isRTL ? 'flex-row-reverse' : ''} ${
                                   isSubItemActive 
                                     ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white font-medium' 
@@ -239,7 +256,7 @@ export function Sidebar({ business }: SidebarProps) {
                                     ? 'text-zinc-900 dark:text-white' 
                                     : 'group-hover:text-zinc-900 dark:group-hover:text-white'
                                 }`} />
-                                <span className={`whitespace-nowrap text-sm ${isRTL ? 'text-right' : 'text-left'}`}>
+                                <span className={`text-sm leading-tight ${isRTL ? 'text-right' : 'text-left'}`}>
                                   {subDisplayName}
                                 </span>
                               </Link>
@@ -254,6 +271,7 @@ export function Sidebar({ business }: SidebarProps) {
                 // Regular item without sub-items
                 <Link
                   href={item.href}
+                  prefetch={false}
                   className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group relative ${isRTL ? 'flex-row-reverse' : ''} ${
                     isActive 
                       ? 'bg-zinc-100 text-zinc-900 dark:bg-zinc-800 dark:text-white font-medium' 

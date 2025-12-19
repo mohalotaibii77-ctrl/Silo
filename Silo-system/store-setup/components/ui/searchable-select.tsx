@@ -31,7 +31,8 @@ export function SearchableSelect({
   const { isRTL } = useLanguage();
   const [query, setQuery] = useState('');
 
-  const selectedOption = value ? options.find(opt => opt.id === value) : null;
+  // Ensure selectedOption is always null (not undefined) to keep component controlled
+  const selectedOption = value != null ? (options.find(opt => opt.id === value) ?? null) : null;
 
   const filteredOptions =
     query === ''

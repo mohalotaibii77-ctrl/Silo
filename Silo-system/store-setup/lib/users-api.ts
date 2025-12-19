@@ -9,36 +9,75 @@
 
 import api from './api';
 
+// User permissions for Business-App access control
+export interface UserPermissions {
+  orders: boolean;      // View/manage orders
+  menu_edit: boolean;   // Items, Products, Bundles, Categories
+  inventory: boolean;   // PO, Transfers, Vendors, Counts
+  delivery: boolean;    // Delivery Partners
+  tables: boolean;      // Table Management
+  drivers: boolean;     // Driver Management
+  discounts: boolean;   // Discount Management
+  pos_access: boolean;  // POS Terminal Access
+}
+
+// Default permissions by role
+export const DEFAULT_PERMISSIONS: Record<'manager' | 'employee', UserPermissions> = {
+  manager: {
+    orders: true,
+    menu_edit: true,
+    inventory: true,
+    delivery: true,
+    tables: true,
+    drivers: true,
+    discounts: true,
+    pos_access: true,
+  },
+  employee: {
+    orders: false,
+    menu_edit: false,
+    inventory: false,
+    delivery: false,
+    tables: false,
+    drivers: false,
+    discounts: false,
+    pos_access: false,
+  },
+};
+
 export interface BusinessUser {
   id: number;
   username: string;
-  role: 'owner' | 'manager' | 'employee' | 'pos';
+  role: 'owner' | 'manager' | 'employee' | 'pos' | 'kitchen_display';
   first_name?: string;
   last_name?: string;
   email?: string;
   phone?: string;
   status: 'active' | 'inactive' | 'suspended';
+  permissions?: UserPermissions | null;  // Only for manager/employee roles
   last_login?: string;
   created_at: string;
 }
 
 export interface CreateUserData {
   username: string;
-  role: 'manager' | 'employee' | 'pos';
+  role: 'manager' | 'employee' | 'pos' | 'kitchen_display';
   first_name?: string;
   last_name?: string;
   email?: string;
   phone?: string;
+  permissions?: UserPermissions;  // Only for manager/employee roles
 }
 
 export interface UpdateUserData {
   username?: string;
-  role?: 'manager' | 'employee' | 'pos';
+  role?: 'manager' | 'employee' | 'pos' | 'kitchen_display';
   first_name?: string;
   last_name?: string;
   email?: string;
   phone?: string;
   status?: 'active' | 'inactive' | 'suspended';
+  permissions?: UserPermissions;  // Only for manager/employee roles
 }
 
 export interface UsersResponse {

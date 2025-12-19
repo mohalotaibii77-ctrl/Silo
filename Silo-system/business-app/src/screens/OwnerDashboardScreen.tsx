@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, ActivityIndicator, RefreshControl } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../theme/colors';
 import api from '../api/client';
+import { dataPreloader } from '../services/DataPreloader';
+import { useLocalization } from '../localization/LocalizationContext';
 import { 
   LayoutDashboard, 
   Package, 
@@ -13,22 +15,39 @@ import {
   Settings, 
   LogOut,
   ChevronRight,
+  ChevronDown,
   Bell,
-  Search,
   Building2,
   Check,
   Layers,
   TrendingUp,
   Clock,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  MapPin,
+  FileText,
+  Command,
+  FolderTree,
+  Boxes,
+  Armchair,
+  Car,
+  Truck,
+  Percent
 } from 'lucide-react-native';
+
+interface Branch {
+  id: number;
+  name: string;
+  is_main: boolean;
+  is_active: boolean;
+}
 
 interface Business {
   id: number;
   name: string;
   slug: string;
   currency?: string;
+  branches?: Branch[];
 }
 
 interface DashboardStats {
@@ -42,27 +61,109 @@ interface DashboardStats {
 
 type TimePeriod = 'today' | 'week' | 'month' | 'year' | 'all';
 
-const TIME_PERIODS: { value: TimePeriod; label: string }[] = [
-  { value: 'today', label: 'Today' },
-  { value: 'week', label: 'This Week' },
-  { value: 'month', label: 'This Month' },
-  { value: 'year', label: 'This Year' },
-  { value: 'all', label: 'All Time' },
-];
+// Skeleton component for loading states
+const Skeleton = ({ width, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+  const pulseAnim = useRef(new Animated.Value(0.3)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0.3,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  return (
+    <Animated.View
+      style={[
+        {
+          width,
+          height,
+          borderRadius,
+          backgroundColor: colors.border,
+          opacity: pulseAnim,
+        },
+        style,
+      ]}
+    />
+  );
+};
+
+// Skeleton stat card
+const StatCardSkeleton = ({ isRTL }: { isRTL: boolean }) => (
+  <View style={[skeletonStyles.statCard, isRTL && skeletonStyles.statCardRTL]}>
+    <Skeleton width={40} height={40} borderRadius={10} style={{ marginBottom: 12, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
+    <Skeleton width={80} height={28} borderRadius={6} style={{ marginBottom: 8, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
+    <Skeleton width={60} height={14} borderRadius={4} style={{ alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
+  </View>
+);
+
+const skeletonStyles = StyleSheet.create({
+  statCard: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 16,
+    width: '48%',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  statCardRTL: {
+    alignItems: 'flex-end',
+  },
+});
 
 export default function OwnerDashboardScreen({ navigation }: any) {
+  const { t, isRTL, formatCurrency } = useLocalization();
+  
+  // Time periods with translations
+  const TIME_PERIODS: { value: TimePeriod; label: string }[] = [
+    { value: 'today', label: t('today') },
+    { value: 'week', label: t('thisWeek') },
+    { value: 'month', label: t('thisMonth') },
+    { value: 'year', label: t('thisYear') },
+    { value: 'all', label: t('allTime') },
+  ];
   const [currentBusiness, setCurrentBusiness] = useState<Business | null>(null);
+  const [currentBranch, setCurrentBranch] = useState<Branch | null>(null);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [showBusinessPicker, setShowBusinessPicker] = useState(false);
   const [isAllWorkspaces, setIsAllWorkspaces] = useState(false);
+  const [isAllBranches, setIsAllBranches] = useState(true); // View all branches of a business
+  const [expandedBusinessId, setExpandedBusinessId] = useState<number | null>(null);
   const [selectedPeriod, setSelectedPeriod] = useState<TimePeriod>('today');
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const filterScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     loadBusinessData();
-  }, []);
+    
+    // Prefetch management screens data in background for instant navigation
+    dataPreloader.prefetch([
+      'Items', 'Products', 'Orders', 'Inventory',
+      'Categories', 'Bundles', 'StaffManagement',
+      'DeliveryPartners', 'Tables', 'Drivers', 'Discounts'
+    ]).catch(() => {});
+    
+    // Refresh data when screen comes into focus
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadBusinessData();
+    });
+    
+    return unsubscribe;
+  }, [navigation]);
 
   useEffect(() => {
     if (currentBusiness || isAllWorkspaces) {
@@ -74,12 +175,33 @@ export default function OwnerDashboardScreen({ navigation }: any) {
     try {
       const businessStr = await AsyncStorage.getItem('business');
       const businessesStr = await AsyncStorage.getItem('businesses');
+      const branchStr = await AsyncStorage.getItem('branch');
       
       if (businessStr) {
         setCurrentBusiness(JSON.parse(businessStr));
       }
+      if (branchStr) {
+        const branch = JSON.parse(branchStr);
+        setCurrentBranch(branch);
+        setIsAllBranches(false);
+      }
       if (businessesStr) {
-        setBusinesses(JSON.parse(businessesStr));
+        const businessList = JSON.parse(businessesStr);
+        // Fetch branches for each business
+        const businessesWithBranches = await Promise.all(
+          businessList.map(async (business: Business) => {
+            try {
+              const response = await api.get(`/businesses/${business.id}/branches`);
+              return {
+                ...business,
+                branches: response.data.branches || []
+              };
+            } catch (err) {
+              return { ...business, branches: [] };
+            }
+          })
+        );
+        setBusinesses(businessesWithBranches);
       }
     } catch (error) {
       console.error('Error loading business data:', error);
@@ -111,40 +233,48 @@ export default function OwnerDashboardScreen({ navigation }: any) {
     fetchDashboardStats();
   }, [selectedPeriod, isAllWorkspaces]);
 
-  const switchBusiness = async (business: Business | null) => {
+  const switchBusiness = async (business: Business | null, branch: Branch | null = null, allBranches: boolean = true) => {
     try {
       if (business === null) {
         // Switch to "All Workspaces" mode
         setIsAllWorkspaces(true);
         setCurrentBusiness(null);
+        setCurrentBranch(null);
+        setIsAllBranches(true);
+        await AsyncStorage.removeItem('business');
+        await AsyncStorage.removeItem('branch');
       } else {
         setIsAllWorkspaces(false);
         await AsyncStorage.setItem('business', JSON.stringify(business));
         setCurrentBusiness(business);
+        
+        if (allBranches) {
+          // View all branches of this business
+          setIsAllBranches(true);
+          setCurrentBranch(null);
+          await AsyncStorage.removeItem('branch');
+        } else if (branch) {
+          // View specific branch
+          setIsAllBranches(false);
+          setCurrentBranch(branch);
+          await AsyncStorage.setItem('branch', JSON.stringify(branch));
+        }
       }
       setShowBusinessPicker(false);
+      setExpandedBusinessId(null);
       setLoading(true);
     } catch (error) {
       console.error('Error switching business:', error);
     }
   };
 
+  const toggleBusinessExpand = (businessId: number) => {
+    setExpandedBusinessId(expandedBusinessId === businessId ? null : businessId);
+  };
+
   const handleLogout = async () => {
     await AsyncStorage.clear();
     navigation.replace('Login');
-  };
-
-  const formatCurrency = (amount: number, currency: string = 'USD') => {
-    const symbols: Record<string, string> = {
-      USD: '$',
-      KWD: 'KD ',
-      EUR: '€',
-      GBP: '£',
-      SAR: 'SR ',
-      AED: 'AED ',
-    };
-    const symbol = symbols[currency] || currency + ' ';
-    return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const getPeriodLabel = () => {
@@ -153,32 +283,62 @@ export default function OwnerDashboardScreen({ navigation }: any) {
   };
 
   const MenuItem = ({ icon: Icon, title, subtitle, isLast, onPress }: any) => (
-    <TouchableOpacity style={[styles.menuItem, isLast && styles.menuItemLast]} onPress={onPress}>
-      <View style={styles.menuIconContainer}>
-        <Icon size={22} color={colors.foreground} />
-      </View>
-      <View style={styles.menuTextContainer}>
-        <Text style={styles.menuTitle}>{title}</Text>
-        {subtitle && <Text style={styles.menuSubtitle}>{subtitle}</Text>}
-      </View>
-      <View style={styles.menuArrowContainer}>
-        <ChevronRight size={18} color={colors.mutedForeground} />
-      </View>
+    <TouchableOpacity style={[styles.menuItem, isLast && styles.menuItemLast, isRTL && styles.rtlRow]} onPress={onPress}>
+      {/* With row-reverse: first element goes RIGHT, last element goes LEFT */}
+      {/* RTL visual: Icon (right) -> Text -> Arrow (left) */}
+      {/* LTR visual: Icon (left) -> Text -> Arrow (right) */}
+      {isRTL ? (
+        <>
+          <View style={[styles.menuIconContainer, { marginRight: 0, marginLeft: 16 }]}>
+            <Icon size={22} color={colors.foreground} />
+          </View>
+          <View style={[styles.menuTextContainer, { alignItems: 'flex-end' }]}>
+            <Text style={[styles.menuTitle, styles.rtlText]}>{title}</Text>
+            {subtitle && <Text style={[styles.menuSubtitle, styles.rtlText]}>{subtitle}</Text>}
+          </View>
+          <View style={styles.menuArrowContainer}>
+            <ChevronRight size={18} color={colors.mutedForeground} style={{ transform: [{ rotate: '180deg' }] }} />
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles.menuIconContainer}>
+            <Icon size={22} color={colors.foreground} />
+          </View>
+          <View style={styles.menuTextContainer}>
+            <Text style={styles.menuTitle}>{title}</Text>
+            {subtitle && <Text style={styles.menuSubtitle}>{subtitle}</Text>}
+          </View>
+          <View style={styles.menuArrowContainer}>
+            <ChevronRight size={18} color={colors.mutedForeground} />
+          </View>
+        </>
+      )}
     </TouchableOpacity>
   );
 
   const StatCard = ({ icon: Icon, title, value, subtitle, color }: any) => (
-    <View style={styles.statCard}>
-      <View style={[styles.statIconContainer, { backgroundColor: `${color}15` }]}>
+    <View style={[styles.statCard, isRTL && styles.statCardRTL]}>
+      <View style={[styles.statIconContainer, { backgroundColor: `${color}15` }, isRTL && { alignSelf: 'flex-end' }]}>
         <Icon size={20} color={color} />
       </View>
-      <Text style={styles.statValue}>{value}</Text>
-      <Text style={styles.statTitle}>{title}</Text>
-      {subtitle && <Text style={styles.statSubtitle}>{subtitle}</Text>}
+      <Text style={[styles.statValue, isRTL && styles.rtlText]}>{value}</Text>
+      <Text style={[styles.statTitle, isRTL && styles.rtlText]}>{title}</Text>
+      {subtitle && <Text style={[styles.statSubtitle, isRTL && styles.rtlText]}>{subtitle}</Text>}
     </View>
   );
 
-  const displayName = isAllWorkspaces ? 'All Workspaces' : (currentBusiness?.name || 'Silo Business');
+  const displayName = isAllWorkspaces 
+    ? t('allWorkspaces') 
+    : currentBranch 
+      ? `${currentBusiness?.name} - ${currentBranch.name}`
+      : (currentBusiness?.name || 'Silo Business');
+  
+  const displaySubtitle = isAllWorkspaces 
+    ? 'Combined View' 
+    : currentBranch 
+      ? 'Branch View'
+      : 'All Branches';
 
   return (
     <View style={styles.container}>
@@ -195,23 +355,25 @@ export default function OwnerDashboardScreen({ navigation }: any) {
           onPress={() => setShowBusinessPicker(false)}
         >
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Switch Workspace</Text>
+            <Text style={[styles.modalTitle, isRTL && styles.rtlText]}>{t('selectWorkspace')}</Text>
             
             {/* All Workspaces Option */}
             {businesses.length > 1 && (
               <TouchableOpacity
                 style={[
                   styles.businessOption,
-                  isAllWorkspaces && styles.businessOptionActive
+                  isAllWorkspaces && styles.businessOptionActive,
+                  isRTL && styles.rtlRow
                 ]}
                 onPress={() => switchBusiness(null)}
               >
                 <Layers size={20} color={isAllWorkspaces ? colors.primary : colors.mutedForeground} />
                 <Text style={[
                   styles.businessOptionText,
-                  isAllWorkspaces && styles.businessOptionTextActive
+                  isAllWorkspaces && styles.businessOptionTextActive,
+                  isRTL && styles.rtlText
                 ]}>
-                  All Workspaces
+                  {t('allWorkspaces')}
                 </Text>
                 {isAllWorkspaces && (
                   <Check size={18} color={colors.primary} />
@@ -219,70 +381,181 @@ export default function OwnerDashboardScreen({ navigation }: any) {
               </TouchableOpacity>
             )}
 
-            {/* Individual Businesses */}
-            {businesses.map((business) => (
-              <TouchableOpacity
-                key={business.id}
-                style={[
-                  styles.businessOption,
-                  !isAllWorkspaces && currentBusiness?.id === business.id && styles.businessOptionActive
-                ]}
-                onPress={() => switchBusiness(business)}
-              >
-                <Building2 size={20} color={!isAllWorkspaces && currentBusiness?.id === business.id ? colors.primary : colors.mutedForeground} />
-                <Text style={[
-                  styles.businessOptionText,
-                  !isAllWorkspaces && currentBusiness?.id === business.id && styles.businessOptionTextActive
-                ]}>
-                  {business.name}
-                </Text>
-                {!isAllWorkspaces && currentBusiness?.id === business.id && (
-                  <Check size={18} color={colors.primary} />
-                )}
-              </TouchableOpacity>
-            ))}
+            {/* Individual Businesses with Branches */}
+            <ScrollView style={styles.businessList} showsVerticalScrollIndicator={false}>
+              {businesses.map((business) => (
+                <View key={business.id}>
+                  {/* Business Header - Click to expand */}
+                  <TouchableOpacity
+                    style={[
+                      styles.businessOption,
+                      !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.businessOptionActive
+                    ]}
+                    onPress={() => {
+                      if (business.branches && business.branches.length > 0) {
+                        toggleBusinessExpand(business.id);
+                      } else {
+                        switchBusiness(business, null, true);
+                      }
+                    }}
+                    onLongPress={() => switchBusiness(business, null, true)}
+                  >
+                    <Building2 size={20} color={!isAllWorkspaces && currentBusiness?.id === business.id ? colors.primary : colors.mutedForeground} />
+                    <Text style={[
+                      styles.businessOptionText,
+                      !isAllWorkspaces && currentBusiness?.id === business.id && styles.businessOptionTextActive
+                    ]}>
+                      {business.name}
+                    </Text>
+                    {business.branches && business.branches.length > 0 && (
+                      <View style={styles.expandIcon}>
+                        {expandedBusinessId === business.id ? (
+                          <ChevronDown size={18} color={colors.mutedForeground} />
+                        ) : (
+                          <ChevronRight size={18} color={colors.mutedForeground} />
+                        )}
+                      </View>
+                    )}
+                    {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
+                      <Check size={18} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+
+                  {/* Expanded Branches */}
+                  {expandedBusinessId === business.id && business.branches && (
+                    <View style={styles.branchesContainer}>
+                      {/* All Branches Option */}
+                      <TouchableOpacity
+                        style={[
+                          styles.branchOption,
+                          !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionActive,
+                          isRTL && styles.rtlRow
+                        ]}
+                        onPress={() => switchBusiness(business, null, true)}
+                      >
+                        <Layers size={16} color={!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches ? colors.primary : colors.mutedForeground} />
+                        <Text style={[
+                          styles.branchOptionText,
+                          !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionTextActive,
+                          isRTL && styles.rtlText
+                        ]}>
+                          {t('allBranches')}
+                        </Text>
+                        {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
+                          <Check size={16} color={colors.primary} />
+                        )}
+                      </TouchableOpacity>
+
+                      {/* Individual Branches */}
+                      {business.branches.filter(b => b.is_active).map((branch) => (
+                        <TouchableOpacity
+                          key={branch.id}
+                          style={[
+                            styles.branchOption,
+                            !isAllWorkspaces && currentBusiness?.id === business.id && currentBranch?.id === branch.id && styles.branchOptionActive,
+                            isRTL && styles.rtlRow
+                          ]}
+                          onPress={() => switchBusiness(business, branch, false)}
+                        >
+                          <MapPin size={16} color={currentBranch?.id === branch.id ? colors.primary : colors.mutedForeground} />
+                          <View style={[styles.branchTextContainer, isRTL && { alignItems: 'flex-end' }]}>
+                            <Text style={[
+                              styles.branchOptionText,
+                              currentBranch?.id === branch.id && styles.branchOptionTextActive,
+                              isRTL && styles.rtlText
+                            ]}>
+                              {branch.name}
+                            </Text>
+                            {branch.is_main && (
+                              <View style={styles.mainBadge}>
+                                <Text style={styles.mainBadgeText}>{t('mainBranch')}</Text>
+                              </View>
+                            )}
+                          </View>
+                          {!isAllWorkspaces && currentBranch?.id === branch.id && (
+                            <Check size={16} color={colors.primary} />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              ))}
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>
 
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <TouchableOpacity onPress={() => businesses.length > 0 && setShowBusinessPicker(true)}>
-            <Text style={styles.headerBrand}>{displayName}</Text>
-            <View style={styles.headerSubRow}>
-              <Text style={styles.headerRole}>Owner Workspace</Text>
-              {businesses.length > 1 && (
-                <View style={[styles.switchBadge, isAllWorkspaces && styles.switchBadgeAll]}>
-                  <Text style={styles.switchBadgeText}>{isAllWorkspaces ? 'Combined' : 'Switch'}</Text>
-                </View>
-              )}
-            </View>
-          </TouchableOpacity>
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Search size={20} color={colors.foreground} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <Bell size={20} color={colors.foreground} />
-              <View style={styles.badge} />
-            </TouchableOpacity>
-            <TouchableOpacity style={[styles.iconButton, styles.logoutButton]} onPress={handleLogout}>
-              <LogOut size={20} color={colors.destructive} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-
       <ScrollView 
-        style={styles.content} 
+        style={styles.scrollView} 
         showsVerticalScrollIndicator={false} 
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
+        <View style={styles.header}>
+          {/* Top row: Logo + Actions */}
+          <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
+            {/* Logo + Brand name on leading side */}
+            <View style={[styles.logoSection, isRTL && styles.rtlRow]}>
+              <View style={styles.logoContainer}>
+                <Command size={28} color={colors.foreground} />
+              </View>
+              <Text style={[styles.brandName, isRTL && { marginLeft: 0, marginRight: 10 }]}>Sylo</Text>
+            </View>
+            
+            {/* Actions on trailing side */}
+            <View style={styles.headerActions}>
+              <TouchableOpacity style={styles.iconButton}>
+                <Bell size={20} color={colors.foreground} />
+                <View style={styles.badge} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.iconButton, styles.logoutButton]} onPress={handleLogout}>
+                <LogOut size={20} color={colors.destructive} />
+              </TouchableOpacity>
+            </View>
+          </View>
+          
+          {/* Workspace switcher row */}
+          <TouchableOpacity 
+            style={[styles.workspaceSwitcher, isRTL && styles.rtlRow]} 
+            onPress={() => businesses.length > 0 && setShowBusinessPicker(true)}
+            activeOpacity={businesses.length > 0 ? 0.7 : 1}
+          >
+            <View style={[styles.workspaceInfo, isRTL && { alignItems: 'flex-end' }]}>
+              <Text 
+                style={[styles.headerBrand, isRTL && styles.rtlText]} 
+                numberOfLines={1}
+              >
+                {displayName}
+              </Text>
+              <Text style={[styles.headerRole, isRTL && styles.rtlText]}>{t('ownerWorkspace')}</Text>
+            </View>
+            {businesses.length > 1 && (
+              <View style={[styles.switchBadge, isAllWorkspaces && styles.switchBadgeAll]}>
+                <Text style={styles.switchBadgeText}>{isAllWorkspaces ? t('combined') : t('switch')}</Text>
+                <ChevronDown size={12} color="#fff" style={{ marginLeft: 2 }} />
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.content}>
         {/* Time Period Filter */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterScroll} contentContainerStyle={styles.filterContainer}>
+        <ScrollView 
+          ref={filterScrollRef}
+          horizontal 
+          showsHorizontalScrollIndicator={false} 
+          style={styles.filterScroll} 
+          contentContainerStyle={[styles.filterContainer, isRTL && styles.filterContainerRTL]}
+          onContentSizeChange={(contentWidth) => {
+            // In RTL, scroll to the right end so "Today" is visible first
+            if (isRTL && filterScrollRef.current) {
+              filterScrollRef.current.scrollToEnd({ animated: false });
+            }
+          }}
+        >
           {TIME_PERIODS.map((period) => (
             <TouchableOpacity
               key={period.value}
@@ -307,103 +580,174 @@ export default function OwnerDashboardScreen({ navigation }: any) {
 
         {/* Stats Grid */}
         {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.loadingText}>Loading analytics...</Text>
+          <View style={styles.statsGrid}>
+            <StatCardSkeleton isRTL={isRTL} />
+            <StatCardSkeleton isRTL={isRTL} />
+            <StatCardSkeleton isRTL={isRTL} />
+            <StatCardSkeleton isRTL={isRTL} />
           </View>
         ) : stats ? (
           <>
             <View style={styles.statsGrid}>
               <StatCard 
                 icon={ShoppingBag}
-                title="Orders"
+                title={t('orders')}
                 value={stats.ordersToday}
-                subtitle={getPeriodLabel()}
+                subtitle={t('today')}
                 color="#3b82f6"
               />
               <StatCard 
                 icon={Clock}
-                title="Active Now"
+                title={t('activeNow')}
                 value={stats.activeOrders}
-                subtitle="In progress"
+                subtitle={t('inProgress')}
                 color="#f59e0b"
               />
               <StatCard 
                 icon={CheckCircle}
-                title="Completed"
+                title={t('completed')}
                 value={stats.completedToday}
-                subtitle={getPeriodLabel()}
+                subtitle={t('today')}
                 color="#22c55e"
               />
               <StatCard 
                 icon={TrendingUp}
-                title="Revenue"
+                title={t('revenue')}
                 value={formatCurrency(stats.totalRevenue, stats.currency)}
-                subtitle={getPeriodLabel()}
+                subtitle={t('today')}
                 color="#8b5cf6"
               />
             </View>
 
             {/* Low Stock Alert */}
             {stats.lowStockItems > 0 && (
-              <View style={styles.alertCard}>
+              <View style={[styles.alertCard, isRTL && styles.rtlRow]}>
                 <View style={styles.alertIconContainer}>
                   <AlertTriangle size={20} color="#ef4444" />
                 </View>
-                <View style={styles.alertTextContainer}>
-                  <Text style={styles.alertTitle}>Low Stock Alert</Text>
-                  <Text style={styles.alertSubtitle}>{stats.lowStockItems} item{stats.lowStockItems > 1 ? 's' : ''} need restocking</Text>
+                <View style={[styles.alertTextContainer, isRTL && { alignItems: 'flex-end' }]}>
+                  <Text style={[styles.alertTitle, isRTL && styles.rtlText]}>{t('lowStock')}</Text>
+                  <Text style={[styles.alertSubtitle, isRTL && styles.rtlText]}>{stats.lowStockItems} {t('items')}</Text>
                 </View>
-                <ChevronRight size={18} color={colors.mutedForeground} />
+                <ChevronRight size={18} color={colors.mutedForeground} style={isRTL ? { transform: [{ rotate: '180deg' }] } : undefined} />
               </View>
             )}
           </>
         ) : (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No data available</Text>
+            <Text style={styles.emptyText}>{t('loading')}</Text>
           </View>
         )}
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Overview</Text>
+          <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('overview')}</Text>
           <View style={styles.card}>
             <MenuItem 
               icon={LayoutDashboard} 
-              title="Dashboard & Analytics" 
-              subtitle="Real-time business insights"
+              title={t('dashboardAnalytics')} 
+              subtitle={t('realtimeInsights')}
             />
             <View style={styles.divider} />
             <MenuItem 
               icon={BarChart3} 
-              title="Reports" 
-              subtitle="Sales and performance data"
+              title={t('reports')} 
+              subtitle={t('salesPerformance')}
+              isLast
+            />
+          </View>
+        </View>
+
+        {/* Operation Management - Same as StaffDashboardScreen but without permission restrictions */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('operationManagement')}</Text>
+          <View style={styles.card}>
+            <MenuItem 
+              icon={ShoppingBag} 
+              title={t('orders')} 
+              subtitle={t('manageOrders')}
+              onPress={() => navigation.navigate('Orders')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Package} 
+              title={t('items')} 
+              subtitle={t('rawAndCompositeItems')}
+              onPress={() => navigation.navigate('Items')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={ShoppingBag} 
+              title={t('products')} 
+              subtitle={t('menuProducts')}
+              onPress={() => navigation.navigate('Products')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Boxes} 
+              title={t('bundles')} 
+              subtitle={t('productBundlesSoldTogether')}
+              onPress={() => navigation.navigate('Bundles')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={FolderTree} 
+              title={t('categories')} 
+              subtitle={t('organizeMenuStructure')}
+              onPress={() => navigation.navigate('Categories')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={ClipboardList} 
+              title={t('inventory')} 
+              subtitle={t('manageInventory')}
+              onPress={() => navigation.navigate('Inventory')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Truck} 
+              title={t('delivery')} 
+              subtitle={t('deliveryManagement')}
+              onPress={() => navigation.navigate('DeliveryPartners')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Armchair} 
+              title={t('tables')} 
+              subtitle={t('tableManagement')}
+              onPress={() => navigation.navigate('Tables')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Car} 
+              title={t('drivers')} 
+              subtitle={t('driverManagement')}
+              onPress={() => navigation.navigate('Drivers')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem 
+              icon={Percent} 
+              title={t('discounts')} 
+              subtitle={t('discountManagement')}
+              onPress={() => navigation.navigate('Discounts')}
               isLast
             />
           </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Management</Text>
+          <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('staffAndSettings')}</Text>
           <View style={styles.card}>
-            <MenuItem icon={Package} title="Product Management" subtitle="Manage catalog & prices" />
+            <MenuItem icon={Users} title={t('staffManagement')} subtitle={t('rolesPermissions')} onPress={() => navigation.navigate('StaffManagement')} />
             <View style={styles.divider} />
-            <MenuItem icon={ShoppingBag} title="Orders" subtitle="Track and process orders" />
+            <MenuItem icon={Settings} title={t('systemSettings')} subtitle={t('configureYourBusiness')} onPress={() => navigation.navigate('Settings')} />
             <View style={styles.divider} />
-            <MenuItem icon={ClipboardList} title="Inventory" subtitle="Stock levels & suppliers" isLast />
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Staff & Settings</Text>
-          <View style={styles.card}>
-            <MenuItem icon={Users} title="Staff Management" subtitle="Roles & permissions" />
-            <View style={styles.divider} />
-            <MenuItem icon={Settings} title="System Settings" subtitle="Configure your business" isLast />
+            <MenuItem icon={FileText} title={t('myRequests')} subtitle={t('trackChangeRequests')} isLast onPress={() => navigation.navigate('Requests')} />
           </View>
         </View>
         
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Silo Business App v1.0.0</Text>
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>{t('appVersion')}</Text>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -418,7 +762,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 24,
     paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 20,
+    paddingBottom: 16,
     backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
@@ -426,42 +770,77 @@ const styles = StyleSheet.create({
   headerTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    marginBottom: 16,
   },
-  headerBrand: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.foreground,
-    letterSpacing: -0.5,
+  scrollView: {
+    flex: 1,
   },
-  headerRole: {
-    fontSize: 13,
-    color: colors.mutedForeground,
-    fontWeight: '500',
-  },
-  headerSubRow: {
+  logoSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
-    gap: 8,
+  },
+  logoContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: colors.secondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  brandName: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.foreground,
+    marginLeft: 10,
+    letterSpacing: -0.5,
+  },
+  workspaceSwitcher: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.secondary,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  workspaceInfo: {
+    flex: 1,
+  },
+  headerBrand: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.foreground,
+    letterSpacing: -0.3,
+  },
+  headerRole: {
+    fontSize: 12,
+    color: colors.mutedForeground,
+    fontWeight: '500',
+    marginTop: 2,
   },
   switchBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    marginLeft: 12,
   },
   switchBadgeAll: {
     backgroundColor: '#8b5cf6',
   },
   switchBadgeText: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: '700',
     color: '#fff',
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   iconButton: {
     width: 40,
@@ -486,11 +865,10 @@ const styles = StyleSheet.create({
     borderColor: colors.card,
   },
   content: {
-    flex: 1,
-  },
-  scrollContent: {
     padding: 24,
     paddingBottom: 40,
+  },
+  scrollContent: {
   },
   // Filter styles
   filterScroll: {
@@ -593,17 +971,6 @@ const styles = StyleSheet.create({
   alertSubtitle: {
     fontSize: 13,
     color: colors.mutedForeground,
-  },
-  // Loading state
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    fontSize: 14,
-    color: colors.mutedForeground,
-    marginTop: 12,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -736,5 +1103,78 @@ const styles = StyleSheet.create({
   businessOptionTextActive: {
     color: colors.primary,
     fontWeight: '600',
+  },
+  businessList: {
+    maxHeight: 350,
+  },
+  expandIcon: {
+    marginLeft: 'auto',
+    marginRight: 8,
+  },
+  branchesContainer: {
+    marginLeft: 24,
+    marginBottom: 8,
+    borderLeftWidth: 2,
+    borderLeftColor: colors.border,
+    paddingLeft: 12,
+  },
+  branchOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: colors.muted,
+    marginBottom: 6,
+    gap: 10,
+  },
+  branchOptionActive: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  branchTextContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  branchOptionText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: colors.foreground,
+  },
+  branchOptionTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  mainBadge: {
+    backgroundColor: colors.foreground + '15',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  mainBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.foreground,
+  },
+  // RTL Styles
+  rtlRow: {
+    flexDirection: 'row-reverse',
+  },
+  rtlText: {
+    textAlign: 'right',
+  },
+  filterContainerRTL: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+  },
+  sectionTitleRTL: {
+    textAlign: 'right',
+    marginLeft: 0,
+    marginRight: 4,
+  },
+  statCardRTL: {
+    alignItems: 'flex-end',
   },
 });

@@ -1,50 +1,11 @@
-import { Router, Request, Response } from 'express';
+import { Router, Response } from 'express';
 import { supabaseAdmin as supabase } from '../config/database';
-import { businessAuthService } from '../services/business-auth.service';
+import { authenticateBusiness, AuthenticatedRequest } from '../middleware/business-auth.middleware';
 
 const router = Router();
 
-interface AuthenticatedRequest extends Request {
-  businessUser?: {
-    id: number;
-    business_id: number;
-    username: string;
-    role: string;
-  };
-}
-
-// Auth middleware
-async function authenticateBusinessToken(req: AuthenticatedRequest, res: Response, next: Function) {
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No token provided' });
-    }
-
-    const token = authHeader.substring(7);
-    const payload = businessAuthService.verifyToken(token);
-    
-    const user = await businessAuthService.getUserById(payload.userId);
-    if (!user) {
-      return res.status(401).json({ error: 'User not found' });
-    }
-
-    req.businessUser = {
-      id: user.id,
-      business_id: user.business_id,
-      username: user.username,
-      role: user.role,
-    };
-    
-    next();
-  } catch (error) {
-    return res.status(401).json({ error: 'Invalid or expired token' });
-  }
-}
-
 // GET /api/discounts - Get all discount codes for business
-router.get('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
 
@@ -64,7 +25,7 @@ router.get('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res
 });
 
 // GET /api/discounts/validate/:code - Validate a discount code (for POS)
-router.get('/validate/:code', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.get('/validate/:code', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const code = req.params.code.toUpperCase();
@@ -116,7 +77,7 @@ router.get('/validate/:code', authenticateBusinessToken, async (req: Authenticat
 });
 
 // POST /api/discounts - Create a new discount code
-router.post('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const userId = req.businessUser?.id;
@@ -188,7 +149,7 @@ router.post('/', authenticateBusinessToken, async (req: AuthenticatedRequest, re
 });
 
 // PUT /api/discounts/:id - Update a discount code
-router.put('/:id', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.put('/:id', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const discountId = parseInt(req.params.id);
@@ -263,7 +224,7 @@ router.put('/:id', authenticateBusinessToken, async (req: AuthenticatedRequest, 
 });
 
 // DELETE /api/discounts/:id - Delete a discount code
-router.delete('/:id', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.delete('/:id', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const discountId = parseInt(req.params.id);
@@ -295,7 +256,7 @@ router.delete('/:id', authenticateBusinessToken, async (req: AuthenticatedReques
 });
 
 // POST /api/discounts/:id/use - Increment usage count (called when order is placed)
-router.post('/:id/use', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/use', authenticateBusiness, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
     const discountId = parseInt(req.params.id);

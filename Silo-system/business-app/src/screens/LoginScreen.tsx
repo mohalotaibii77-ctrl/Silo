@@ -3,12 +3,15 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Animated, E
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import api from '../api/client';
 import { useTheme } from '../theme/ThemeContext';
+import { useLocalization } from '../localization';
 import { Command, Mail, Lock, Sun, Moon, ArrowRight } from 'lucide-react-native';
+import { dataPreloader } from '../services/DataPreloader';
 
 const { width } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }: any) {
   const { colors, toggleTheme, isDark } = useTheme();
+  const { applyLanguageFromSettings, refreshCurrency } = useLocalization();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -77,6 +80,8 @@ export default function LoginScreen({ navigation }: any) {
       // Save business data including currency settings
       if (response.data.business) {
         await AsyncStorage.setItem('business', JSON.stringify(response.data.business));
+        // Refresh currency in the localization context
+        refreshCurrency();
       }
       
       // Save all businesses for workspace switching (owners only)
@@ -87,21 +92,48 @@ export default function LoginScreen({ navigation }: any) {
       // Save user settings (persisted from database)
       if (response.data.userSettings) {
         await AsyncStorage.setItem('userSettings', JSON.stringify(response.data.userSettings));
+        
+        // Apply language immediately from user settings
+        const preferredLang = response.data.userSettings.preferred_language;
+        if (preferredLang) {
+          applyLanguageFromSettings(preferredLang);
+        }
+      } else if (response.data.business?.language) {
+        // Fallback to business language if no user settings
+        applyLanguageFromSettings(response.data.business.language);
       }
       
       const role = response.data.user.role;
       console.log('[Login] User role:', role);
       
+      // Check if user needs to change their default password (first-time login)
+      if (response.data.requiresPasswordChange) {
+        console.log('[Login] First-time login - redirecting to set password');
+        navigation.replace('SetPassword', {
+          token: response.data.token,
+          userData: response.data.user,
+          businessData: response.data.business,
+          businessesData: response.data.businesses,
+          userSettings: response.data.userSettings,
+        });
+        return;
+      }
+      
+      // Start background preloading immediately (don't wait)
+      dataPreloader.preloadAll().catch(console.error);
+      
       if (role === 'owner') {
         navigation.replace('OwnerDashboard');
-      } else if (role === 'manager') {
-        navigation.replace('PMDashboard');
-      } else if (role === 'pos') {
+      } else if (role === 'manager' || role === 'operations_manager') {
+        navigation.replace('StaffDashboard');
+      } else if (role === 'pos' || role === 'cashier') {
         navigation.replace('POSTerminal');
+      } else if (role === 'kitchen_display') {
+        navigation.replace('KitchenDisplay');
       } else if (role === 'employee') {
-        navigation.replace('EmployeePOS');
+        navigation.replace('StaffDashboard');
       } else {
-        navigation.replace('EmployeePOS');
+        navigation.replace('StaffDashboard');
       }
     } catch (error: any) {
       console.error('[Login] Error:', error);

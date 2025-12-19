@@ -39,8 +39,13 @@ import {
   Check,
   Truck,
   Boxes,
+  ClipboardList,
+  Command,
+  Edit2,
 } from 'lucide-react-native';
 import { API_URL } from '../api/client';
+import { dataPreloader, CACHE_KEYS } from '../services/DataPreloader';
+import { useLocalization } from '../localization/LocalizationContext';
 
 const { width, height } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -56,6 +61,7 @@ interface VariantOption {
   name: string;
   name_ar?: string;
   price_adjustment: number;
+  in_stock?: boolean; // Whether this variant has enough inventory
 }
 
 // Product variant group (e.g., "Size", "Type")
@@ -86,6 +92,7 @@ interface Product {
   category_id?: string;
   category_name?: string;
   available: boolean;
+  outOfStock?: boolean; // True when inventory is insufficient
   variant_groups: VariantGroup[];
   modifiers: ProductModifier[];
   isBundle?: boolean; // Flag to identify bundles
@@ -102,12 +109,14 @@ interface Category {
 interface CartItem {
   id: string; // unique cart item id
   productId: string;
+  variantId?: string; // Selected variant ID for inventory checking
+  bundleId?: string;  // Bundle ID if this is a bundle
   name: string;
   basePrice: number;
   quantity: number;
-  selectedVariants: { groupName: string; optionName: string; priceAdjustment: number }[];
+  selectedVariants: { groupName: string; optionName: string; priceAdjustment: number; variantId?: string }[];
   removedModifiers: string[]; // names of removed items
-  addedModifiers: { name: string; price: number }[]; // extra items added
+  addedModifiers: { name: string; price: number; quantity: number }[]; // extra items added with quantity
   totalPrice: number; // calculated total per item
   isBundle?: boolean; // Flag to identify bundles in cart
   bundleItems?: any[]; // Items included in the bundle for receipt
@@ -116,13 +125,49 @@ interface CartItem {
 interface OrderType {
   type: 'dine_in' | 'takeaway' | 'delivery';
   tableNumber?: string;
+  tableId?: number; // Selected table ID
   customerName?: string;
   deliveryAddress?: string;
   deliveryPhone?: string;
+  deliveryMethod?: string; // Delivery company/method
 }
+
+// Delivery partner from API
+interface DeliveryPartner {
+  id: number;
+  name: string;
+  name_ar?: string;
+  commission_type: 'percentage' | 'fixed';
+  commission_value: number;
+  status: 'active' | 'inactive';
+}
+
+// Restaurant table from API
+interface RestaurantTable {
+  id: number;
+  table_number: string;
+  table_code?: string | null;
+  seats: number;
+  zone?: string | null;
+  description?: string | null;
+  is_active: boolean;
+  is_occupied: boolean;
+  current_order_id?: number | null;
+}
+
+// Generate a consistent color based on partner name
+const getPartnerColor = (name: string): string => {
+  const colors = ['#FF5A00', '#00A859', '#00CCBC', '#6E2594', '#FF0000', '#374151', '#2563EB', '#D97706', '#059669', '#7C3AED'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+};
 
 export default function POSScreen({ navigation }: any) {
   const { colors, isDark } = useTheme();
+  const { formatCurrency } = useLocalization();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -135,7 +180,7 @@ export default function POSScreen({ navigation }: any) {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [loadingProducts, setLoadingProducts] = useState(true);
-  const [currency, setCurrency] = useState('KWD');
+  const [currency, setCurrency] = useState(''); // Loaded from business settings
   const [vatEnabled, setVatEnabled] = useState(false);
   const [taxRate, setTaxRate] = useState(0); // VAT rate from business settings
   
@@ -144,16 +189,769 @@ export default function POSScreen({ navigation }: any) {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedVariants, setSelectedVariants] = useState<Record<string, VariantOption>>({});
   const [removedModifiers, setRemovedModifiers] = useState<Set<string>>(new Set());
-  const [addedModifiers, setAddedModifiers] = useState<Set<string>>(new Set());
+  const [addedModifiers, setAddedModifiers] = useState<Map<string, number>>(new Map()); // Map of modifier id -> quantity
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  
+  // Transaction confirmation state (for card payments only)
+  const [showTransactionModal, setShowTransactionModal] = useState(false);
+  const [transactionNumber, setTransactionNumber] = useState('');
+  
+  // Cash payment state (for cash payments - change calculator)
+  const [showCashModal, setShowCashModal] = useState(false);
+  const [customerPaidAmount, setCustomerPaidAmount] = useState('');
+  
+  // POS Session state (shift management)
+  const [posSession, setPosSession] = useState<any>(null);
+  const [showPosLoginModal, setShowPosLoginModal] = useState(false);
+  const [showOpeningFloatModal, setShowOpeningFloatModal] = useState(false);
+  const [showCloseSessionModal, setShowCloseSessionModal] = useState(false);
+  const [posEmployees, setPosEmployees] = useState<any[]>([]);
+  const [selectedPosEmployee, setSelectedPosEmployee] = useState<any>(null);
+  const [posPassword, setPosPassword] = useState('');
+  const [openingFloat, setOpeningFloat] = useState('');
+  const [cashDrawerBalance, setCashDrawerBalance] = useState<number>(0);
+  const [actualCashCount, setActualCashCount] = useState('');
+  const [posLoginError, setPosLoginError] = useState<string | null>(null);
+  
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'pos' | 'orders'>('pos');
+  const [showDeliveryMethodModal, setShowDeliveryMethodModal] = useState(false);
+  const [deliveryPartners, setDeliveryPartners] = useState<DeliveryPartner[]>([]);
+  const [showTableSelectionModal, setShowTableSelectionModal] = useState(false);
+  const [restaurantTables, setRestaurantTables] = useState<RestaurantTable[]>([]);
+  
+  // Customer info for in-house delivery
+  const [showCustomerInfoModal, setShowCustomerInfoModal] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [drivers, setDrivers] = useState<any[]>([]);
+  const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null);
+  // Bundle item customizations - track per bundle item index
+  const [bundleItemCustomizations, setBundleItemCustomizations] = useState<Record<number, {
+    removedModifiers: Set<string>;
+    addedModifiers: Map<string, number>; // Map of modifier id -> quantity
+  }>>({});
+
+  // Orders tab state
+  const [recentOrders, setRecentOrders] = useState<any[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [ordersFilter, setOrdersFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'cancelled'>('all');
+  
+  // Order editing state
+  const [editingOrder, setEditingOrder] = useState<any>(null);
+  const [originalOrderItems, setOriginalOrderItems] = useState<any[]>([]);
+  
+  // Order details modal state
+  const [selectedOrderForView, setSelectedOrderForView] = useState<any>(null);
+  const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
+  const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false);
+  
+  // Order item editing state (editing modifiers within the order details modal)
+  const [editingOrderItem, setEditingOrderItem] = useState<any>(null);
+  const [editItemRemovedMods, setEditItemRemovedMods] = useState<Set<string>>(new Set());
+  const [editItemAddedMods, setEditItemAddedMods] = useState<Map<string, number>>(new Map());
+  const [orderItemEdits, setOrderItemEdits] = useState<Map<number, { removed: string[], added: { name: string, price: number, quantity: number }[] }>>(new Map());
+  const [savingOrderEdit, setSavingOrderEdit] = useState(false);
+
+  // Load recent orders for the Orders tab
+  const loadRecentOrders = async () => {
+    try {
+      setLoadingOrders(true);
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const today = new Date().toISOString().split('T')[0];
+      let url = `${API_URL}/pos/orders?date=${today}&limit=50`;
+      
+      if (ordersFilter !== 'all') {
+        url += `&status=${ordersFilter}`;
+      }
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        // Handle both paginated and non-paginated responses
+        const orders = result.data?.data || result.data || [];
+        setRecentOrders(orders);
+      }
+    } catch (error) {
+      console.error('Error loading orders:', error);
+    } finally {
+      setLoadingOrders(false);
+    }
+  };
+
+  // Load orders when orders tab is selected or filter changes
+  useEffect(() => {
+    if (activeSidebarTab === 'orders') {
+      loadRecentOrders();
+      // Auto-refresh orders every 30 seconds when on orders tab
+      const refreshInterval = setInterval(loadRecentOrders, 30000);
+      return () => clearInterval(refreshInterval);
+    }
+  }, [activeSidebarTab, ordersFilter]);
+
+  // Load an order into the cart for editing
+  const loadOrderForEditing = (order: any) => {
+    // Only allow editing orders that are not in a final state
+    const finalStatuses = ['completed', 'cancelled', 'rejected'];
+    if (finalStatuses.includes(order.order_status)) {
+      Alert.alert('Cannot Edit', 'This order has already been completed, cancelled, or rejected and cannot be edited.');
+      return;
+    }
+
+    // Store the original order and items for comparison later
+    setEditingOrder(order);
+    setOriginalOrderItems(order.order_items || []);
+
+    // Convert order items to cart items
+    const cartItems: CartItem[] = (order.order_items || []).map((item: any, index: number) => {
+      // Parse modifiers
+      // Note: Backend uses 'removal' and 'extra' as modifier_type values
+      const removedMods: string[] = [];
+      const addedMods: { name: string; price: number; quantity: number }[] = [];
+      
+      (item.order_item_modifiers || []).forEach((mod: any) => {
+        if (mod.modifier_type === 'removal' || mod.modifier_type === 'removed') {
+          removedMods.push(mod.modifier_name);
+        } else if (mod.modifier_type === 'extra' || mod.modifier_type === 'added') {
+          addedMods.push({
+            name: mod.modifier_name,
+            price: mod.unit_price || mod.price_adjustment || 0,
+            quantity: mod.quantity || 1,
+          });
+        }
+      });
+
+      // Parse variants
+      const selectedVariants: { groupName: string; optionName: string; priceAdjustment: number; variantId?: string }[] = [];
+      if (item.variant_name) {
+        selectedVariants.push({
+          groupName: 'Variant',
+          optionName: item.variant_name,
+          priceAdjustment: 0,
+          variantId: item.variant_id?.toString(),
+        });
+      }
+
+      return {
+        id: `edit-${item.id}-${index}`,
+        productId: item.product_id?.toString() || '',
+        variantId: item.variant_id?.toString(),
+        bundleId: item.bundle_id?.toString(),
+        name: item.product_name || 'Unknown Item',
+        basePrice: item.unit_price || 0,
+        quantity: item.quantity || 1,
+        selectedVariants,
+        removedModifiers: removedMods,
+        addedModifiers: addedMods,
+        totalPrice: item.total_price || item.unit_price * item.quantity,
+        isBundle: !!item.bundle_id,
+      };
+    });
+
+    setCart(cartItems);
+
+    // Set order type based on the order
+    setOrderType({
+      type: order.order_type || 'dine_in',
+      tableId: order.table_id,
+      tableNumber: order.table_number,
+      deliveryMethod: order.delivery_partner_id?.toString(),
+    });
+
+    // Switch to POS tab to show the cart
+    setActiveSidebarTab('pos');
+  };
+
+  // Cancel editing and clear the cart
+  const cancelOrderEditing = () => {
+    setEditingOrder(null);
+    setOriginalOrderItems([]);
+    setCart([]);
+    setOrderType({ type: 'dine_in' });
+  };
+
+  // Start editing a specific order item's modifiers
+  const startEditingOrderItem = (item: any) => {
+    setEditingOrderItem(item);
+    
+    // Initialize with current modifiers from the order
+    const currentRemoved = new Set<string>();
+    const currentAdded = new Map<string, number>();
+    
+    // Get existing modifiers from the order item
+    // Note: Backend uses 'removal' and 'extra' as modifier_type values
+    (item.order_item_modifiers || []).forEach((mod: any) => {
+      const modName = mod.modifier_name || mod.name;
+      if (mod.modifier_type === 'removal' || mod.modifier_type === 'removed') {
+        currentRemoved.add(modName);
+      } else if (mod.modifier_type === 'extra' || mod.modifier_type === 'added') {
+        currentAdded.set(modName, mod.quantity || 1);
+      }
+    });
+    
+    console.log('[POS Edit] Item modifiers:', item.order_item_modifiers);
+    console.log('[POS Edit] Removed:', Array.from(currentRemoved));
+    console.log('[POS Edit] Added:', Array.from(currentAdded.entries()));
+    
+    setEditItemRemovedMods(currentRemoved);
+    setEditItemAddedMods(currentAdded);
+  };
+
+  // Cancel editing order item
+  const cancelEditingOrderItem = () => {
+    setEditingOrderItem(null);
+    setEditItemRemovedMods(new Set());
+    setEditItemAddedMods(new Map());
+  };
+
+  // Calculate extra cost for current edits
+  const calculateEditExtraCost = () => {
+    if (!editingOrderItem) return 0;
+    
+    // Get the product to find modifier prices
+    const product = products.find(p => p.id === editingOrderItem.product_id?.toString());
+    if (!product) return 0;
+
+    let extraCost = 0;
+    
+    // Calculate added modifiers cost (new selection)
+    editItemAddedMods.forEach((qty, modName) => {
+      const mod = product.modifiers?.find((m: any) => m.name === modName);
+      if (mod) {
+        extraCost += (mod.extra_price || 0) * qty;
+      }
+    });
+
+    // Subtract original added modifiers cost (what was already paid)
+    // Note: Backend uses 'extra' as modifier_type for added modifiers
+    (editingOrderItem.order_item_modifiers || []).forEach((mod: any) => {
+      if (mod.modifier_type === 'extra' || mod.modifier_type === 'added') {
+        // Use unit_price or price_adjustment
+        const price = mod.unit_price || mod.price_adjustment || 0;
+        extraCost -= price * (mod.quantity || 1);
+      }
+    });
+
+    return extraCost;
+  };
+
+  // State for extra payment modal
+  const [pendingOrderEdit, setPendingOrderEdit] = useState<{
+    orderId: number;
+    itemId: number;
+    extraCost: number;
+    modifications: any;
+  } | null>(null);
+
+  // Apply order item edits
+  const applyOrderItemEdits = async () => {
+    if (!editingOrderItem || !selectedOrderForView) return;
+
+    const extraCost = calculateEditExtraCost();
+    const token = await AsyncStorage.getItem('token');
+    if (!token || !API_URL) return;
+
+    // Build the modification payload
+    const modifications = {
+      removed_modifiers: Array.from(editItemRemovedMods),
+      added_modifiers: Array.from(editItemAddedMods.entries()).map(([name, qty]) => {
+        const product = products.find(p => p.id === editingOrderItem.product_id?.toString());
+        const mod = product?.modifiers?.find((m: any) => m.name === name);
+        return {
+          name,
+          quantity: qty,
+          price: mod?.extra_price || 0,
+        };
+      }),
+    };
+
+    console.log('[POS Edit] Extra cost:', extraCost);
+    console.log('[POS Edit] Modifications:', modifications);
+
+    if (extraCost > 0) {
+      // Build modifiers array for backend with proper structure
+      // Filter out any extras with qty 0 or less
+      const modifiersPayload = [
+        // Added extras (only include if qty > 0)
+        ...Array.from(editItemAddedMods.entries())
+          .filter(([_, qty]) => qty > 0)
+          .map(([name, qty]) => {
+            const product = products.find(p => p.id === editingOrderItem.product_id?.toString());
+            const mod = product?.modifiers?.find((m: any) => m.name === name);
+            return {
+              modifier_name: name,
+              quantity: qty,
+              unit_price: mod?.extra_price || 0,
+              modifier_type: 'extra' as const,
+            };
+          }),
+        // Removals
+        ...Array.from(editItemRemovedMods).map(name => ({
+          modifier_name: name,
+          quantity: 1,
+          unit_price: 0,
+          modifier_type: 'removal' as const,
+        })),
+      ];
+
+      // Extra payment required - show payment confirmation
+      Alert.alert(
+        'Extra Payment Required',
+        `This modification adds ${formatCurrency(extraCost)} to the order.\n\nProceed to collect extra payment?`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => setSavingOrderEdit(false) },
+          {
+            text: `Collect ${formatCurrency(extraCost)}`,
+            onPress: () => {
+              // Store the pending edit and go to payment
+              setPendingOrderEdit({
+                orderId: selectedOrderForView.id,
+                itemId: editingOrderItem.id,
+                extraCost,
+                modifications: { modifiers: modifiersPayload },
+              });
+              // Close the order details modal and show payment modal
+              setShowOrderDetailsModal(false);
+              setShowPaymentModal(true);
+            },
+          },
+        ]
+      );
+    } else {
+      // No extra cost or savings - apply directly
+      try {
+        setSavingOrderEdit(true);
+        
+        // Build modifiers array for backend with proper structure
+        // Filter out any extras with qty 0 or less
+        const modifiersPayload = [
+          // Added extras (only include if qty > 0)
+          ...Array.from(editItemAddedMods.entries())
+            .filter(([_, qty]) => qty > 0)
+            .map(([name, qty]) => {
+              const product = products.find(p => p.id === editingOrderItem.product_id?.toString());
+              const mod = product?.modifiers?.find((m: any) => m.name === name);
+              return {
+                modifier_name: name,
+                quantity: qty,
+                unit_price: mod?.extra_price || 0,
+                modifier_type: 'extra' as const,
+              };
+            }),
+          // Removals
+          ...Array.from(editItemRemovedMods).map(name => ({
+            modifier_name: name,
+            quantity: 1,
+            unit_price: 0,
+            modifier_type: 'removal' as const,
+          })),
+        ];
+
+        console.log('[POS Edit] Sending modifiers:', modifiersPayload);
+        console.log('[POS Edit] editItemAddedMods:', Array.from(editItemAddedMods.entries()));
+        console.log('[POS Edit] editItemRemovedMods:', Array.from(editItemRemovedMods));
+        
+        const response = await fetch(`${API_URL}/pos/orders/${selectedOrderForView.id}/edit`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            items_to_modify: [{
+              order_item_id: editingOrderItem.id,  // Use order_item_id, not item_id
+              modifiers: modifiersPayload,
+            }],
+          }),
+        });
+
+        const result = await response.json();
+        console.log('[POS Edit] Response:', result);
+        
+        if (result.success) {
+          setSelectedOrderForView(result.data);
+          loadRecentOrders();
+          cancelEditingOrderItem();
+          Alert.alert('Success', 'Order modified successfully');
+        } else {
+          Alert.alert('Error', result.error || 'Failed to modify order');
+        }
+      } catch (error: any) {
+        console.error('[POS Edit] Error:', error);
+        Alert.alert('Error', error.message || 'Failed to modify order');
+      } finally {
+        setSavingOrderEdit(false);
+      }
+    }
+  };
+
+
+  // Save edited order
+  const saveOrderEdits = async () => {
+    if (!editingOrder) return;
+    
+    try {
+      setIsProcessingPayment(true);
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      // Build the edit payload by comparing current cart with original items
+      const items_to_add: any[] = [];
+      const items_to_remove: number[] = [];
+      const items_to_modify: any[] = [];
+
+      // Find items to remove (in original but not in cart)
+      originalOrderItems.forEach((origItem: any) => {
+        const stillInCart = cart.some(cartItem => 
+          cartItem.productId === origItem.product_id?.toString() &&
+          cartItem.variantId === origItem.variant_id?.toString()
+        );
+        if (!stillInCart) {
+          items_to_remove.push(origItem.id);
+        }
+      });
+
+      // Find items to add or modify
+      cart.forEach(cartItem => {
+        const origItem = originalOrderItems.find((o: any) => 
+          o.product_id?.toString() === cartItem.productId &&
+          o.variant_id?.toString() === cartItem.variantId
+        );
+
+        if (!origItem) {
+          // New item to add
+          items_to_add.push({
+            product_id: parseInt(cartItem.productId),
+            variant_id: cartItem.variantId ? parseInt(cartItem.variantId) : undefined,
+            quantity: cartItem.quantity,
+            unit_price: cartItem.basePrice,
+            modifiers: [
+              ...cartItem.removedModifiers.map(name => ({ name, type: 'removed' })),
+              ...cartItem.addedModifiers.map(m => ({ name: m.name, type: 'added', price: m.price, quantity: m.quantity })),
+            ],
+          });
+        } else if (origItem.quantity !== cartItem.quantity) {
+          // Quantity changed
+          items_to_modify.push({
+            order_item_id: origItem.id,
+            quantity: cartItem.quantity,
+          });
+        }
+      });
+
+      // Only call API if there are actual changes
+      if (items_to_add.length === 0 && items_to_remove.length === 0 && items_to_modify.length === 0) {
+        Alert.alert('No Changes', 'No changes were made to the order.');
+        setIsProcessingPayment(false);
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/pos/orders/${editingOrder.id}/edit`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          items_to_add: items_to_add.length > 0 ? items_to_add : undefined,
+          items_to_remove: items_to_remove.length > 0 ? items_to_remove : undefined,
+          items_to_modify: items_to_modify.length > 0 ? items_to_modify : undefined,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        Alert.alert('Success', 'Order updated successfully!');
+        cancelOrderEditing();
+        loadRecentOrders();
+      } else {
+        Alert.alert('Error', result.error || 'Failed to update order');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update order');
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
 
   useEffect(() => {
     loadUser();
     loadBusinessSettings();
     loadProducts();
+    loadDeliveryPartners();
+    loadRestaurantTables();
+    loadDrivers();
+    checkPosSession(); // Check if there's an active POS session
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    
+    // Refresh business settings when screen comes into focus (for updated VAT, currency, etc.)
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadBusinessSettings();
+      loadDeliveryPartners();
+      loadRestaurantTables();
+      loadDrivers();
+      checkPosSession();
+    });
+    
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }, [navigation]);
+
+  // Check for active POS session - first check local storage, then verify with backend
+  const checkPosSession = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      // First, check if we have a stored POS session
+      const storedSession = await AsyncStorage.getItem('pos_session');
+      
+      if (storedSession) {
+        const parsedSession = JSON.parse(storedSession);
+        
+        // Verify the stored session is still active on the backend
+        const response = await fetch(`${API_URL}/pos-sessions/${parsedSession.id}/summary`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+          // Session is still valid - restore it
+          setPosSession(parsedSession);
+          setCashDrawerBalance(result.data.current_balance || parsedSession.opening_float || 0);
+          return;
+        } else {
+          // Session no longer valid - clear stored session
+          await AsyncStorage.removeItem('pos_session');
+        }
+      }
+
+      // No stored session or it was invalid - check if current user has an active session
+      const response = await fetch(`${API_URL}/pos-sessions/active`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        // Found active session for current user - store and use it
+        await AsyncStorage.setItem('pos_session', JSON.stringify(result.data));
+        setPosSession(result.data);
+        setCashDrawerBalance(result.data.cash_summary?.current_balance || 0);
+      } else {
+        // No active session - show POS login
+        setPosSession(null);
+        loadPosEmployees();
+        setShowPosLoginModal(true);
+      }
+    } catch (error) {
+      console.error('Error checking POS session:', error);
+      // On error, try to use stored session if available
+      try {
+        const storedSession = await AsyncStorage.getItem('pos_session');
+        if (storedSession) {
+          const parsedSession = JSON.parse(storedSession);
+          setPosSession(parsedSession);
+          setCashDrawerBalance(parsedSession.opening_float || 0);
+        } else {
+          loadPosEmployees();
+          setShowPosLoginModal(true);
+        }
+      } catch (e) {
+        loadPosEmployees();
+        setShowPosLoginModal(true);
+      }
+    }
+  };
+
+  // Load employees with POS access
+  const loadPosEmployees = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos-sessions/employees`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        setPosEmployees(result.data || []);
+      }
+    } catch (error) {
+      console.error('Error loading POS employees:', error);
+    }
+  };
+
+  // Authenticate POS employee
+  const authenticatePosEmployee = async () => {
+    if (!selectedPosEmployee || !posPassword) {
+      setPosLoginError('Please select an employee and enter password');
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos-sessions/authenticate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          employee_id: selectedPosEmployee.id,
+          password: posPassword,
+        }),
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        setPosLoginError(null);
+        
+        if (result.data.has_active_session) {
+          // Employee has an active session - resume it and persist
+          const activeSession = result.data.active_session;
+          await AsyncStorage.setItem('pos_session', JSON.stringify(activeSession));
+          setPosSession(activeSession);
+          setCashDrawerBalance(activeSession.cash_summary?.current_balance || activeSession.opening_float);
+          setShowPosLoginModal(false);
+        } else {
+          // No active session - prompt for opening float
+          setShowPosLoginModal(false);
+          setShowOpeningFloatModal(true);
+        }
+      } else {
+        setPosLoginError(result.error || 'Authentication failed');
+      }
+    } catch (error: any) {
+      setPosLoginError(error.message || 'Authentication failed');
+    }
+  };
+
+  // Open new POS session
+  const openPosSession = async () => {
+    const floatAmount = parseFloat(openingFloat);
+    if (isNaN(floatAmount) || floatAmount < 0) {
+      Alert.alert('Error', 'Please enter a valid opening float amount');
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos-sessions/open`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          cashier_id: selectedPosEmployee.id,
+          opening_float: floatAmount,
+        }),
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Store the session in AsyncStorage for persistence across refreshes
+        await AsyncStorage.setItem('pos_session', JSON.stringify(result.data));
+        setPosSession(result.data);
+        setCashDrawerBalance(floatAmount);
+        setShowOpeningFloatModal(false);
+        setOpeningFloat('');
+        Alert.alert('Success', `POS Session opened. Opening float: ${formatCurrency(floatAmount)}`);
+      } else {
+        Alert.alert('Error', result.error || 'Failed to open session');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to open session');
+    }
+  };
+
+  // Close POS session
+  const closePosSession = async () => {
+    const actualCount = parseFloat(actualCashCount);
+    if (isNaN(actualCount) || actualCount < 0) {
+      Alert.alert('Error', 'Please enter the actual cash count');
+      return;
+    }
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL || !posSession) return;
+
+      const response = await fetch(`${API_URL}/pos-sessions/${posSession.id}/close`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          actual_cash_count: actualCount,
+        }),
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        const variance = result.data.variance || 0;
+        const varianceText = variance > 0 ? `OVER by ${formatCurrency(variance)}` : 
+                            variance < 0 ? `SHORT by ${formatCurrency(Math.abs(variance))}` : 
+                            'No variance';
+        
+        Alert.alert(
+          'Session Closed',
+          `Expected: ${formatCurrency(result.data.expected_cash)}\n` +
+          `Actual: ${formatCurrency(actualCount)}\n` +
+          `${varianceText}`
+        );
+        
+        // Clear stored session when user explicitly signs out
+        await AsyncStorage.removeItem('pos_session');
+        setPosSession(null);
+        setShowCloseSessionModal(false);
+        setActualCashCount('');
+        setShowPosLoginModal(true);
+        loadPosEmployees();
+      } else {
+        Alert.alert('Error', result.error || 'Failed to close session');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to close session');
+    }
+  };
+
+  // Refresh cash drawer balance
+  const refreshCashDrawerBalance = async () => {
+    if (!posSession) return;
+    
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos-sessions/${posSession.id}/summary`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      
+      if (result.success) {
+        setCashDrawerBalance(result.data.current_balance);
+      }
+    } catch (error) {
+      console.error('Error refreshing cash balance:', error);
+    }
+  };
 
   const loadBusinessSettings = async () => {
     try {
@@ -194,6 +992,137 @@ export default function POSScreen({ navigation }: any) {
     }
   };
 
+  const loadDeliveryPartners = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const userData = await AsyncStorage.getItem('user');
+      const branchData = await AsyncStorage.getItem('branch');
+      const businessData = await AsyncStorage.getItem('business');
+      
+      // Get branch_id from user data or stored branch
+      let branchId: number | null = null;
+      if (userData) {
+        const user = JSON.parse(userData);
+        branchId = user.branch_id;
+      }
+      if (!branchId && branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+      
+      // If still no branch_id (e.g., owner account), fetch the main branch for the business
+      if (!branchId && businessData && token && API_URL) {
+        const business = JSON.parse(businessData);
+        try {
+          const branchesResponse = await fetch(`${API_URL}/businesses/${business.id}/branches`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const branchesResult = await branchesResponse.json();
+          if (branchesResult.branches && branchesResult.branches.length > 0) {
+            const mainBranch = branchesResult.branches.find((b: any) => b.is_main) || branchesResult.branches[0];
+            branchId = mainBranch.id;
+          }
+        } catch (err) {
+          console.error('Error fetching branches:', err);
+        }
+      }
+      
+      if (token && API_URL) {
+        const url = branchId 
+          ? `${API_URL}/delivery/partners?status=active&branch_id=${branchId}`
+          : `${API_URL}/delivery/partners?status=active`;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const result = await response.json();
+        if (result.success && result.data) {
+          setDeliveryPartners(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading delivery partners:', error);
+    }
+  };
+
+  const loadRestaurantTables = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const userData = await AsyncStorage.getItem('user');
+      const branchData = await AsyncStorage.getItem('branch');
+      const businessData = await AsyncStorage.getItem('business');
+      
+      // Get branch_id from user data or stored branch
+      let branchId: number | null = null;
+      if (userData) {
+        const user = JSON.parse(userData);
+        branchId = user.branch_id;
+      }
+      if (!branchId && branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+      
+      // If still no branch_id (e.g., owner account), fetch the main branch for the business
+      if (!branchId && businessData && token && API_URL) {
+        const business = JSON.parse(businessData);
+        try {
+          const branchesResponse = await fetch(`${API_URL}/businesses/${business.id}/branches`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const branchesResult = await branchesResponse.json();
+          if (branchesResult.branches && branchesResult.branches.length > 0) {
+            // Use the main branch or first branch
+            const mainBranch = branchesResult.branches.find((b: any) => b.is_main) || branchesResult.branches[0];
+            branchId = mainBranch.id;
+          }
+        } catch (err) {
+          console.error('Error fetching branches:', err);
+        }
+      }
+      
+      if (token && API_URL && branchId) {
+        const response = await fetch(`${API_URL}/tables?is_active=true&branch_id=${branchId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const result = await response.json();
+        if (result.success && result.data) {
+          setRestaurantTables(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading restaurant tables:', error);
+    }
+  };
+
+  // Load in-house drivers for delivery
+  const loadDrivers = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      const branchData = await AsyncStorage.getItem('branch');
+      
+      let branchId: number | null = null;
+      if (branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+      
+      if (token && API_URL) {
+        const url = branchId 
+          ? `${API_URL}/drivers/available?branch_id=${branchId}`
+          : `${API_URL}/drivers/available`;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const result = await response.json();
+        if (result.success && result.data) {
+          setDrivers(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading drivers:', error);
+    }
+  };
+
   const loadUser = async () => {
     const userData = await AsyncStorage.getItem('user');
     if (userData) {
@@ -206,6 +1135,23 @@ export default function POSScreen({ navigation }: any) {
       setLoadingProducts(true);
       const token = await AsyncStorage.getItem('token');
       
+      // Try to load from cache first for instant display
+      try {
+        const cachedProducts = await AsyncStorage.getItem(CACHE_KEYS.PRODUCTS);
+        const cachedCategories = await AsyncStorage.getItem(CACHE_KEYS.CATEGORIES);
+        if (cachedProducts) {
+          const { data } = JSON.parse(cachedProducts);
+          if (data && data.length > 0) {
+            console.log('[POS] Using cached products:', data.length);
+            setProducts(data);
+            setLoadingProducts(false);
+            // Continue to refresh in background
+          }
+        }
+      } catch (cacheError) {
+        console.log('[POS] Cache read error:', cacheError);
+      }
+      
       console.log('[POS] Loading products...');
       console.log('[POS] Token exists:', !!token);
       console.log('[POS] API_URL:', API_URL);
@@ -214,10 +1160,44 @@ export default function POSScreen({ navigation }: any) {
         let posProducts: Product[] = [];
         let posBundles: Product[] = [];
 
-        // Fetch products from store-products endpoint
+        // Get branch ID for stock checking
+        const userData = await AsyncStorage.getItem('user');
+        const branchData = await AsyncStorage.getItem('branch');
+        const businessData = await AsyncStorage.getItem('business');
+        
+        let branchId: number | null = null;
+        if (userData) {
+          const user = JSON.parse(userData);
+          branchId = user.branch_id;
+        }
+        if (!branchId && branchData) {
+          const branch = JSON.parse(branchData);
+          branchId = branch.id;
+        }
+        // If still no branch_id, fetch main branch for the business
+        if (!branchId && businessData) {
+          const business = JSON.parse(businessData);
+          try {
+            const branchesResponse = await fetch(`${API_URL}/businesses/${business.id}/branches`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const branchesResult = await branchesResponse.json();
+            if (branchesResult.branches && branchesResult.branches.length > 0) {
+              const mainBranch = branchesResult.branches.find((b: any) => b.is_main) || branchesResult.branches[0];
+              branchId = mainBranch.id;
+            }
+          } catch (err) {
+            console.log('[POS] Error fetching branches for stock check:', err);
+          }
+        }
+
+        // Fetch products from store-products endpoint with branch_id for stock checking
         try {
-          console.log('[POS] Fetching from:', `${API_URL}/store-products`);
-          const response = await fetch(`${API_URL}/store-products`, {
+          const productsUrl = branchId 
+            ? `${API_URL}/store-products?branch_id=${branchId}`
+            : `${API_URL}/store-products`;
+          console.log('[POS] Fetching from:', productsUrl);
+          const response = await fetch(productsUrl, {
             headers: { Authorization: `Bearer ${token}` }
           });
           console.log('[POS] Response status:', response.status);
@@ -225,31 +1205,33 @@ export default function POSScreen({ navigation }: any) {
           console.log('[POS] Products result:', result);
           if (result.success && result.data) {
             // Transform products to POS format
-            posProducts = result.data.map((p: any) => ({
-              id: String(p.id),
-              name: p.name,
-              name_ar: p.name_ar,
-              base_price: p.price,
-              category_id: p.category_id ? String(p.category_id) : undefined,
-              category_name: p.category_name || p.category,
-              available: p.is_active !== false,
-              // Map variants to variant_groups format
-              variant_groups: p.has_variants && p.variants ? [{
-                id: 'size',
-                name: 'Size',
-                name_ar: 'الحجم',
-                required: true,
-                options: p.variants.map((v: any) => ({
-                  id: String(v.id),
-                  name: v.name,
-                  name_ar: v.name_ar,
-                  price_adjustment: v.price_adjustment || 0,
-                }))
-              }] : [],
-              // Map ingredients with removable flag + modifiers as combined modifiers for POS
-              modifiers: [
-                // Removable ingredients
-                ...(p.ingredients || [])
+            posProducts = result.data.map((p: any) => {
+              // For variant products, collect removable ingredients from ALL variants
+              let removableIngredients: any[] = [];
+              if (p.has_variants && p.variants) {
+                // Collect unique removable ingredients from all variants
+                const seen = new Set<string>();
+                p.variants.forEach((v: any) => {
+                  (v.ingredients || [])
+                    .filter((ing: any) => ing.removable)
+                    .forEach((ing: any) => {
+                      const key = ing.item_name || ing.name || `item-${ing.item_id}`;
+                      if (!seen.has(key)) {
+                        seen.add(key);
+                        removableIngredients.push({
+                          id: `ing-${ing.id || ing.item_id}`,
+                          name: ing.item_name || ing.name,
+                          name_ar: ing.item_name_ar || ing.name_ar,
+                          removable: true,
+                          addable: false,
+                          extra_price: 0,
+                        });
+                      }
+                    });
+                });
+              } else {
+                // For non-variant products, use product-level ingredients
+                removableIngredients = (p.ingredients || [])
                   .filter((ing: any) => ing.removable)
                   .map((ing: any) => ({
                     id: `ing-${ing.id || ing.item_id}`,
@@ -258,27 +1240,63 @@ export default function POSScreen({ navigation }: any) {
                     removable: true,
                     addable: false,
                     extra_price: 0,
-                  })),
-                // Addable modifiers (add-ons)
-                ...(p.modifiers || []).map((mod: any) => ({
-                  id: `mod-${mod.id || mod.item_id}`,
-                  name: mod.name,
-                  name_ar: mod.name_ar,
-                  removable: false,
-                  addable: true,
-                  extra_price: mod.extra_price || 0,
-                }))
-              ]
-            }));
+                  }));
+              }
+
+              // Product is available only if it's active AND in stock
+              const isAvailable = p.is_active !== false && p.in_stock !== false;
+              
+              return {
+                id: String(p.id),
+                name: p.name,
+                name_ar: p.name_ar,
+                base_price: p.price,
+                category_id: p.category_id ? String(p.category_id) : undefined,
+                category_name: p.category_name || p.category,
+                available: isAvailable,
+                outOfStock: p.in_stock === false, // Explicit flag for out-of-stock status
+                // Map variants to variant_groups format
+                variant_groups: p.has_variants && p.variants ? [{
+                  id: 'size',
+                  name: 'Size',
+                  name_ar: 'الحجم',
+                  required: true,
+                  options: p.variants.map((v: any) => ({
+                    id: String(v.id),
+                    name: v.name,
+                    name_ar: v.name_ar,
+                    price_adjustment: v.price_adjustment || 0,
+                    in_stock: v.in_stock !== false, // Track individual variant availability
+                  }))
+                }] : [],
+                // Map ingredients with removable flag + modifiers as combined modifiers for POS
+                modifiers: [
+                  // Removable ingredients (from variants or product-level)
+                  ...removableIngredients,
+                  // Addable modifiers (add-ons)
+                  ...(p.modifiers || []).map((mod: any) => ({
+                    id: `mod-${mod.id || mod.item_id}`,
+                    name: mod.name,
+                    name_ar: mod.name_ar,
+                    removable: false,
+                    addable: true,
+                    extra_price: mod.extra_price || 0,
+                  }))
+                ]
+              };
+            });
           }
         } catch (apiError) {
           console.log('[POS] Products API error:', apiError);
         }
 
-        // Fetch bundles from bundles endpoint
+        // Fetch bundles from bundles endpoint with branch_id for stock checking
         try {
-          console.log('[POS] Fetching bundles from:', `${API_URL}/bundles`);
-          const bundlesResponse = await fetch(`${API_URL}/bundles`, {
+          const bundlesUrl = branchId 
+            ? `${API_URL}/bundles?branch_id=${branchId}`
+            : `${API_URL}/bundles`;
+          console.log('[POS] Fetching bundles from:', bundlesUrl);
+          const bundlesResponse = await fetch(bundlesUrl, {
             headers: { Authorization: `Bearer ${token}` }
           });
           console.log('[POS] Bundles response status:', bundlesResponse.status);
@@ -288,19 +1306,25 @@ export default function POSScreen({ navigation }: any) {
             // Transform bundles to POS format (bundles are simple - no variants/modifiers)
             posBundles = bundlesResult.data
               .filter((b: any) => b.is_active)
-              .map((b: any) => ({
-                id: `bundle-${b.id}`,
-                name: b.name,
-                name_ar: b.name_ar,
-                base_price: b.price,
-                category_id: 'bundles',
-                category_name: 'Bundles',
-                available: true,
-                variant_groups: [],
-                modifiers: [],
-                isBundle: true, // Flag to identify bundles
-                bundleItems: b.items, // Store bundle items for receipt
-              }));
+              .map((b: any) => {
+                // Bundle is available only if it's active AND in stock
+                const isAvailable = b.in_stock !== false;
+                
+                return {
+                  id: `bundle-${b.id}`,
+                  name: b.name,
+                  name_ar: b.name_ar,
+                  base_price: b.price,
+                  category_id: 'bundles',
+                  category_name: 'Bundles',
+                  available: isAvailable,
+                  outOfStock: b.in_stock === false, // Explicit flag for out-of-stock status
+                  variant_groups: [],
+                  modifiers: [],
+                  isBundle: true, // Flag to identify bundles
+                  bundleItems: b.items, // Store bundle items for receipt
+                };
+              });
           }
         } catch (bundlesError) {
           console.log('[POS] Bundles API error:', bundlesError);
@@ -312,6 +1336,12 @@ export default function POSScreen({ navigation }: any) {
         console.log('[POS] Total bundles loaded:', posBundles.length);
         console.log('[POS] All items:', allItems.length);
         setProducts(allItems);
+        
+        // Cache for next time
+        AsyncStorage.setItem(CACHE_KEYS.PRODUCTS, JSON.stringify({
+          data: allItems,
+          timestamp: Date.now(),
+        })).catch(console.error);
         
         // Build categories from products + add Bundles category if there are bundles
         const cats = new Set<string>();
@@ -376,44 +1406,49 @@ export default function POSScreen({ navigation }: any) {
     return matchesCategory && matchesSearch;
   });
 
-  // Handle product tap - bundles add directly, products show customization
+  // Helper to find product data for a bundle item
+  const findProductForBundleItem = (bundleItem: any): Product | null => {
+    const productId = bundleItem.product_id || bundleItem.product?.id;
+    if (!productId) return null;
+    return products.find(p => p.id === String(productId)) || null;
+  };
+
+  // Handle product tap - show customization modal for all products including bundles
   const handleProductTap = (product: Product) => {
     if (!product.available) {
       Alert.alert('Unavailable', 'This item is currently unavailable');
       return;
     }
 
-    // Bundles: Add directly to cart (no customization)
-    if (product.isBundle) {
-      const cartItem: CartItem = {
-        id: `${product.id}-${Date.now()}`,
-        productId: product.id,
-        name: product.name,
-        basePrice: product.base_price,
-        quantity: 1,
-        selectedVariants: [],
-        removedModifiers: [],
-        addedModifiers: [],
-        totalPrice: product.base_price,
-        isBundle: true,
-        bundleItems: product.bundleItems,
-      };
-      setCart(prev => [...prev, cartItem]);
-      return;
-    }
-
-    // Regular products: Show customization modal
+    // Show customization modal for all products (including bundles)
     setSelectedProduct(product);
-    // Pre-select first option for required variant groups
+    // Pre-select first AVAILABLE option for required variant groups
     const initialVariants: Record<string, VariantOption> = {};
     product.variant_groups.forEach(group => {
       if (group.required && group.options.length > 0) {
-        initialVariants[group.id] = group.options[0];
+        // Find the first variant that is in stock, fallback to first option
+        const firstAvailable = group.options.find(opt => opt.in_stock !== false) || group.options[0];
+        initialVariants[group.id] = firstAvailable;
       }
     });
     setSelectedVariants(initialVariants);
     setRemovedModifiers(new Set());
-    setAddedModifiers(new Set());
+    setAddedModifiers(new Map());
+    
+    // Reset bundle item customizations
+    if (product.isBundle && product.bundleItems) {
+      const initialBundleCustomizations: Record<number, { removedModifiers: Set<string>; addedModifiers: Map<string, number> }> = {};
+      product.bundleItems.forEach((_: any, index: number) => {
+        initialBundleCustomizations[index] = {
+          removedModifiers: new Set(),
+          addedModifiers: new Map(),
+        };
+      });
+      setBundleItemCustomizations(initialBundleCustomizations);
+    } else {
+      setBundleItemCustomizations({});
+    }
+    
     setShowCustomizeModal(true);
   };
 
@@ -433,22 +1468,46 @@ export default function POSScreen({ navigation }: any) {
     setCart(prev => [...prev, cartItem]);
   };
 
-  // Calculate customized item price
+  /**
+   * Calculate customized item price for POS display
+   * 
+   * NOTE: This calculation is for REAL-TIME UX FEEDBACK only.
+   * When the order is submitted, the backend validates and calculates final totals.
+   * Product/variant/modifier prices come from backend API.
+   * See: POST /api/pos/calculate-totals for backend calculation endpoint.
+   */
   const calculateCustomizedPrice = () => {
     if (!selectedProduct) return 0;
     let price = selectedProduct.base_price;
     
-    // Add variant price adjustments
+    // Add variant price adjustments (prices from backend)
     Object.values(selectedVariants).forEach(option => {
       price += option.price_adjustment;
     });
     
-    // Add extra modifier prices
+    // Add extra modifier prices (prices from backend)
     selectedProduct.modifiers.forEach(mod => {
-      if (addedModifiers.has(mod.id) && mod.addable) {
-        price += mod.extra_price;
+      const qty = addedModifiers.get(mod.id) || 0;
+      if (qty > 0 && mod.addable) {
+        price += mod.extra_price * qty;
       }
     });
+    
+    // Add bundle item extras
+    if (selectedProduct.isBundle && selectedProduct.bundleItems) {
+      selectedProduct.bundleItems.forEach((bundleItem: any, index: number) => {
+        const itemProduct = findProductForBundleItem(bundleItem);
+        const customizations = bundleItemCustomizations[index];
+        if (itemProduct && customizations) {
+          itemProduct.modifiers.forEach(mod => {
+            const qty = customizations.addedModifiers.get(mod.id) || 0;
+            if (qty > 0 && mod.addable) {
+              price += mod.extra_price * qty;
+            }
+          });
+        }
+      });
+    }
     
     return price;
   };
@@ -457,26 +1516,32 @@ export default function POSScreen({ navigation }: any) {
   const addCustomizedToCart = () => {
     if (!selectedProduct) return;
 
-    // Check all required variants are selected
-    const missingRequired = selectedProduct.variant_groups.find(
-      g => g.required && !selectedVariants[g.id]
-    );
-    if (missingRequired) {
-      Alert.alert('Required', `Please select ${missingRequired.name}`);
-      return;
+    // For non-bundle products, check all required variants are selected
+    if (!selectedProduct.isBundle) {
+      const missingRequired = selectedProduct.variant_groups.find(
+        g => g.required && !selectedVariants[g.id]
+      );
+      if (missingRequired) {
+        Alert.alert('Required', `Please select ${missingRequired.name}`);
+        return;
+      }
     }
 
     const itemPrice = calculateCustomizedPrice();
     
-    // Build variant display names
+    // Build variant display names with IDs
     const variantsList = Object.entries(selectedVariants).map(([groupId, option]) => {
       const group = selectedProduct.variant_groups.find(g => g.id === groupId);
       return {
         groupName: group?.name || '',
         optionName: option.name,
         priceAdjustment: option.price_adjustment,
+        variantId: option.id, // Include variant ID for inventory checking
       };
     });
+    
+    // Get the primary variant ID (for size/type variants)
+    const primaryVariantId = Object.values(selectedVariants)[0]?.id;
 
     // Build modifier lists
     const removed = Array.from(removedModifiers).map(id => {
@@ -484,14 +1549,55 @@ export default function POSScreen({ navigation }: any) {
       return mod?.name || '';
     }).filter(Boolean);
 
-    const added = Array.from(addedModifiers).map(id => {
-      const mod = selectedProduct.modifiers.find(m => m.id === id);
-      return mod ? { name: mod.name, price: mod.extra_price } : null;
-    }).filter(Boolean) as { name: string; price: number }[];
+    // Build added modifiers with quantities
+    const added: { name: string; price: number; quantity: number }[] = [];
+    addedModifiers.forEach((qty, id) => {
+      if (qty > 0) {
+        const mod = selectedProduct.modifiers.find(m => m.id === id);
+        if (mod) {
+          added.push({ name: mod.name, price: mod.extra_price, quantity: qty });
+        }
+      }
+    });
+
+    // For bundles, attach customizations to each bundle item
+    let bundleItemsWithCustomizations = selectedProduct.bundleItems;
+    if (selectedProduct.isBundle && selectedProduct.bundleItems) {
+      bundleItemsWithCustomizations = selectedProduct.bundleItems.map((item: any, index: number) => {
+        const itemProduct = findProductForBundleItem(item);
+        const customizations = bundleItemCustomizations[index];
+        
+        const itemRemoved = customizations ? Array.from(customizations.removedModifiers).map(modId => {
+          const mod = itemProduct?.modifiers.find(m => m.id === modId);
+          return mod?.name || '';
+        }).filter(Boolean) : [];
+        
+        // Build added modifiers with quantities for bundle items
+        const itemAdded: { name: string; price: number; quantity: number }[] = [];
+        if (customizations) {
+          customizations.addedModifiers.forEach((qty, modId) => {
+            if (qty > 0) {
+              const mod = itemProduct?.modifiers.find(m => m.id === modId);
+              if (mod) {
+                itemAdded.push({ name: mod.name, price: mod.extra_price, quantity: qty });
+              }
+            }
+          });
+        }
+        
+        return {
+          ...item,
+          removedModifiers: itemRemoved,
+          addedModifiers: itemAdded,
+        };
+      });
+    }
 
     const cartItem: CartItem = {
       id: `${selectedProduct.id}-${Date.now()}`,
       productId: selectedProduct.id,
+      variantId: primaryVariantId, // Selected variant ID for inventory checking
+      bundleId: selectedProduct.isBundle ? selectedProduct.id : undefined, // Bundle ID if applicable
       name: selectedProduct.name,
       basePrice: selectedProduct.base_price,
       quantity: 1,
@@ -499,6 +1605,8 @@ export default function POSScreen({ navigation }: any) {
       removedModifiers: removed,
       addedModifiers: added,
       totalPrice: itemPrice,
+      isBundle: selectedProduct.isBundle,
+      bundleItems: bundleItemsWithCustomizations,
     };
 
     setCart(prev => [...prev, cartItem]);
@@ -523,14 +1631,73 @@ export default function POSScreen({ navigation }: any) {
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
+  /**
+   * Cart totals for UI display while user builds order
+   * // UI preview only - backend calculates actual value on save
+   * Item prices (totalPrice) come from backend product data
+   * Tax rate comes from business settings via backend API
+   * Backend recalculates and validates final totals when order is submitted
+   */
   const subtotal = cart.reduce((sum, item) => sum + item.totalPrice * item.quantity, 0);
-  const tax = subtotal * (taxRate / 100); // Dynamic tax rate
-  const total = subtotal + tax;
+  const tax = subtotal * (taxRate / 100); // UI preview only - backend calculates actual value on save
+  const total = subtotal + tax; // UI preview only - backend calculates actual value on save
   
-  // Helper function to format currency
-  const formatPrice = (amount: number) => `${currency} ${amount.toFixed(2)}`;
+  // Handle card payment - show transaction number modal first
+  const handleCardPayment = () => {
+    setShowPaymentModal(false);
+    setTransactionNumber('');
+    setShowTransactionModal(true);
+  };
 
-  const processPayment = async (method: 'cash' | 'card') => {
+  // Confirm card payment with transaction number
+  const confirmCardPayment = () => {
+    if (!transactionNumber.trim()) {
+      if (Platform.OS === 'web') {
+        window.alert('Please enter the transaction number');
+      } else {
+        Alert.alert('Required', 'Please enter the transaction number');
+      }
+      return;
+    }
+    setShowTransactionModal(false);
+    processPayment('card', transactionNumber.trim());
+  };
+
+  // Handle cash payment - show change calculator modal first
+  const handleCashPayment = () => {
+    setShowPaymentModal(false);
+    setCustomerPaidAmount('');
+    setShowCashModal(true);
+  };
+
+  // Calculate change for cash payment
+  const calculateChange = (): number => {
+    const paid = parseFloat(customerPaidAmount) || 0;
+    return paid - total;
+  };
+
+  // Confirm cash payment with amount received
+  const confirmCashPayment = () => {
+    const amountReceived = parseFloat(customerPaidAmount) || 0;
+    const change = amountReceived - total;
+    if (change < 0) {
+      if (Platform.OS === 'web') {
+        window.alert('Insufficient amount received');
+      } else {
+        Alert.alert('Error', 'Insufficient amount received');
+      }
+      return;
+    }
+    setShowCashModal(false);
+    // Pass cash details for tracking cash drawer
+    processPayment('cash', undefined, { amount_received: amountReceived, change_given: change });
+  };
+
+  const processPayment = async (
+    method: 'cash' | 'card' | 'pay_later' | 'app_payment', 
+    paymentReference?: string,
+    cashDetails?: { amount_received: number; change_given: number }
+  ) => {
     // Prevent double-clicks
     if (isProcessingPayment) {
       console.log('Already processing payment...');
@@ -538,7 +1705,7 @@ export default function POSScreen({ navigation }: any) {
     }
     
     setIsProcessingPayment(true);
-    console.log('Processing payment:', method);
+    console.log('Processing payment:', method, paymentReference ? `(ref: ${paymentReference})` : '');
     
     try {
       const token = await AsyncStorage.getItem('token');
@@ -554,12 +1721,71 @@ export default function POSScreen({ navigation }: any) {
         return;
       }
 
+      // Check if this is an extra payment for an order edit
+      if (pendingOrderEdit) {
+        console.log('Processing extra payment for order edit:', pendingOrderEdit);
+        
+        // First apply the edit
+        const editResponse = await fetch(`${API_URL}/pos/orders/${pendingOrderEdit.orderId}/edit`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            items_to_modify: [{
+              order_item_id: pendingOrderEdit.itemId,  // Use order_item_id
+              ...pendingOrderEdit.modifications,
+            }],
+          }),
+        });
+
+        const editResult = await editResponse.json();
+        if (!editResult.success) {
+          throw new Error(editResult.error || 'Failed to modify order');
+        }
+
+        // Record the extra payment
+        await fetch(`${API_URL}/pos/orders/${pendingOrderEdit.orderId}/payment`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            payment_method: method,
+            amount: pendingOrderEdit.extraCost,
+            reference: paymentReference,
+            amount_received: cashDetails?.amount_received,
+            change_given: cashDetails?.change_given,
+            pos_session_id: posSession?.id,
+            is_extra_payment: true,
+          }),
+        });
+
+        // Success
+        setShowPaymentModal(false);
+        loadRecentOrders();
+        setPendingOrderEdit(null);
+        cancelEditingOrderItem();
+        
+        if (method === 'cash') {
+          refreshCashDrawerBalance();
+        }
+
+        Alert.alert('Success', `Order modified. Extra ${formatCurrency(pendingOrderEdit.extraCost)} collected via ${method}.`);
+        setIsProcessingPayment(false);
+        return;
+      }
+
       console.log('API_URL:', API_URL);
       console.log('Cart items:', cart.length);
 
       // Build order items for API
       const orderItems = cart.map(item => ({
         product_id: item.productId.startsWith('bundle-') ? null : parseInt(item.productId),
+        variant_id: item.variantId ? parseInt(item.variantId) : undefined, // Include variant ID for inventory checking
+        bundle_id: item.bundleId && item.isBundle ? parseInt(item.bundleId.replace('bundle-', '')) : undefined,
         product_name: item.name,
         product_category: item.isBundle ? 'Bundle' : undefined,
         quantity: item.quantity,
@@ -567,14 +1793,26 @@ export default function POSScreen({ navigation }: any) {
         special_instructions: [
           ...item.selectedVariants.map(v => v.optionName),
           ...item.removedModifiers.map(m => `No ${m}`),
-          ...item.addedModifiers.map(m => `+${m.name}`),
+          ...item.addedModifiers.map(m => m.quantity > 1 ? `+${m.quantity}x ${m.name}` : `+${m.name}`),
         ].join(', ') || undefined,
         is_combo: item.isBundle || false,
-        modifiers: item.addedModifiers.map(m => ({
-          modifier_name: m.name,
-          unit_price: m.price,
-          quantity: 1,
-        })),
+        // Include both added extras (with price) and removed modifiers
+        modifiers: [
+          // Added modifiers (extras with cost)
+          ...item.addedModifiers.map(m => ({
+            modifier_name: m.name,
+            unit_price: m.price,
+            quantity: m.quantity,
+            modifier_type: 'extra' as const,
+          })),
+          // Removed modifiers (no cost, just tracking)
+          ...item.removedModifiers.map(m => ({
+            modifier_name: m,
+            unit_price: 0,
+            quantity: 1,
+            modifier_type: 'removal' as const,
+          })),
+        ],
       }));
 
       console.log('Sending order to API...');
@@ -593,8 +1831,16 @@ export default function POSScreen({ navigation }: any) {
           customer_name: orderType.customerName,
           delivery_address: orderType.deliveryAddress,
           customer_phone: orderType.deliveryPhone,
+          // For delivery partner orders, send the partner ID (backend sets app_payment status)
+          // For in-house delivery, deliveryMethod is 'in_house' - don't send as partner ID
+          delivery_partner_id: orderType.type === 'delivery' && orderType.deliveryMethod && orderType.deliveryMethod !== 'in_house' 
+            ? parseInt(orderType.deliveryMethod) 
+            : undefined,
           items: orderItems,
-          payment_method: method,
+          // For app_payment (delivery partner), don't send payment_method - backend handles it
+          payment_method: method === 'app_payment' ? undefined : method,
+          payment_reference: paymentReference, // Transaction number for card payments
+          pos_session_id: posSession?.id, // Link order to current POS session
         }),
       });
 
@@ -611,8 +1857,10 @@ export default function POSScreen({ navigation }: any) {
       setShowPaymentModal(false);
       setShowReceiptModal(true);
 
-      // Mark as paid
-      if (result.data.id) {
+      // Only mark as paid for immediate payment methods (NOT pay_later or app_payment)
+      // - pay_later (dine-in): customer pays after eating when they ask for the check
+      // - app_payment (delivery partner): partner handles all payments
+      if (result.data.id && method !== 'pay_later' && method !== 'app_payment') {
         await fetch(`${API_URL}/pos/orders/${result.data.id}/payment`, {
           method: 'POST',
           headers: {
@@ -622,8 +1870,18 @@ export default function POSScreen({ navigation }: any) {
           body: JSON.stringify({
             payment_method: method,
             amount: total,
+            reference: paymentReference, // Transaction number for card payments
+            // Cash details for drawer reconciliation
+            amount_received: cashDetails?.amount_received,
+            change_given: cashDetails?.change_given,
+            pos_session_id: posSession?.id, // Link payment to current POS session
           }),
         });
+        
+        // Refresh cash drawer balance after cash payment
+        if (method === 'cash') {
+          refreshCashDrawerBalance();
+        }
       }
 
     } catch (error: any) {
@@ -635,13 +1893,16 @@ export default function POSScreen({ navigation }: any) {
       }
     } finally {
       setIsProcessingPayment(false);
+      setTransactionNumber(''); // Clear transaction number
+      setCustomerPaidAmount(''); // Clear cash amount
     }
   };
 
   const completeOrder = () => {
     setShowReceiptModal(false);
     setCart([]);
-    setOrderType({ type: 'dine_in' });
+    // Reset order type completely - clear table and delivery selections
+    setOrderType({ type: 'dine_in', tableId: undefined, tableNumber: undefined, deliveryMethod: undefined });
     setLastOrderNumber(null);
     Alert.alert('Success', 'Order completed successfully!');
   };
@@ -666,25 +1927,41 @@ export default function POSScreen({ navigation }: any) {
       alignItems: 'center',
       gap: 8,
     },
-    logo: {
-      width: 48,
-      height: 48,
-      borderRadius: 14,
-      backgroundColor: colors.primary,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 4,
-    },
     brandName: {
-      fontSize: 11,
-      fontWeight: '700',
+      fontSize: 12,
+      fontWeight: '500',
       color: colors.foreground,
       textAlign: 'center',
+      marginTop: 6,
     },
-    brandSubtitle: {
+    sidebarTabs: {
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 16,
+    },
+    sidebarTab: {
+      width: 52,
+      height: 52,
+      borderRadius: 14,
+      backgroundColor: colors.secondary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: 'transparent',
+    },
+    sidebarTabActive: {
+      backgroundColor: colors.secondary,
+      borderColor: colors.foreground,
+    },
+    sidebarTabLabel: {
       fontSize: 9,
+      fontWeight: '600',
       color: colors.mutedForeground,
+      marginTop: 4,
       textAlign: 'center',
+    },
+    sidebarTabLabelActive: {
+      color: colors.primary,
     },
     sidebarBottom: {
       alignItems: 'center',
@@ -1009,6 +2286,15 @@ export default function POSScreen({ navigation }: any) {
       fontWeight: '600',
       color: '#fff',
     },
+    outOfStockBadge: {
+      backgroundColor: '#F97316', // Orange for out of stock (vs red for unavailable)
+    },
+    menuItemNameUnavailable: {
+      color: colors.mutedForeground,
+    },
+    menuItemPriceUnavailable: {
+      color: colors.mutedForeground,
+    },
     bundleBadge: {
       position: 'absolute',
       top: 8,
@@ -1049,8 +2335,6 @@ export default function POSScreen({ navigation }: any) {
     },
     customizeHeader: {
       padding: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
@@ -1106,6 +2390,20 @@ export default function POSScreen({ navigation }: any) {
       color: colors.primary,
       fontWeight: '600',
     },
+    optionBtnDisabled: {
+      backgroundColor: colors.secondary,
+      opacity: 0.5,
+      borderColor: colors.muted,
+    },
+    optionTextDisabled: {
+      color: colors.mutedForeground,
+    },
+    outOfStockText: {
+      fontSize: 10,
+      color: colors.destructive,
+      marginTop: 2,
+      fontWeight: '500',
+    },
     optionPrice: {
       fontSize: 12,
       color: colors.mutedForeground,
@@ -1136,8 +2434,12 @@ export default function POSScreen({ navigation }: any) {
     },
     customizeFooter: {
       padding: 16,
+    },
+    customizeBodyWithContent: {
       borderTopWidth: 1,
       borderTopColor: colors.border,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
     },
     addToCartBtn: {
       backgroundColor: colors.primary,
@@ -1443,11 +2745,14 @@ export default function POSScreen({ navigation }: any) {
     <TouchableOpacity
       style={[styles.menuItem, !item.available && styles.menuItemUnavailable]}
       onPress={() => handleProductTap(item)}
-      activeOpacity={0.7}
+      activeOpacity={item.available ? 0.7 : 1}
+      disabled={!item.available}
     >
       {!item.available && (
-        <View style={styles.unavailableBadge}>
-          <Text style={styles.unavailableText}>Sold Out</Text>
+        <View style={[styles.unavailableBadge, item.outOfStock && styles.outOfStockBadge]}>
+          <Text style={styles.unavailableText}>
+            {item.outOfStock ? 'Out of Stock' : 'Unavailable'}
+          </Text>
         </View>
       )}
       {item.isBundle && (
@@ -1455,8 +2760,12 @@ export default function POSScreen({ navigation }: any) {
           <Text style={styles.bundleText}>Bundle</Text>
         </View>
       )}
-      <Text style={styles.menuItemName}>{item.name}</Text>
-      <Text style={styles.menuItemPrice}>{formatPrice(item.base_price)}</Text>
+      <Text style={[styles.menuItemName, !item.available && styles.menuItemNameUnavailable]}>
+        {item.name}
+      </Text>
+      <Text style={[styles.menuItemPrice, !item.available && styles.menuItemPriceUnavailable]}>
+        {formatCurrency(item.base_price)}
+      </Text>
       {item.isBundle && item.bundleItems && (
         <Text style={styles.bundleItemCount}>{item.bundleItems.length} items</Text>
       )}
@@ -1468,12 +2777,27 @@ export default function POSScreen({ navigation }: any) {
 
   // Get cart item display text with customizations
   const getCartItemDescription = (item: CartItem) => {
-    // For bundles, show the items included
+    // For bundles, show the items included with their customizations
     if (item.isBundle && item.bundleItems && item.bundleItems.length > 0) {
-      const bundleItemNames = item.bundleItems
-        .map((bi: any) => `${bi.quantity}x ${bi.product?.name || 'Item'}`)
-        .join(', ');
-      return `Bundle: ${bundleItemNames}`;
+      const bundleItemDescriptions = item.bundleItems.map((bi: any) => {
+        const itemName = `${bi.quantity}x ${bi.product?.name || bi.product_name || 'Item'}`;
+        const customizations: string[] = [];
+        
+        if (bi.removedModifiers && bi.removedModifiers.length > 0) {
+          customizations.push(...bi.removedModifiers.map((m: string) => `No ${m}`));
+        }
+        if (bi.addedModifiers && bi.addedModifiers.length > 0) {
+          customizations.push(...bi.addedModifiers.map((m: any) => 
+            m.quantity > 1 ? `+${m.quantity}x ${m.name}` : `+${m.name}`
+          ));
+        }
+        
+        if (customizations.length > 0) {
+          return `${itemName} (${customizations.join(', ')})`;
+        }
+        return itemName;
+      });
+      return bundleItemDescriptions.join(' • ');
     }
 
     const parts: string[] = [];
@@ -1488,9 +2812,11 @@ export default function POSScreen({ navigation }: any) {
       parts.push(item.removedModifiers.map(m => `No ${m}`).join(', '));
     }
     
-    // Add extra modifiers
+    // Add extra modifiers with quantity
     if (item.addedModifiers.length > 0) {
-      parts.push(item.addedModifiers.map(m => `+${m.name}`).join(', '));
+      parts.push(item.addedModifiers.map(m => 
+        m.quantity > 1 ? `+${m.quantity}x ${m.name}` : `+${m.name}`
+      ).join(', '));
     }
     
     return parts.join(' • ');
@@ -1505,7 +2831,7 @@ export default function POSScreen({ navigation }: any) {
           {description ? (
             <Text style={styles.cartItemMods}>{description}</Text>
           ) : null}
-          <Text style={styles.cartItemPrice}>{formatPrice(item.totalPrice)}</Text>
+          <Text style={styles.cartItemPrice}>{formatCurrency(item.totalPrice)}</Text>
         </View>
         <View style={styles.quantityControls}>
           <TouchableOpacity
@@ -1537,14 +2863,62 @@ export default function POSScreen({ navigation }: any) {
       {/* Left Sidebar */}
       <View style={styles.sidebar}>
         <View style={styles.sidebarTop}>
-          <View style={styles.logo}>
-            <ShoppingCart size={26} color="#fff" />
+          <Command size={32} color={colors.foreground} />
+          <Text style={styles.brandName}>Sylo POS</Text>
+          
+          {/* Sidebar Tabs */}
+          <View style={styles.sidebarTabs}>
+            <TouchableOpacity
+              style={[styles.sidebarTab, activeSidebarTab === 'pos' && styles.sidebarTabActive]}
+              onPress={() => setActiveSidebarTab('pos')}
+            >
+              <ShoppingCart
+                size={22}
+                color={colors.foreground}
+              />
+            </TouchableOpacity>
+            <Text style={[styles.sidebarTabLabel, activeSidebarTab === 'pos' && styles.sidebarTabLabelActive]}>
+              POS
+            </Text>
+            
+            <TouchableOpacity
+              style={[styles.sidebarTab, activeSidebarTab === 'orders' && styles.sidebarTabActive]}
+              onPress={() => setActiveSidebarTab('orders')}
+            >
+              <ClipboardList
+                size={22}
+                color={colors.foreground}
+              />
+            </TouchableOpacity>
+            <Text style={[styles.sidebarTabLabel, activeSidebarTab === 'orders' && styles.sidebarTabLabelActive]}>
+              Orders
+            </Text>
           </View>
-          <Text style={styles.brandName}>Silo POS</Text>
-          <Text style={styles.brandSubtitle}>POS Terminal</Text>
         </View>
         
         <View style={styles.sidebarBottom}>
+          {/* Cash Drawer Balance (when session active) */}
+          {posSession && (
+            <TouchableOpacity 
+              style={{ 
+                backgroundColor: colors.muted, 
+                padding: 8, 
+                borderRadius: 8, 
+                alignItems: 'center',
+                marginBottom: 8,
+              }}
+              onPress={() => {
+                refreshCashDrawerBalance();
+                setShowCloseSessionModal(true);
+              }}
+            >
+              <Text style={{ color: colors.mutedForeground, fontSize: 10 }}>Cash Drawer</Text>
+              <Text style={{ color: colors.foreground, fontWeight: '700', fontSize: 12 }}>
+                {formatCurrency(cashDrawerBalance)}
+              </Text>
+            </TouchableOpacity>
+          )}
+          
           <View style={styles.timeDisplay}>
             <Clock size={16} color={colors.mutedForeground} style={styles.timeIcon} />
             <Text style={styles.timeText}>
@@ -1559,6 +2933,195 @@ export default function POSScreen({ navigation }: any) {
 
       {/* Main Content Area */}
       <View style={styles.mainContent}>
+        {activeSidebarTab === 'orders' ? (
+          /* Orders Tab Content */
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
+            {/* Orders Header */}
+            <View style={{ 
+              flexDirection: 'row', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              padding: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}>
+              <Text style={{ fontSize: 20, fontWeight: '700', color: colors.foreground }}>
+                Today's Orders
+              </Text>
+              <TouchableOpacity 
+                onPress={loadRecentOrders}
+                style={{ 
+                  padding: 8, 
+                  backgroundColor: colors.muted, 
+                  borderRadius: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <Receipt size={16} color={colors.foreground} />
+                <Text style={{ color: colors.foreground, fontSize: 14 }}>Refresh</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Filter Tabs */}
+            <View style={{ 
+              flexDirection: 'row', 
+              padding: 12,
+              gap: 8,
+            }}>
+              {(['all', 'pending', 'in_progress', 'completed', 'cancelled'] as const).map(filter => (
+                <TouchableOpacity
+                  key={filter}
+                  onPress={() => setOrdersFilter(filter)}
+                  style={{
+                    paddingHorizontal: 16,
+                    paddingVertical: 8,
+                    borderRadius: 20,
+                    backgroundColor: ordersFilter === filter ? colors.primary : colors.muted,
+                  }}
+                >
+                  <Text style={{
+                    color: ordersFilter === filter ? colors.primaryForeground : colors.foreground,
+                    fontWeight: ordersFilter === filter ? '600' : '400',
+                  }}>
+                    {filter === 'in_progress' ? 'In Progress' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            
+            {/* Orders List */}
+            {loadingOrders ? (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                <Text style={{ color: colors.mutedForeground }}>Loading orders...</Text>
+              </View>
+            ) : recentOrders.length === 0 ? (
+              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 12 }}>
+                <ClipboardList size={48} color={colors.mutedForeground} />
+                <Text style={{ color: colors.mutedForeground, fontSize: 16 }}>No orders found</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={recentOrders}
+                keyExtractor={(item) => item.id?.toString() || item.order_number}
+                contentContainerStyle={{ padding: 12, gap: 8 }}
+                renderItem={({ item }) => {
+                  const statusColors: Record<string, string> = {
+                    pending: '#f59e0b',
+                    confirmed: '#3b82f6',
+                    preparing: '#8b5cf6',
+                    ready: '#10b981',
+                    completed: '#22c55e',
+                    cancelled: '#ef4444',
+                  };
+                  const statusColor = statusColors[item.order_status] || colors.mutedForeground;
+                  
+                  const isEditable = !['completed', 'cancelled', 'rejected'].includes(item.order_status);
+                  
+                  return (
+                    <TouchableOpacity
+                      onPress={() => {
+                        setSelectedOrderForView(item);
+                        setShowOrderDetailsModal(true);
+                      }}
+                      style={{
+                        backgroundColor: colors.card,
+                        borderRadius: 12,
+                        padding: 14,
+                        borderWidth: 1,
+                        borderColor: isEditable ? colors.border : colors.muted,
+                        opacity: isEditable ? 1 : 0.7,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <Text style={{ fontWeight: '700', fontSize: 16, color: colors.foreground }}>
+                            #{item.order_number}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: colors.primary, fontWeight: '500' }}>
+                            TAP TO VIEW
+                          </Text>
+                        </View>
+                        <View style={{ 
+                          backgroundColor: statusColor + '20', 
+                          paddingHorizontal: 10, 
+                          paddingVertical: 4, 
+                          borderRadius: 12 
+                        }}>
+                          <Text style={{ 
+                            color: statusColor, 
+                            fontSize: 12, 
+                            fontWeight: '600',
+                            textTransform: 'capitalize',
+                          }}>
+                            {item.order_status?.replace('_', ' ')}
+                          </Text>
+                        </View>
+                      </View>
+                      
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            {item.order_type === 'dine_in' && <UtensilsCrossed size={14} color={colors.mutedForeground} />}
+                            {item.order_type === 'takeaway' && <ShoppingCart size={14} color={colors.mutedForeground} />}
+                            {item.order_type === 'delivery' && <Truck size={14} color={colors.mutedForeground} />}
+                            <Text style={{ color: colors.mutedForeground, fontSize: 12, textTransform: 'capitalize' }}>
+                              {item.order_type?.replace('_', ' ')}
+                            </Text>
+                            {/* Show table number for dine-in orders */}
+                            {item.order_type === 'dine_in' && item.table_number && (
+                              <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '600' }}>
+                                • T{item.table_number}
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                            {item.order_items?.length || 0} items
+                          </Text>
+                          <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                            {new Date(item.created_at).toLocaleTimeString('en-US', { 
+                              hour: '2-digit', 
+                              minute: '2-digit' 
+                            })}
+                          </Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          {/* Payment Status Badge */}
+                          <View style={{ 
+                            backgroundColor: item.payment_status === 'paid' ? '#d1fae5' 
+                              : item.payment_status === 'app_payment' ? '#dbeafe' 
+                              : '#fef3c7',
+                            paddingHorizontal: 8, 
+                            paddingVertical: 3, 
+                            borderRadius: 8 
+                          }}>
+                            <Text style={{ 
+                              color: item.payment_status === 'paid' ? '#059669' 
+                                : item.payment_status === 'app_payment' ? '#2563eb' 
+                                : '#d97706',
+                              fontSize: 10, 
+                              fontWeight: '600',
+                            }}>
+                              {item.payment_status === 'paid' ? 'Paid' 
+                                : item.payment_status === 'app_payment' ? 'App' 
+                                : 'Unpaid'}
+                            </Text>
+                          </View>
+                          <Text style={{ fontWeight: '700', fontSize: 16, color: colors.foreground }}>
+                            {formatCurrency(item.total_amount || 0)}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </View>
+        ) : (
+        /* POS Tab Content */
+        <>
         {/* Menu Panel */}
         <View style={[styles.menuPanel, { flex: 1 }]}>
           {/* Search */}
@@ -1627,6 +3190,7 @@ export default function POSScreen({ navigation }: any) {
             </View>
           ) : (
             <FlatList
+              key={`products-${isTablet ? 3 : 2}`}
               data={filteredProducts}
               renderItem={renderProduct}
               keyExtractor={item => item.id}
@@ -1641,7 +3205,18 @@ export default function POSScreen({ navigation }: any) {
         {/* Cart Panel - Right Sidebar */}
         <View style={styles.cartPanel}>
           <View style={styles.cartHeader}>
-            <Text style={styles.cartTitle}>Current Order</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cartTitle}>
+                {editingOrder ? `Editing #${editingOrder.order_number}` : 'Current Order'}
+              </Text>
+              {editingOrder && (
+                <TouchableOpacity onPress={cancelOrderEditing}>
+                  <Text style={{ color: colors.destructive, fontSize: 12, marginTop: 2 }}>
+                    Cancel Edit
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={styles.cartCount}>
               <Text style={styles.cartCountText}>
                 {cart.reduce((sum, item) => sum + item.quantity, 0)} items
@@ -1656,7 +3231,7 @@ export default function POSScreen({ navigation }: any) {
                 styles.orderTypeBtn,
                 orderType.type === 'dine_in' && styles.orderTypeBtnActive,
               ]}
-              onPress={() => setOrderType({ ...orderType, type: 'dine_in' })}
+              onPress={() => setShowTableSelectionModal(true)}
             >
               <UtensilsCrossed
                 size={16}
@@ -1671,8 +3246,11 @@ export default function POSScreen({ navigation }: any) {
                   styles.orderTypeBtnText,
                   orderType.type === 'dine_in' && styles.orderTypeBtnTextActive,
                 ]}
+                numberOfLines={1}
               >
-                Dine In
+                {orderType.type === 'dine_in' && orderType.tableId 
+                  ? `T${restaurantTables.find(t => t.id === orderType.tableId)?.table_number || ''}`
+                  : 'Dine In'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -1680,7 +3258,7 @@ export default function POSScreen({ navigation }: any) {
                 styles.orderTypeBtn,
                 orderType.type === 'takeaway' && styles.orderTypeBtnActive,
               ]}
-              onPress={() => setOrderType({ ...orderType, type: 'takeaway' })}
+              onPress={() => setOrderType({ type: 'takeaway', tableId: undefined, tableNumber: undefined, deliveryMethod: undefined })}
             >
               <ShoppingCart
                 size={16}
@@ -1704,7 +3282,7 @@ export default function POSScreen({ navigation }: any) {
                 styles.orderTypeBtn,
                 orderType.type === 'delivery' && styles.orderTypeBtnActive,
               ]}
-              onPress={() => setOrderType({ ...orderType, type: 'delivery' })}
+              onPress={() => setShowDeliveryMethodModal(true)}
             >
               <Truck
                 size={16}
@@ -1719,8 +3297,11 @@ export default function POSScreen({ navigation }: any) {
                   styles.orderTypeBtnText,
                   orderType.type === 'delivery' && styles.orderTypeBtnTextActive,
                 ]}
+                numberOfLines={1}
               >
-                Delivery
+                {orderType.type === 'delivery' && orderType.deliveryMethod 
+                  ? deliveryPartners.find(p => String(p.id) === orderType.deliveryMethod)?.name || 'Delivery'
+                  : 'Delivery'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1745,30 +3326,66 @@ export default function POSScreen({ navigation }: any) {
           <View style={styles.cartFooter}>
             <View style={styles.totalsRow}>
               <Text style={styles.totalsLabel}>Subtotal</Text>
-              <Text style={styles.totalsValue}>{formatPrice(subtotal)}</Text>
+              <Text style={styles.totalsValue}>{formatCurrency(subtotal)}</Text>
             </View>
             {taxRate > 0 && (
               <View style={styles.totalsRow}>
                 <Text style={styles.totalsLabel}>VAT ({taxRate}%)</Text>
-                <Text style={styles.totalsValue}>{formatPrice(tax)}</Text>
+                <Text style={styles.totalsValue}>{formatCurrency(tax)}</Text>
               </View>
             )}
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>{formatPrice(total)}</Text>
+              <Text style={styles.totalValue}>{formatCurrency(total)}</Text>
             </View>
             <TouchableOpacity
-              style={[styles.chargeBtn, cart.length === 0 && styles.chargeBtnDisabled]}
-              onPress={() => setShowPaymentModal(true)}
-              disabled={cart.length === 0}
+              style={[
+                styles.chargeBtn, 
+                cart.length === 0 && styles.chargeBtnDisabled,
+                editingOrder && { backgroundColor: '#10b981' }, // Green for save
+              ]}
+              onPress={() => {
+                if (editingOrder) {
+                  // Save edited order
+                  saveOrderEdits();
+                  return;
+                }
+                // For dine-in, require table selection first
+                if (orderType.type === 'dine_in' && !orderType.tableId) {
+                  setShowTableSelectionModal(true);
+                  return;
+                }
+                // For delivery partner orders, skip payment modal - partner handles payment
+                if (orderType.type === 'delivery' && orderType.deliveryMethod && orderType.deliveryMethod !== 'in_house') {
+                  processPayment('app_payment');
+                  return;
+                }
+                setShowPaymentModal(true);
+              }}
+              disabled={cart.length === 0 || isProcessingPayment}
             >
-              <CreditCard size={18} color={colors.primaryForeground} />
-              <Text style={styles.chargeBtnText}>
-                Charge {formatPrice(total)}
-              </Text>
+              {editingOrder ? (
+                <>
+                  <Check size={18} color={colors.primaryForeground} />
+                  <Text style={styles.chargeBtnText}>
+                    {isProcessingPayment ? 'Saving...' : 'Save Changes'}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <CreditCard size={18} color={colors.primaryForeground} />
+                  <Text style={styles.chargeBtnText}>
+                    {orderType.type === 'dine_in' && !orderType.tableId 
+                      ? 'Select Table' 
+                      : `Charge ${formatCurrency(total)}`}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
         </View>
+        </>
+        )}
       </View>
 
       {/* Customize Product Modal */}
@@ -1778,14 +3395,18 @@ export default function POSScreen({ navigation }: any) {
         animationType="slide"
         onRequestClose={() => setShowCustomizeModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.customizeModalContent}>
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowCustomizeModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.customizeModalContent}>
             {/* Header */}
             <View style={styles.customizeHeader}>
               <View>
                 <Text style={styles.customizeTitle}>{selectedProduct?.name}</Text>
                 <Text style={styles.customizePrice}>
-                  {formatPrice(calculateCustomizedPrice())}
+                  {formatCurrency(calculateCustomizedPrice())}
                 </Text>
               </View>
               <TouchableOpacity
@@ -1796,8 +3417,147 @@ export default function POSScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
-            {/* Body */}
-            <ScrollView style={styles.customizeBody} showsVerticalScrollIndicator={false}>
+            {/* Body - show for variants, modifiers, or bundle items */}
+            {((selectedProduct?.variant_groups?.length ?? 0) > 0 || (selectedProduct?.modifiers?.length ?? 0) > 0 || (selectedProduct?.isBundle && selectedProduct?.bundleItems?.length)) && (
+            <ScrollView style={[styles.customizeBody, styles.customizeBodyWithContent]} showsVerticalScrollIndicator={false}>
+              
+              {/* Bundle Items with Customizations */}
+              {selectedProduct?.isBundle && selectedProduct?.bundleItems && selectedProduct.bundleItems.length > 0 && (
+                <View style={{ gap: 16 }}>
+                  {selectedProduct.bundleItems.map((bundleItem: any, itemIndex: number) => {
+                    const itemProduct = findProductForBundleItem(bundleItem);
+                    const itemName = bundleItem.product?.name || bundleItem.product_name || 'Item';
+                    const removableModifiers = itemProduct?.modifiers.filter(m => m.removable) || [];
+                    const addableModifiers = itemProduct?.modifiers.filter(m => m.addable) || [];
+                    const hasCustomizations = removableModifiers.length > 0 || addableModifiers.length > 0;
+                    
+                    return (
+                      <View key={itemIndex} style={{
+                        backgroundColor: colors.muted,
+                        borderRadius: 12,
+                        padding: 14,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                      }}>
+                        {/* Item Header */}
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: colors.foreground, marginBottom: hasCustomizations ? 12 : 0 }}>
+                          {bundleItem.quantity}x {itemName}
+                        </Text>
+                        
+                        {/* Removable Items for this bundle item */}
+                        {removableModifiers.length > 0 && (
+                          <View style={{ marginBottom: addableModifiers.length > 0 ? 12 : 0 }}>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: colors.mutedForeground, marginBottom: 8, textTransform: 'uppercase' }}>Remove</Text>
+                            <View style={styles.optionsRow}>
+                              {removableModifiers.map(mod => {
+                                const isRemoved = bundleItemCustomizations[itemIndex]?.removedModifiers.has(mod.id);
+                                return (
+                                  <TouchableOpacity
+                                    key={mod.id}
+                                    style={[
+                                      styles.modifierBtn,
+                                      { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border },
+                                      isRemoved && styles.modifierBtnActive,
+                                    ]}
+                                    onPress={() => {
+                                      setBundleItemCustomizations(prev => {
+                                        const current = prev[itemIndex] || { removedModifiers: new Set(), addedModifiers: new Set() };
+                                        const newRemoved = new Set(current.removedModifiers);
+                                        if (newRemoved.has(mod.id)) {
+                                          newRemoved.delete(mod.id);
+                                        } else {
+                                          newRemoved.add(mod.id);
+                                        }
+                                        return {
+                                          ...prev,
+                                          [itemIndex]: { ...current, removedModifiers: newRemoved },
+                                        };
+                                      });
+                                    }}
+                                  >
+                                    {isRemoved && <X size={14} color={colors.destructive} />}
+                                    <Text style={[styles.modifierText, isRemoved && styles.modifierTextRemoved]}>
+                                      No {mod.name}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        )}
+                        
+                        {/* Addable Items for this bundle item */}
+                        {addableModifiers.length > 0 && (
+                          <View>
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: colors.mutedForeground, marginBottom: 8, textTransform: 'uppercase' }}>Add Extra</Text>
+                            <View style={styles.optionsRow}>
+                              {addableModifiers.map(mod => {
+                                const modQty = bundleItemCustomizations[itemIndex]?.addedModifiers.get(mod.id) || 0;
+                                const isAdded = modQty > 0;
+                                return (
+                                  <View
+                                    key={mod.id}
+                                    style={[
+                                      styles.modifierBtn,
+                                      { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border, flexDirection: 'row', alignItems: 'center', gap: 8 },
+                                      isAdded && styles.modifierBtnAdded,
+                                    ]}
+                                  >
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        setBundleItemCustomizations(prev => {
+                                          const current = prev[itemIndex] || { removedModifiers: new Set(), addedModifiers: new Map() };
+                                          const newAdded = new Map(current.addedModifiers);
+                                          const currentQty = newAdded.get(mod.id) || 0;
+                                          if (currentQty > 0) {
+                                            if (currentQty === 1) {
+                                              newAdded.delete(mod.id);
+                                            } else {
+                                              newAdded.set(mod.id, currentQty - 1);
+                                            }
+                                          }
+                                          return {
+                                            ...prev,
+                                            [itemIndex]: { ...current, addedModifiers: newAdded },
+                                          };
+                                        });
+                                      }}
+                                      style={{ padding: 4 }}
+                                    >
+                                      <Minus size={14} color={isAdded ? colors.primary : colors.mutedForeground} />
+                                    </TouchableOpacity>
+                                    <Text style={[styles.modifierText, isAdded && { color: colors.primary, fontWeight: '600' }]}>
+                                      {mod.name} {modQty > 0 ? `(${modQty})` : ''} +{formatCurrency(mod.extra_price)}
+                                    </Text>
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        setBundleItemCustomizations(prev => {
+                                          const current = prev[itemIndex] || { removedModifiers: new Set(), addedModifiers: new Map() };
+                                          const newAdded = new Map(current.addedModifiers);
+                                          const currentQty = newAdded.get(mod.id) || 0;
+                                          newAdded.set(mod.id, currentQty + 1);
+                                          return {
+                                            ...prev,
+                                            [itemIndex]: { ...current, addedModifiers: newAdded },
+                                          };
+                                        });
+                                      }}
+                                      style={{ padding: 4 }}
+                                    >
+                                      <Plus size={14} color={colors.primary} />
+                                    </TouchableOpacity>
+                                  </View>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              )}
+
               {/* Variant Groups */}
               {selectedProduct?.variant_groups.map(group => (
                 <View key={group.id} style={styles.variantSection}>
@@ -1807,13 +3567,16 @@ export default function POSScreen({ navigation }: any) {
                   <View style={styles.optionsRow}>
                     {group.options.map(option => {
                       const isSelected = selectedVariants[group.id]?.id === option.id;
+                      const isOutOfStock = option.in_stock === false;
                       return (
                         <TouchableOpacity
                           key={option.id}
                           style={[
                             styles.optionBtn,
                             isSelected && styles.optionBtnSelected,
+                            isOutOfStock && styles.optionBtnDisabled,
                           ]}
+                          disabled={isOutOfStock}
                           onPress={() => {
                             setSelectedVariants(prev => ({
                               ...prev,
@@ -1825,16 +3588,18 @@ export default function POSScreen({ navigation }: any) {
                             style={[
                               styles.optionText,
                               isSelected && styles.optionTextSelected,
+                              isOutOfStock && styles.optionTextDisabled,
                             ]}
                           >
                             {option.name}
                           </Text>
-                          {option.price_adjustment !== 0 && (
+                          {isOutOfStock ? (
+                            <Text style={styles.outOfStockText}>Out of Stock</Text>
+                          ) : option.price_adjustment !== 0 ? (
                             <Text style={styles.optionPrice}>
-                              {option.price_adjustment > 0 ? '+' : ''}
-                              {option.price_adjustment} {currency}
+                              {option.price_adjustment > 0 ? '+' : ''}{formatCurrency(option.price_adjustment)}
                             </Text>
-                          )}
+                          ) : null}
                         </TouchableOpacity>
                       );
                     })}
@@ -1894,41 +3659,60 @@ export default function POSScreen({ navigation }: any) {
                     {selectedProduct?.modifiers
                       .filter(m => m.addable)
                       .map(mod => {
-                        const isAdded = addedModifiers.has(mod.id);
+                        const modQty = addedModifiers.get(mod.id) || 0;
+                        const isAdded = modQty > 0;
                         return (
-                          <TouchableOpacity
+                          <View
                             key={mod.id}
                             style={[
                               styles.modifierBtn,
+                              { flexDirection: 'row', alignItems: 'center', gap: 8 },
                               isAdded && styles.modifierBtnAdded,
                             ]}
-                            onPress={() => {
-                              setAddedModifiers(prev => {
-                                const next = new Set(prev);
-                                if (next.has(mod.id)) {
-                                  next.delete(mod.id);
-                                } else {
-                                  next.add(mod.id);
-                                }
-                                return next;
-                              });
-                            }}
                           >
-                            {isAdded ? (
-                              <Check size={14} color={colors.primary} />
-                            ) : (
-                              <Plus size={14} color={colors.foreground} />
-                            )}
-                            <Text style={styles.modifierText}>
-                              {mod.name} +{mod.extra_price} {currency}
+                            <TouchableOpacity
+                              onPress={() => {
+                                setAddedModifiers(prev => {
+                                  const next = new Map(prev);
+                                  const currentQty = next.get(mod.id) || 0;
+                                  if (currentQty > 0) {
+                                    if (currentQty === 1) {
+                                      next.delete(mod.id);
+                                    } else {
+                                      next.set(mod.id, currentQty - 1);
+                                    }
+                                  }
+                                  return next;
+                                });
+                              }}
+                              style={{ padding: 4 }}
+                            >
+                              <Minus size={14} color={isAdded ? colors.primary : colors.mutedForeground} />
+                            </TouchableOpacity>
+                            <Text style={[styles.modifierText, isAdded && { color: colors.primary, fontWeight: '600' }]}>
+                              {mod.name} {modQty > 0 ? `(${modQty})` : ''} +{formatCurrency(mod.extra_price)}
                             </Text>
-                          </TouchableOpacity>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setAddedModifiers(prev => {
+                                  const next = new Map(prev);
+                                  const currentQty = next.get(mod.id) || 0;
+                                  next.set(mod.id, currentQty + 1);
+                                  return next;
+                                });
+                              }}
+                              style={{ padding: 4 }}
+                            >
+                              <Plus size={14} color={colors.primary} />
+                            </TouchableOpacity>
+                          </View>
                         );
                       })}
                   </View>
                 </View>
               )}
             </ScrollView>
+            )}
 
             {/* Footer */}
             <View style={styles.customizeFooter}>
@@ -1938,12 +3722,12 @@ export default function POSScreen({ navigation }: any) {
               >
                 <ShoppingCart size={18} color={colors.primaryForeground} />
                 <Text style={styles.addToCartText}>
-                  Add to Cart - {formatPrice(calculateCustomizedPrice())}
+                  Add to Cart - {formatCurrency(calculateCustomizedPrice())}
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Payment Modal */}
@@ -1951,19 +3735,50 @@ export default function POSScreen({ navigation }: any) {
         visible={showPaymentModal}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowPaymentModal(false)}
+        onRequestClose={() => {
+          if (!pendingOrderEdit) setShowPaymentModal(false);
+        }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => {
+            if (!pendingOrderEdit) setShowPaymentModal(false);
+          }}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Payment Method</Text>
+              <Text style={styles.modalTitle}>
+                {pendingOrderEdit ? 'Collect Extra Payment' : 'Select Payment Method'}
+              </Text>
               <TouchableOpacity
                 style={styles.closeBtn}
-                onPress={() => setShowPaymentModal(false)}
+                onPress={() => {
+                  if (pendingOrderEdit) {
+                    // Cancel the pending edit
+                    setPendingOrderEdit(null);
+                  }
+                  setShowPaymentModal(false);
+                }}
               >
                 <X size={20} color={colors.foreground} />
               </TouchableOpacity>
             </View>
+
+            {/* Show extra payment amount when editing order */}
+            {pendingOrderEdit && (
+              <View style={{ backgroundColor: colors.primary + '15', padding: 16, borderRadius: 8, marginBottom: 16 }}>
+                <Text style={{ color: colors.foreground, fontSize: 14, textAlign: 'center' }}>
+                  Extra Amount Due
+                </Text>
+                <Text style={{ color: colors.primary, fontSize: 28, fontWeight: '700', textAlign: 'center', marginTop: 4 }}>
+                  {formatCurrency(pendingOrderEdit.extraCost)}
+                </Text>
+                <Text style={{ color: colors.mutedForeground, fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+                  for order modifications
+                </Text>
+              </View>
+            )}
 
             <View style={styles.paymentOptions}>
               {isProcessingPayment && (
@@ -1973,7 +3788,7 @@ export default function POSScreen({ navigation }: any) {
               )}
               <TouchableOpacity
                 style={[styles.paymentBtn, isProcessingPayment && { opacity: 0.5 }]}
-                onPress={() => processPayment('cash')}
+                onPress={handleCashPayment}
                 disabled={isProcessingPayment}
               >
                 <View style={styles.paymentIcon}>
@@ -1992,7 +3807,7 @@ export default function POSScreen({ navigation }: any) {
 
               <TouchableOpacity
                 style={[styles.paymentBtn, isProcessingPayment && { opacity: 0.5 }]}
-                onPress={() => processPayment('card')}
+                onPress={handleCardPayment}
                 disabled={isProcessingPayment}
               >
                 <View style={styles.paymentIcon}>
@@ -2008,9 +3823,282 @@ export default function POSScreen({ navigation }: any) {
                   style={{ marginLeft: 'auto' }}
                 />
               </TouchableOpacity>
+
+              {/* Pay Later option - only for dine-in orders, not for extra payments */}
+              {orderType.type === 'dine_in' && !pendingOrderEdit && (
+                <TouchableOpacity
+                  style={[styles.paymentBtn, isProcessingPayment && { opacity: 0.5 }, { borderColor: colors.primary, borderWidth: 1 }]}
+                  onPress={() => processPayment('pay_later')}
+                  disabled={isProcessingPayment}
+                >
+                  <View style={[styles.paymentIcon, { backgroundColor: colors.primary }]}>
+                    <Clock size={24} color="#fff" />
+                  </View>
+                  <View>
+                    <Text style={styles.paymentText}>Pay Later</Text>
+                    <Text style={styles.paymentSubtext}>Customer pays after dining</Text>
+                  </View>
+                  <ChevronRight
+                    size={20}
+                    color={colors.mutedForeground}
+                    style={{ marginLeft: 'auto' }}
+                  />
+                </TouchableOpacity>
+              )}
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Cash Payment Modal (change calculator) */}
+      <Modal
+        visible={showCashModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowCashModal(false);
+          setCustomerPaidAmount('');
+        }}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => {
+            setShowCashModal(false);
+            setCustomerPaidAmount('');
+          }}
+        >
+          <TouchableOpacity activeOpacity={1} style={[styles.modalContent, { width: isTablet ? 450 : width - 48 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Cash Payment</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => {
+                  setShowCashModal(false);
+                  setCustomerPaidAmount('');
+                }}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 20 }}>
+              {/* Order Total */}
+              <View style={{ alignItems: 'center', marginBottom: 24, padding: 16, backgroundColor: colors.muted, borderRadius: 16 }}>
+                <Text style={{ color: colors.mutedForeground, fontSize: 14, marginBottom: 4 }}>Order Total</Text>
+                <Text style={{ fontSize: 36, fontWeight: 'bold', color: colors.foreground }}>
+                  {formatCurrency(total)}
+                </Text>
+              </View>
+
+              {/* Amount Received Input */}
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Amount Received from Customer</Text>
+              <TextInput
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  padding: 16,
+                  fontSize: 28,
+                  fontWeight: 'bold',
+                  color: colors.foreground,
+                  textAlign: 'center',
+                  marginBottom: 16,
+                }}
+                placeholder="0.000"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="decimal-pad"
+                value={customerPaidAmount}
+                onChangeText={setCustomerPaidAmount}
+                autoFocus
+              />
+
+              {/* Quick Amount Buttons */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {[1, 5, 10, 20].map(amount => (
+                  <TouchableOpacity
+                    key={amount}
+                    onPress={() => setCustomerPaidAmount(amount.toFixed(3))}
+                    style={{ 
+                      backgroundColor: colors.muted, 
+                      paddingVertical: 12, 
+                      paddingHorizontal: 20, 
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 16 }}>{amount} KD</Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity
+                  onPress={() => setCustomerPaidAmount(total.toFixed(3))}
+                  style={{ 
+                    backgroundColor: colors.primary + '20', 
+                    paddingVertical: 12, 
+                    paddingHorizontal: 20, 
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: colors.primary,
+                  }}
+                >
+                  <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 16 }}>Exact</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Change Display */}
+              <View style={{ 
+                padding: 20, 
+                backgroundColor: calculateChange() >= 0 ? '#22c55e15' : '#ef444415', 
+                borderRadius: 16,
+                borderWidth: 2,
+                borderColor: calculateChange() >= 0 ? '#22c55e' : '#ef4444',
+                marginBottom: 20,
+              }}>
+                <Text style={{ color: colors.mutedForeground, textAlign: 'center', marginBottom: 8 }}>
+                  Change to Return
+                </Text>
+                <Text style={{ 
+                  fontSize: 42, 
+                  fontWeight: 'bold', 
+                  textAlign: 'center',
+                  color: calculateChange() >= 0 ? '#22c55e' : '#ef4444',
+                }}>
+                  {calculateChange() >= 0 ? formatCurrency(calculateChange()) : 'Insufficient'}
+                </Text>
+              </View>
+
+              {/* Action Buttons */}
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.muted,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    setShowCashModal(false);
+                    setCustomerPaidAmount('');
+                  }}
+                >
+                  <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 16 }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 2,
+                    backgroundColor: calculateChange() >= 0 && customerPaidAmount ? colors.primary : colors.muted,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    opacity: isProcessingPayment ? 0.5 : 1,
+                  }}
+                  onPress={confirmCashPayment}
+                  disabled={isProcessingPayment || calculateChange() < 0 || !customerPaidAmount}
+                >
+                  <Text style={{ 
+                    color: calculateChange() >= 0 && customerPaidAmount ? '#fff' : colors.mutedForeground, 
+                    fontWeight: '600', 
+                    fontSize: 16 
+                  }}>
+                    {isProcessingPayment ? 'Processing...' : 'Complete Payment'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Transaction Number Modal (for card payments) */}
+      <Modal
+        visible={showTransactionModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowTransactionModal(false);
+          setTransactionNumber('');
+        }}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => {
+            setShowTransactionModal(false);
+            setTransactionNumber('');
+          }}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Card Payment</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => {
+                  setShowTransactionModal(false);
+                  setTransactionNumber('');
+                }}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 16 }}>
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8 }}>
+                Enter the transaction number from the card terminal
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  padding: 16,
+                  fontSize: 18,
+                  color: colors.foreground,
+                  marginBottom: 16,
+                }}
+                placeholder="Transaction Number"
+                placeholderTextColor={colors.mutedForeground}
+                value={transactionNumber}
+                onChangeText={setTransactionNumber}
+                autoFocus
+                keyboardType="default"
+              />
+              
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.muted,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    setShowTransactionModal(false);
+                    setTransactionNumber('');
+                  }}
+                >
+                  <Text style={{ color: colors.foreground, fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.primary,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                    opacity: isProcessingPayment ? 0.5 : 1,
+                  }}
+                  onPress={confirmCardPayment}
+                  disabled={isProcessingPayment}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>
+                    {isProcessingPayment ? 'Processing...' : 'Confirm Payment'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
       {/* Receipt Modal */}
@@ -2020,8 +4108,12 @@ export default function POSScreen({ navigation }: any) {
         animationType="fade"
         onRequestClose={completeOrder}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={completeOrder}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
             <View style={styles.receiptContent}>
               <View style={styles.receiptIcon}>
                 <CheckCircle size={40} color="#22c55e" />
@@ -2030,7 +4122,7 @@ export default function POSScreen({ navigation }: any) {
               <Text style={styles.receiptOrderNumber}>
                 Order #{lastOrderNumber}
               </Text>
-              <Text style={styles.receiptTotal}>{formatPrice(total)}</Text>
+              <Text style={styles.receiptTotal}>{formatCurrency(total)}</Text>
 
               <View style={styles.receiptActions}>
                 <TouchableOpacity style={styles.printBtn}>
@@ -2042,8 +4134,1160 @@ export default function POSScreen({ navigation }: any) {
                 </TouchableOpacity>
               </View>
             </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Delivery Method Modal */}
+      <Modal
+        visible={showDeliveryMethodModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowDeliveryMethodModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowDeliveryMethodModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Delivery Method</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowDeliveryMethodModal(false)}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ gap: 10 }}>
+              {/* In-house Delivery Option */}
+              <TouchableOpacity
+                style={[
+                  styles.paymentBtn,
+                  orderType.deliveryMethod === 'in_house' && {
+                    borderWidth: 2,
+                    borderColor: colors.primary,
+                  }
+                ]}
+                onPress={() => {
+                  setShowDeliveryMethodModal(false);
+                  setShowCustomerInfoModal(true);
+                }}
+              >
+                <View style={[styles.paymentIcon, { backgroundColor: colors.primary }]}>
+                  <Truck size={18} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.paymentText}>In-house Delivery</Text>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                    Use your own drivers
+                  </Text>
+                </View>
+                {orderType.deliveryMethod === 'in_house' && (
+                  <Check size={20} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+
+              {deliveryPartners.length > 0 && (
+                <View style={{ paddingVertical: 8 }}>
+                  <Text style={{ fontSize: 12, color: colors.mutedForeground, textAlign: 'center' }}>
+                    — Or select a delivery partner —
+                  </Text>
+                </View>
+              )}
+
+              {deliveryPartners.map(partner => (
+                <TouchableOpacity
+                  key={partner.id}
+                  style={[
+                    styles.paymentBtn,
+                    orderType.deliveryMethod === String(partner.id) && {
+                      borderWidth: 2,
+                      borderColor: colors.primary,
+                    }
+                  ]}
+                  onPress={() => {
+                    const newOrderType = { 
+                      ...orderType, 
+                      type: 'delivery' as const, 
+                      deliveryMethod: String(partner.id),
+                      tableId: undefined,
+                      tableNumber: undefined 
+                    };
+                    setOrderType(newOrderType);
+                    setShowDeliveryMethodModal(false);
+                    // For delivery partners, skip payment modal - partner handles payment
+                    // Process order directly with app_payment
+                    if (cart.length > 0) {
+                      // Use setTimeout to ensure state is updated before processing
+                      setTimeout(() => processPayment('app_payment'), 100);
+                    }
+                  }}
+                >
+                  <View style={[
+                    styles.paymentIcon, 
+                    { backgroundColor: getPartnerColor(partner.name) }
+                  ]}>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>
+                      {partner.name.charAt(0).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.paymentText}>{partner.name}</Text>
+                  </View>
+                  {orderType.deliveryMethod === String(partner.id) && (
+                    <Check size={20} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Customer Info Modal for In-house Delivery */}
+      <Modal
+        visible={showCustomerInfoModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomerInfoModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowCustomerInfoModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={[styles.modalContent, { maxWidth: 400 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Customer Information</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowCustomerInfoModal(false)}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 450 }} showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 16, paddingBottom: 16 }}>
+                {/* Customer Name */}
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground, marginBottom: 8 }}>
+                    Customer Name
+                  </Text>
+                  <TextInput
+                    style={[styles.searchInput, { paddingLeft: 16 }]}
+                    placeholder="Enter customer name"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={customerName}
+                    onChangeText={setCustomerName}
+                  />
+                </View>
+
+                {/* Phone Number */}
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground, marginBottom: 8 }}>
+                    Phone Number *
+                  </Text>
+                  <TextInput
+                    style={[styles.searchInput, { paddingLeft: 16 }]}
+                    placeholder="+965 XXXX XXXX"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={customerPhone}
+                    onChangeText={setCustomerPhone}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+
+                {/* Delivery Address */}
+                <View>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground, marginBottom: 8 }}>
+                    Delivery Address *
+                  </Text>
+                  <TextInput
+                    style={[styles.searchInput, { paddingLeft: 16, height: 80, textAlignVertical: 'top', paddingTop: 12 }]}
+                    placeholder="Enter delivery address"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={customerAddress}
+                    onChangeText={setCustomerAddress}
+                    multiline
+                    numberOfLines={3}
+                  />
+                </View>
+
+                {/* Driver Selection */}
+                {drivers.length > 0 && (
+                  <View>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground, marginBottom: 8 }}>
+                      Assign Driver (Optional)
+                    </Text>
+                    <View style={{ gap: 8 }}>
+                      {drivers.map(driver => (
+                        <TouchableOpacity
+                          key={driver.id}
+                          style={[
+                            styles.paymentBtn,
+                            { paddingVertical: 10 },
+                            selectedDriverId === driver.id && {
+                              borderWidth: 2,
+                              borderColor: colors.primary,
+                            }
+                          ]}
+                          onPress={() => setSelectedDriverId(
+                            selectedDriverId === driver.id ? null : driver.id
+                          )}
+                        >
+                          <View style={[styles.paymentIcon, { 
+                            backgroundColor: driver.status === 'available' ? '#10b981' : colors.mutedForeground,
+                            width: 36,
+                            height: 36,
+                          }]}>
+                            <User size={16} color="#fff" />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.paymentText, { fontSize: 14 }]}>{driver.name}</Text>
+                            {driver.phone && (
+                              <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                                {driver.phone}
+                              </Text>
+                            )}
+                          </View>
+                          {selectedDriverId === driver.id && (
+                            <Check size={18} color={colors.primary} />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                {/* Submit Button */}
+                <TouchableOpacity
+                  style={[
+                    styles.checkoutBtn,
+                    (!customerPhone || !customerAddress) && { opacity: 0.5 }
+                  ]}
+                  disabled={!customerPhone || !customerAddress}
+                  onPress={() => {
+                    const selectedDriver = drivers.find(d => d.id === selectedDriverId);
+                    setOrderType({
+                      ...orderType,
+                      type: 'delivery',
+                      deliveryMethod: 'in_house',
+                      customerName: customerName,
+                      deliveryPhone: customerPhone,
+                      deliveryAddress: customerAddress,
+                      tableId: undefined,
+                      tableNumber: undefined,
+                    });
+                    setShowCustomerInfoModal(false);
+                    // Clear form
+                    setCustomerName('');
+                    setCustomerPhone('');
+                    setCustomerAddress('');
+                    setSelectedDriverId(null);
+                    // If cart has items, go to payment
+                    if (cart.length > 0) {
+                      setShowPaymentModal(true);
+                    }
+                  }}
+                >
+                  <Text style={styles.checkoutText}>Confirm Delivery Details</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Table Selection Modal */}
+      <Modal
+        visible={showTableSelectionModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowTableSelectionModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowTableSelectionModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Table</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowTableSelectionModal(false)}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              <View style={{ gap: 10 }}>
+                {restaurantTables.length === 0 ? (
+                  <View style={{ padding: 20, alignItems: 'center' }}>
+                    <Text style={{ color: colors.mutedForeground, textAlign: 'center' }}>
+                      No tables configured.{'\n'}Add them in Store Setup → Tables.
+                    </Text>
+                  </View>
+                ) : (
+                  restaurantTables.map(table => {
+                    const isSelected = orderType.tableId === table.id;
+                    const isOccupied = table.is_occupied && orderType.tableId !== table.id;
+                    
+                    return (
+                      <TouchableOpacity
+                        key={table.id}
+                        style={[
+                          styles.paymentBtn,
+                          isSelected && {
+                            borderWidth: 2,
+                            borderColor: colors.primary,
+                          },
+                          isOccupied && {
+                            opacity: 0.5,
+                          }
+                        ]}
+                        onPress={() => {
+                          if (!isOccupied) {
+                            setOrderType({ 
+                              ...orderType, 
+                              type: 'dine_in', 
+                              tableId: table.id,
+                              tableNumber: table.table_number,
+                              deliveryMethod: undefined 
+                            });
+                            setShowTableSelectionModal(false);
+                            // If cart has items, go directly to payment
+                            if (cart.length > 0) {
+                              setShowPaymentModal(true);
+                            }
+                          }
+                        }}
+                        disabled={isOccupied}
+                      >
+                        <View style={[
+                          styles.paymentIcon, 
+                          { backgroundColor: isOccupied ? colors.mutedForeground : colors.primary }
+                        ]}>
+                          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>
+                            T{table.table_number}
+                          </Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.paymentText}>Table {table.table_number}</Text>
+                          <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                            {table.seats} seats{table.zone ? ` • ${table.zone}` : ''}
+                            {isOccupied ? ' • Occupied' : ''}
+                          </Text>
+                        </View>
+                        {isSelected && (
+                          <Check size={20} color={colors.primary} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })
+                )}
+              </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* POS Employee Login Modal */}
+      <Modal
+        visible={showPosLoginModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+          <View style={[styles.modalContent, { width: isTablet ? 420 : width - 48 }]}>
+            <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
+              <Text style={[styles.modalTitle, { fontSize: 24 }]}>POS Login</Text>
+            </View>
+
+            <View style={{ padding: 20 }}>
+              <Text style={{ color: colors.mutedForeground, marginBottom: 16, textAlign: 'center' }}>
+                Select your name and enter your password to start your shift
+              </Text>
+
+              {/* Employee Selection */}
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Select Employee</Text>
+              <ScrollView style={{ maxHeight: 200, marginBottom: 16 }}>
+                {posEmployees.map(emp => (
+                  <TouchableOpacity
+                    key={emp.id}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      padding: 14,
+                      borderRadius: 10,
+                      marginBottom: 8,
+                      backgroundColor: selectedPosEmployee?.id === emp.id ? colors.primary + '20' : colors.muted,
+                      borderWidth: selectedPosEmployee?.id === emp.id ? 2 : 1,
+                      borderColor: selectedPosEmployee?.id === emp.id ? colors.primary : colors.border,
+                    }}
+                    onPress={() => {
+                      setSelectedPosEmployee(emp);
+                      setPosLoginError(null);
+                    }}
+                  >
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: colors.primary,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>
+                        {emp.name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.foreground, fontWeight: '600' }}>{emp.name}</Text>
+                      <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>{emp.role}</Text>
+                    </View>
+                    {selectedPosEmployee?.id === emp.id && (
+                      <Check size={20} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* Password Input */}
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Password</Text>
+              <TextInput
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  padding: 16,
+                  fontSize: 16,
+                  color: colors.foreground,
+                  marginBottom: 16,
+                }}
+                placeholder="Enter your password"
+                placeholderTextColor={colors.mutedForeground}
+                secureTextEntry
+                value={posPassword}
+                onChangeText={(text) => {
+                  setPosPassword(text);
+                  setPosLoginError(null);
+                }}
+              />
+
+              {posLoginError && (
+                <Text style={{ color: '#ef4444', marginBottom: 16, textAlign: 'center' }}>
+                  {posLoginError}
+                </Text>
+              )}
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: selectedPosEmployee && posPassword ? colors.primary : colors.muted,
+                  padding: 16,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                }}
+                onPress={authenticatePosEmployee}
+                disabled={!selectedPosEmployee || !posPassword}
+              >
+                <Text style={{ 
+                  color: selectedPosEmployee && posPassword ? '#fff' : colors.mutedForeground, 
+                  fontWeight: '600',
+                  fontSize: 16,
+                }}>
+                  Sign In
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Opening Float Modal */}
+      <Modal
+        visible={showOpeningFloatModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {}}
+      >
+        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
+          <View style={[styles.modalContent, { width: isTablet ? 400 : width - 48 }]}>
+            <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
+              <Text style={[styles.modalTitle, { fontSize: 22 }]}>Start Your Shift</Text>
+            </View>
+
+            <View style={{ padding: 20 }}>
+              <Text style={{ color: colors.mutedForeground, marginBottom: 20, textAlign: 'center' }}>
+                Enter the opening cash float in your drawer
+              </Text>
+
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Opening Float</Text>
+              <TextInput
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  padding: 16,
+                  fontSize: 28,
+                  fontWeight: 'bold',
+                  color: colors.foreground,
+                  textAlign: 'center',
+                  marginBottom: 16,
+                }}
+                placeholder="0.000"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="decimal-pad"
+                value={openingFloat}
+                onChangeText={setOpeningFloat}
+                autoFocus
+              />
+
+              {/* Common Float Amounts */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 20, flexWrap: 'wrap', justifyContent: 'center' }}>
+                {[20, 50, 100].map(amount => (
+                  <TouchableOpacity
+                    key={amount}
+                    onPress={() => setOpeningFloat(amount.toFixed(3))}
+                    style={{
+                      backgroundColor: colors.muted,
+                      paddingVertical: 10,
+                      paddingHorizontal: 16,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: '600' }}>{amount} KD</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                style={{
+                  backgroundColor: openingFloat ? colors.primary : colors.muted,
+                  padding: 16,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                }}
+                onPress={openPosSession}
+                disabled={!openingFloat}
+              >
+                <Text style={{
+                  color: openingFloat ? '#fff' : colors.mutedForeground,
+                  fontWeight: '600',
+                  fontSize: 16,
+                }}>
+                  Open Cash Drawer
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Close Session Modal */}
+      <Modal
+        visible={showCloseSessionModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCloseSessionModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCloseSessionModal(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={[styles.modalContent, { width: isTablet ? 450 : width - 48 }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Close Shift</Text>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowCloseSessionModal(false)}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={{ padding: 20 }}>
+              {/* Expected Cash Display */}
+              <View style={{
+                padding: 16,
+                backgroundColor: colors.muted,
+                borderRadius: 12,
+                marginBottom: 20,
+              }}>
+                <Text style={{ color: colors.mutedForeground, textAlign: 'center', marginBottom: 8 }}>
+                  Expected Cash in Drawer
+                </Text>
+                <Text style={{ fontSize: 32, fontWeight: 'bold', color: colors.foreground, textAlign: 'center' }}>
+                  {formatCurrency(cashDrawerBalance)}
+                </Text>
+              </View>
+
+              {/* Actual Count Input */}
+              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>
+                Count and enter actual cash
+              </Text>
+              <TextInput
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  padding: 16,
+                  fontSize: 28,
+                  fontWeight: 'bold',
+                  color: colors.foreground,
+                  textAlign: 'center',
+                  marginBottom: 16,
+                }}
+                placeholder="0.000"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="decimal-pad"
+                value={actualCashCount}
+                onChangeText={setActualCashCount}
+                autoFocus
+              />
+
+              {/* Variance Preview */}
+              {actualCashCount && (
+                <View style={{
+                  padding: 12,
+                  backgroundColor: (() => {
+                    const diff = parseFloat(actualCashCount) - cashDrawerBalance;
+                    return diff === 0 ? '#22c55e15' : diff > 0 ? '#3b82f615' : '#ef444415';
+                  })(),
+                  borderRadius: 8,
+                  marginBottom: 20,
+                }}>
+                  <Text style={{
+                    textAlign: 'center',
+                    fontWeight: '600',
+                    color: (() => {
+                      const diff = parseFloat(actualCashCount) - cashDrawerBalance;
+                      return diff === 0 ? '#22c55e' : diff > 0 ? '#3b82f6' : '#ef4444';
+                    })(),
+                  }}>
+                    {(() => {
+                      const diff = parseFloat(actualCashCount) - cashDrawerBalance;
+                      if (diff === 0) return 'Perfect! No variance';
+                      if (diff > 0) return `Over by ${formatCurrency(diff)}`;
+                      return `Short by ${formatCurrency(Math.abs(diff))}`;
+                    })()}
+                  </Text>
+                </View>
+              )}
+
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.muted,
+                    padding: 14,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => setShowCloseSessionModal(false)}
+                >
+                  <Text style={{ color: colors.foreground, fontWeight: '600' }}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={{
+                    flex: 2,
+                    backgroundColor: actualCashCount ? colors.primary : colors.muted,
+                    padding: 14,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={closePosSession}
+                  disabled={!actualCashCount}
+                >
+                  <Text style={{
+                    color: actualCashCount ? '#fff' : colors.mutedForeground,
+                    fontWeight: '600',
+                  }}>
+                    Close Shift
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Order Details Modal */}
+      <Modal
+        visible={showOrderDetailsModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowOrderDetailsModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowOrderDetailsModal(false)}
+        >
+          <TouchableOpacity 
+            activeOpacity={1} 
+            style={[styles.modalContent, { width: isTablet ? 550 : width - 32, maxHeight: '90%' }]}
+          >
+            {selectedOrderForView && (
+              <>
+                {/* Header */}
+                <View style={[styles.modalHeader, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+                  <View>
+                    <Text style={styles.modalTitle}>Order #{selectedOrderForView.order_number}</Text>
+                    <Text style={{ color: colors.mutedForeground, fontSize: 12, marginTop: 2 }}>
+                      {new Date(selectedOrderForView.created_at).toLocaleString()}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.closeBtn}
+                    onPress={() => setShowOrderDetailsModal(false)}
+                  >
+                    <X size={20} color={colors.foreground} />
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+                  {/* Order Status Badge */}
+                  <View style={{ padding: 16 }}>
+                    <View style={{ 
+                      flexDirection: 'row', 
+                      alignItems: 'center', 
+                      justifyContent: 'space-between',
+                      marginBottom: 16 
+                    }}>
+                      <View style={{
+                        backgroundColor: (() => {
+                          const statusColors: Record<string, string> = {
+                            pending: '#f59e0b20',
+                            in_progress: '#3b82f620',
+                            completed: '#22c55e20',
+                            cancelled: '#ef444420',
+                            rejected: '#ef444420',
+                          };
+                          return statusColors[selectedOrderForView.order_status] || colors.muted;
+                        })(),
+                        paddingHorizontal: 16,
+                        paddingVertical: 8,
+                        borderRadius: 20,
+                      }}>
+                        <Text style={{
+                          color: (() => {
+                            const statusColors: Record<string, string> = {
+                              pending: '#f59e0b',
+                              in_progress: '#3b82f6',
+                              completed: '#22c55e',
+                              cancelled: '#ef4444',
+                              rejected: '#ef4444',
+                            };
+                            return statusColors[selectedOrderForView.order_status] || colors.foreground;
+                          })(),
+                          fontWeight: '600',
+                          fontSize: 14,
+                          textTransform: 'capitalize',
+                        }}>
+                          {selectedOrderForView.order_status?.replace('_', ' ')}
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                        {selectedOrderForView.order_type === 'dine_in' && <UtensilsCrossed size={16} color={colors.mutedForeground} />}
+                        {selectedOrderForView.order_type === 'takeaway' && <ShoppingCart size={16} color={colors.mutedForeground} />}
+                        {selectedOrderForView.order_type === 'delivery' && <Truck size={16} color={colors.mutedForeground} />}
+                        <Text style={{ color: colors.mutedForeground, textTransform: 'capitalize' }}>
+                          {selectedOrderForView.order_type?.replace('_', ' ')}
+                        </Text>
+                        {/* Show table number for dine-in */}
+                        {selectedOrderForView.order_type === 'dine_in' && selectedOrderForView.table_number && (
+                          <View style={{ 
+                            backgroundColor: '#dbeafe', 
+                            paddingHorizontal: 10, 
+                            paddingVertical: 4, 
+                            borderRadius: 8,
+                            marginLeft: 4,
+                          }}>
+                            <Text style={{ color: '#2563eb', fontSize: 12, fontWeight: '600' }}>
+                              Table {selectedOrderForView.table_number}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    {/* Order Items */}
+                    <Text style={{ fontWeight: '700', fontSize: 16, color: colors.foreground, marginBottom: 12 }}>
+                      Items ({selectedOrderForView.order_items?.length || 0})
+                    </Text>
+                    <View style={{ backgroundColor: colors.muted, borderRadius: 12, padding: 12, marginBottom: 16 }}>
+                      {(selectedOrderForView.order_items || []).map((item: any, index: number) => {
+                        const isEditing = editingOrderItem?.id === item.id;
+                        const product = products.find(p => p.id === item.product_id?.toString());
+                        const canEdit = !['completed', 'cancelled', 'rejected'].includes(selectedOrderForView.order_status);
+                        
+                        return (
+                          <View 
+                            key={item.id || index}
+                            style={{ 
+                              paddingVertical: 12,
+                              borderBottomWidth: index < (selectedOrderForView.order_items?.length || 0) - 1 ? 1 : 0,
+                              borderBottomColor: colors.border,
+                            }}
+                          >
+                            {/* Item Header */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={{ fontWeight: '600', color: colors.foreground }}>
+                                  {item.quantity}x {item.product_name}
+                                </Text>
+                                {item.variant_name && (
+                                  <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                                    {item.variant_name}
+                                  </Text>
+                                )}
+                              </View>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <Text style={{ fontWeight: '600', color: colors.foreground }}>
+                                  {formatCurrency(item.total || item.subtotal || (item.unit_price * item.quantity))}
+                                </Text>
+                                {canEdit && !isEditing && (product?.modifiers?.length || 0) > 0 && (
+                                  <TouchableOpacity
+                                    onPress={() => startEditingOrderItem(item)}
+                                    style={{
+                                      backgroundColor: colors.primary + '20',
+                                      paddingHorizontal: 8,
+                                      paddingVertical: 4,
+                                      borderRadius: 6,
+                                    }}
+                                  >
+                                    <Edit2 size={14} color={colors.primary} />
+                                  </TouchableOpacity>
+                                )}
+                              </View>
+                            </View>
+
+                            {/* Current Modifiers (when not editing) - Show from order_item_modifiers, NOT from special_instructions to avoid duplicates */}
+                            {!isEditing && (item.order_item_modifiers || []).length > 0 && (
+                              <View style={{ marginTop: 4 }}>
+                                {(item.order_item_modifiers || []).map((mod: any, modIndex: number) => {
+                                  const isRemoval = mod.modifier_type === 'removal' || mod.modifier_type === 'removed';
+                                  return (
+                                    <Text key={modIndex} style={{ 
+                                      color: isRemoval ? '#ef4444' : colors.primary, 
+                                      fontSize: 12,
+                                      marginTop: 2,
+                                    }}>
+                                      {isRemoval ? '- No ' : '+ '}{mod.modifier_name}
+                                      {mod.quantity > 1 ? ` (x${mod.quantity})` : ''}
+                                    </Text>
+                                  );
+                                })}
+                              </View>
+                            )}
+                            {/* Only show special_instructions if there are NO order_item_modifiers (legacy orders) */}
+                            {!isEditing && (item.order_item_modifiers || []).length === 0 && item.special_instructions && (
+                              <Text style={{ color: colors.mutedForeground, fontSize: 12, fontStyle: 'italic', marginTop: 4 }}>
+                                Note: {item.special_instructions}
+                              </Text>
+                            )}
+
+                            {/* Editing Modifiers */}
+                            {isEditing && product && (
+                              <View style={{ marginTop: 12, padding: 12, backgroundColor: colors.card, borderRadius: 8 }}>
+                                {/* Removable Modifiers */}
+                                {product.modifiers?.filter((m: any) => m.removable).length > 0 && (
+                                  <View style={{ marginBottom: 12 }}>
+                                    <Text style={{ fontWeight: '600', fontSize: 12, color: colors.mutedForeground, marginBottom: 8 }}>
+                                      REMOVE
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                      {product.modifiers
+                                        .filter((m: any) => m.removable)
+                                        .map((mod: any) => {
+                                          const isRemoved = editItemRemovedMods.has(mod.name);
+                                          return (
+                                            <TouchableOpacity
+                                              key={mod.id}
+                                              onPress={() => {
+                                                setEditItemRemovedMods(prev => {
+                                                  const next = new Set(prev);
+                                                  if (next.has(mod.name)) {
+                                                    next.delete(mod.name);
+                                                  } else {
+                                                    next.add(mod.name);
+                                                  }
+                                                  return next;
+                                                });
+                                              }}
+                                              style={{
+                                                paddingHorizontal: 10,
+                                                paddingVertical: 6,
+                                                borderRadius: 16,
+                                                backgroundColor: isRemoved ? '#ef444420' : colors.muted,
+                                                borderWidth: 1,
+                                                borderColor: isRemoved ? '#ef4444' : colors.border,
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                gap: 4,
+                                              }}
+                                            >
+                                              {isRemoved && <X size={12} color="#ef4444" />}
+                                              <Text style={{ 
+                                                fontSize: 12, 
+                                                color: isRemoved ? '#ef4444' : colors.foreground,
+                                                textDecorationLine: isRemoved ? 'line-through' : 'none',
+                                              }}>
+                                                {mod.name}
+                                              </Text>
+                                            </TouchableOpacity>
+                                          );
+                                        })}
+                                    </View>
+                                  </View>
+                                )}
+
+                                {/* Addable Modifiers */}
+                                {product.modifiers?.filter((m: any) => m.addable).length > 0 && (
+                                  <View style={{ marginBottom: 12 }}>
+                                    <Text style={{ fontWeight: '600', fontSize: 12, color: colors.mutedForeground, marginBottom: 8 }}>
+                                      ADD EXTRA
+                                    </Text>
+                                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                                      {product.modifiers
+                                        .filter((m: any) => m.addable)
+                                        .map((mod: any) => {
+                                          const qty = editItemAddedMods.get(mod.name) || 0;
+                                          const isAdded = qty > 0;
+                                          return (
+                                            <View
+                                              key={mod.id}
+                                              style={{
+                                                flexDirection: 'row',
+                                                alignItems: 'center',
+                                                paddingHorizontal: 8,
+                                                paddingVertical: 4,
+                                                borderRadius: 16,
+                                                backgroundColor: isAdded ? colors.primary + '20' : colors.muted,
+                                                borderWidth: 1,
+                                                borderColor: isAdded ? colors.primary : colors.border,
+                                                gap: 6,
+                                              }}
+                                            >
+                                              <TouchableOpacity
+                                                onPress={() => {
+                                                  if (qty > 0) {
+                                                    setEditItemAddedMods(prev => {
+                                                      const next = new Map(prev);
+                                                      if (qty === 1) {
+                                                        next.delete(mod.name);
+                                                      } else {
+                                                        next.set(mod.name, qty - 1);
+                                                      }
+                                                      return next;
+                                                    });
+                                                  }
+                                                }}
+                                                style={{ padding: 2 }}
+                                              >
+                                                <Minus size={12} color={isAdded ? colors.primary : colors.mutedForeground} />
+                                              </TouchableOpacity>
+                                              <Text style={{ fontSize: 12, color: isAdded ? colors.primary : colors.foreground }}>
+                                                {mod.name} {qty > 0 ? `(${qty})` : ''} +{formatCurrency(mod.extra_price || 0)}
+                                              </Text>
+                                              <TouchableOpacity
+                                                onPress={() => {
+                                                  setEditItemAddedMods(prev => {
+                                                    const next = new Map(prev);
+                                                    next.set(mod.name, qty + 1);
+                                                    return next;
+                                                  });
+                                                }}
+                                                style={{ padding: 2 }}
+                                              >
+                                                <Plus size={12} color={colors.primary} />
+                                              </TouchableOpacity>
+                                            </View>
+                                          );
+                                        })}
+                                    </View>
+                                  </View>
+                                )}
+
+                                {/* Extra Cost Preview - Only show if there's an EXTRA charge (not savings) */}
+                                {calculateEditExtraCost() > 0 && (
+                                  <View style={{
+                                    padding: 8,
+                                    backgroundColor: '#f59e0b20',
+                                    borderRadius: 6,
+                                    marginBottom: 12,
+                                  }}>
+                                    <Text style={{
+                                      fontSize: 12,
+                                      color: '#f59e0b',
+                                      textAlign: 'center',
+                                      fontWeight: '600',
+                                    }}>
+                                      Extra charge: +{formatCurrency(calculateEditExtraCost())}
+                                    </Text>
+                                  </View>
+                                )}
+
+                                {/* Edit Actions */}
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                  <TouchableOpacity
+                                    onPress={cancelEditingOrderItem}
+                                    style={{
+                                      flex: 1,
+                                      padding: 10,
+                                      borderRadius: 8,
+                                      backgroundColor: colors.muted,
+                                      alignItems: 'center',
+                                    }}
+                                  >
+                                    <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 13 }}>Cancel</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={applyOrderItemEdits}
+                                    disabled={savingOrderEdit}
+                                    style={{
+                                      flex: 2,
+                                      padding: 10,
+                                      borderRadius: 8,
+                                      backgroundColor: colors.primary,
+                                      alignItems: 'center',
+                                    }}
+                                  >
+                                    <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>
+                                      {savingOrderEdit ? 'Saving...' : calculateEditExtraCost() > 0 ? 'Apply & Pay Extra' : 'Apply Changes'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                </View>
+                              </View>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </View>
+
+                    {/* Order Totals */}
+                    <View style={{ backgroundColor: colors.card, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <Text style={{ color: colors.mutedForeground }}>Subtotal</Text>
+                        <Text style={{ color: colors.foreground }}>{formatCurrency(selectedOrderForView.subtotal || 0)}</Text>
+                      </View>
+                      {selectedOrderForView.tax_amount > 0 && (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <Text style={{ color: colors.mutedForeground }}>Tax</Text>
+                          <Text style={{ color: colors.foreground }}>{formatCurrency(selectedOrderForView.tax_amount)}</Text>
+                        </View>
+                      )}
+                      {selectedOrderForView.discount_amount > 0 && (
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                          <Text style={{ color: colors.mutedForeground }}>Discount</Text>
+                          <Text style={{ color: '#22c55e' }}>-{formatCurrency(selectedOrderForView.discount_amount)}</Text>
+                        </View>
+                      )}
+                      <View style={{ 
+                        flexDirection: 'row', 
+                        justifyContent: 'space-between', 
+                        paddingTop: 8,
+                        borderTopWidth: 1,
+                        borderTopColor: colors.border,
+                      }}>
+                        <Text style={{ fontWeight: '700', fontSize: 18, color: colors.foreground }}>Total</Text>
+                        <Text style={{ fontWeight: '700', fontSize: 18, color: colors.foreground }}>
+                          {formatCurrency(selectedOrderForView.total_amount || 0)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Edit Hint */}
+                    {!['completed', 'cancelled', 'rejected'].includes(selectedOrderForView.order_status) && (
+                      <View style={{
+                        padding: 12,
+                        backgroundColor: colors.primary + '10',
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: colors.primary + '30',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 8,
+                      }}>
+                        <Edit2 size={16} color={colors.primary} />
+                        <Text style={{ color: colors.primary, fontSize: 13, flex: 1 }}>
+                          Tap the edit icon on any item to modify extras or removables
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </ScrollView>
+
+                {/* Footer Actions */}
+                <View style={{ 
+                  padding: 16, 
+                  borderTopWidth: 1, 
+                  borderTopColor: colors.border,
+                  flexDirection: 'row',
+                  gap: 12,
+                }}>
+                  {/* Print Receipt Button */}
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: colors.primary,
+                      padding: 14,
+                      borderRadius: 12,
+                      alignItems: 'center',
+                      flexDirection: 'row',
+                      justifyContent: 'center',
+                      gap: 8,
+                    }}
+                    onPress={() => {
+                      if (selectedOrderForView) {
+                        // Build receipt data and trigger print
+                        Alert.alert(
+                          'Print Receipt',
+                          `Receipt for Order #${selectedOrderForView.order_number}\n\nTable: ${selectedOrderForView.table_number || 'N/A'}\nType: ${selectedOrderForView.order_type?.replace('_', ' ')}\nItems: ${selectedOrderForView.order_items?.length || 0}\nTotal: ${formatCurrency(selectedOrderForView.total_amount || 0)}\nPayment: ${selectedOrderForView.payment_status === 'paid' ? 'Paid' : selectedOrderForView.payment_status === 'app_payment' ? 'App Payment' : 'Unpaid'}`,
+                          [
+                            { text: 'Cancel', style: 'cancel' },
+                            { text: 'Print', onPress: () => {
+                              // TODO: Integrate with actual printer
+                              Alert.alert('Printing', 'Receipt sent to printer');
+                            }},
+                          ]
+                        );
+                      }
+                    }}
+                  >
+                    <Printer size={18} color={colors.primaryForeground} />
+                    <Text style={{ color: colors.primaryForeground, fontWeight: '600' }}>Print Receipt</Text>
+                  </TouchableOpacity>
+                  
+                  {/* Close Button */}
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: colors.muted,
+                      padding: 14,
+                      borderRadius: 12,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      cancelEditingOrderItem();
+                      setShowOrderDetailsModal(false);
+                    }}
+                  >
+                    <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
 
           </View>

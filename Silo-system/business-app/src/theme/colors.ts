@@ -25,12 +25,17 @@ export interface ThemeColors {
   destructiveForeground: string;
   success: string;
   successForeground: string;
+  warning: string;
+  warningForeground: string;
+  error: string;
+  errorForeground: string;
   border: string;
   input: string;
   ring: string;
   // Aliases for convenience
   text: string;
   textMuted: string;
+  textSecondary: string;
   surface: string;
 }
 
@@ -53,12 +58,17 @@ export const lightColors: ThemeColors = {
   destructiveForeground: '#ffffff',
   success: '#22c55e',
   successForeground: '#ffffff',
+  warning: '#f59e0b', // Amber 500
+  warningForeground: '#ffffff',
+  error: '#ef4444', // Red 500
+  errorForeground: '#ffffff',
   border: '#e4e4e7', // Zinc 200
   input: '#e4e4e7',
   ring: '#18181b',
   // Aliases
   text: '#18181b',
   textMuted: '#71717a',
+  textSecondary: '#71717a', // Zinc 500 - same as textMuted
   surface: '#ffffff',
 };
 
@@ -81,12 +91,17 @@ export const darkColors: ThemeColors = {
   destructiveForeground: '#fafafa',
   success: '#14532d',
   successForeground: '#fafafa',
+  warning: '#b45309', // Amber 700
+  warningForeground: '#fafafa',
+  error: '#7f1d1d', // Red 900
+  errorForeground: '#fafafa',
   border: '#27272a', // Zinc 800
   input: '#27272a',
   ring: '#d4d4d8', // Zinc 300
   // Aliases
   text: '#fafafa',
   textMuted: '#a1a1aa',
+  textSecondary: '#a1a1aa', // Zinc 400 - same as textMuted
   surface: '#18181b',
 };
 

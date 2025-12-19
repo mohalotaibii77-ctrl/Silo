@@ -59,6 +59,11 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     pos_session_id,
     is_rush_order,
     internal_notes,
+    cashier_id,  // The actual employee using the POS (not the POS terminal user)
+    // OPTIMIZATION: Accept payment details inline to avoid second API call
+    process_payment_inline,  // Boolean: true to process payment in same call
+    amount_received,         // For cash payments: amount customer gave
+    change_given,            // For cash payments: change returned
   } = req.body;
 
   // Validate items
@@ -115,8 +120,9 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     payment_method,
     payment_reference,
     scheduled_time,
-    created_by: parseInt(req.user!.userId),
-    cashier_id: parseInt(req.user!.userId),
+    // Use cashier_id from request (actual employee) or fall back to token user
+    created_by: cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId),
+    cashier_id: cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId),
     pos_terminal_id,
     pos_session_id,
     is_rush_order,
@@ -124,6 +130,24 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
   };
 
   const order = await posService.createOrder(orderInput);
+
+  // OPTIMIZATION: Process payment inline if requested (avoids second API call)
+  // Only for immediate payment methods (not pay_later or app_payment)
+  if (process_payment_inline && payment_method && payment_method !== 'pay_later' && payment_method !== 'app_payment') {
+    // Fire-and-forget payment recording (non-blocking for response speed)
+    // Payment record is created but we don't wait for it
+    posService.processPayment(
+      order.id,
+      payment_method,
+      order.total_amount,
+      payment_reference,
+      cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId),
+      (amount_received !== undefined && change_given !== undefined)
+        ? { amount_received, change_given }
+        : undefined,
+      pos_session_id ? parseInt(pos_session_id) : undefined
+    ).catch(err => console.error('Failed to process inline payment:', err));
+  }
 
   res.status(201).json({
     success: true,
@@ -198,6 +222,35 @@ router.post('/orders/delivery-app', requireBusinessAccess, asyncHandler(async (r
   res.status(201).json({
     success: true,
     data: order,
+  });
+}));
+
+/**
+ * GET /api/pos/product-availability
+ * Get max orderable quantity for each product based on inventory
+ * Returns { product_id: max_quantity } map
+ */
+router.get('/product-availability', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { branch_id } = req.query;
+  
+  console.log('[product-availability] Fetching for business:', req.user!.businessId, 'branch:', branch_id);
+  
+  const availability = await posService.getProductAvailability(
+    parseInt(req.user!.businessId),
+    branch_id ? parseInt(branch_id as string) : undefined
+  );
+
+  // Convert Map to plain object for JSON response
+  const availabilityObj: Record<number, number> = {};
+  availability.forEach((qty, productId) => {
+    availabilityObj[productId] = qty;
+  });
+
+  console.log('[product-availability] Result:', JSON.stringify(availabilityObj));
+
+  res.json({
+    success: true,
+    data: availabilityObj,
   });
 }));
 
@@ -448,10 +501,11 @@ router.post('/orders/:orderId/complete', requireBusinessAccess, requireKitchenAc
  */
 router.post('/orders/:orderId/pickup', requireBusinessAccess, requirePOSAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
+  const { cashier_id } = req.body;  // The actual employee marking the pickup
 
   const order = await posService.pickupOrder(
     parseInt(orderId),
-    parseInt(req.user!.userId)
+    cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId)
   );
 
   res.json({

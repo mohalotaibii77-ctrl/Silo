@@ -52,6 +52,19 @@ export function errorHandler(
   } else if (err.name === 'UnauthorizedError') {
     statusCode = 401;
     message = 'Unauthorized';
+  } else if (err.message) {
+    // Pass through error messages for business logic errors
+    // (e.g., insufficient inventory, order not found, etc.)
+    // These are operational errors that users should see
+    if (err.message.startsWith('Insufficient inventory:') ||
+        err.message.startsWith('Order not found') ||
+        err.message.startsWith('Failed to') ||
+        err.message.startsWith('Invalid') ||
+        err.message.startsWith('Cannot') ||
+        err.message.startsWith('No ')) {
+      statusCode = 400; // Bad request - it's a business rule violation
+      message = err.message;
+    }
   }
 
   // Send response

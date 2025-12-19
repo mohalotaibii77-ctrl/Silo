@@ -318,7 +318,7 @@ export default function OrdersScreen({ navigation }: any) {
       >
         <View style={[styles.orderCardHeader, isRTL && styles.rtlRow]}>
           <Text style={[styles.orderNumber, isRTL && styles.rtlText]}>
-            #{order.display_number || order.order_number}
+            #{order.order_number}
           </Text>
           <View style={[styles.statusBadge, { backgroundColor: statusColors.bg }]}>
             {getStatusIcon(order.order_status)}
@@ -525,7 +525,7 @@ export default function OrdersScreen({ navigation }: any) {
             <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
               <View style={isRTL ? { alignItems: 'flex-end' } : {}}>
                 <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'الطلب' : 'Order'} #{selectedOrder?.display_number || selectedOrder?.order_number}
+                  {language === 'ar' ? 'الطلب' : 'Order'} #{selectedOrder?.order_number}
                 </Text>
                 <Text style={[modalStyles.subtitle, isRTL && styles.rtlText]}>
                   {selectedOrder && formatDateTime(selectedOrder.order_date, selectedOrder.order_time)}

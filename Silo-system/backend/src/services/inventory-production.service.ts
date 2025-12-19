@@ -293,11 +293,13 @@ export class InventoryProductionService {
 
     for (const component of compositeItem.components) {
       // Get current stock for this component
-      const stocks = await inventoryStockService.getStockLevels(businessId, {
+      const stockResult = await inventoryStockService.getStockLevels(businessId, {
         itemId: component.component_item_id,
         branchId,
       });
 
+      // Handle both array and paginated result formats
+      const stocks = Array.isArray(stockResult) ? stockResult : stockResult.data;
       const stock = stocks[0];
       
       // Get the component item's storage unit (how inventory is tracked)

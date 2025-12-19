@@ -254,6 +254,198 @@ export class POSService {
       insufficientItems
     };
   }
+
+  /**
+   * Calculate max orderable quantity for each product based on inventory
+   * Returns a map of product_id -> max_quantity
+   */
+  async getProductAvailability(
+    businessId: number,
+    branchId?: number
+  ): Promise<Map<number, number>> {
+    console.log('[getProductAvailability] Starting for business:', businessId, 'branch:', branchId);
+    const productMaxQuantities = new Map<number, number>();
+
+    // Get all stock levels
+    let stockQuery = supabaseAdmin
+      .from('inventory_stock')
+      .select('item_id, quantity')
+      .eq('business_id', businessId);
+    
+    if (branchId) {
+      stockQuery = stockQuery.eq('branch_id', branchId);
+    }
+
+    const { data: stockData, error: stockError } = await stockQuery;
+    console.log('[getProductAvailability] Stock data:', stockData?.length, 'items, error:', stockError);
+    
+    // Build stock map: item_id -> quantity
+    const stockMap = new Map<number, number>();
+    if (stockData) {
+      stockData.forEach((s: any) => {
+        const currentQty = stockMap.get(s.item_id) || 0;
+        stockMap.set(s.item_id, currentQty + (s.quantity || 0));
+      });
+    }
+    console.log('[getProductAvailability] Stock map entries:', Array.from(stockMap.entries()));
+
+    // Get item storage units
+    const { data: itemsData } = await supabaseAdmin
+      .from('items')
+      .select('id, unit, storage_unit');
+    
+    const itemUnitMap = new Map<number, { unit: string; storage_unit: string }>();
+    if (itemsData) {
+      itemsData.forEach((item: any) => {
+        itemUnitMap.set(item.id, {
+          unit: item.unit || 'grams',
+          storage_unit: item.storage_unit || 'grams'
+        });
+      });
+    }
+
+    // Get all products with their variants in a single query
+    const { data: products, error: productsError } = await supabaseAdmin
+      .from('products')
+      .select(`
+        id,
+        is_active,
+        has_variants,
+        product_variants (id)
+      `)
+      .eq('business_id', businessId)
+      .eq('is_active', true);
+
+    console.log('[getProductAvailability] Products query error:', productsError);
+
+    const variantsByProduct = new Map<number, number[]>();
+    if (products) {
+      products.forEach((p: any) => {
+        if (p.product_variants && p.product_variants.length > 0) {
+          variantsByProduct.set(p.id, p.product_variants.map((v: any) => v.id));
+        }
+      });
+    }
+    console.log('[getProductAvailability] Variants by product:', Array.from(variantsByProduct.entries()));
+
+    // Get all product_ingredients (includes both product-level and variant-level)
+    // Filter by product_ids to ensure we only get ingredients for this business's products
+    const productIds = products?.map(p => p.id) || [];
+    const { data: allIngredients, error: ingError } = await supabaseAdmin
+      .from('product_ingredients')
+      .select('product_id, variant_id, item_id, quantity')
+      .in('product_id', productIds.length > 0 ? productIds : [-1]); // Use -1 as fallback to avoid empty IN clause
+
+    console.log('[getProductAvailability] Ingredients data:', allIngredients?.length, 'items, error:', ingError);
+    console.log('[getProductAvailability] Products found:', products?.length);
+
+    // Build maps for ingredients
+    const productIngredients = new Map<number, { item_id: number; quantity: number }[]>();
+    const variantIngredients = new Map<number, { item_id: number; quantity: number }[]>();
+    
+    if (allIngredients) {
+      allIngredients.forEach((ing: any) => {
+        if (ing.variant_id) {
+          // Variant-specific ingredient
+          const existing = variantIngredients.get(ing.variant_id) || [];
+          existing.push({ item_id: ing.item_id, quantity: ing.quantity });
+          variantIngredients.set(ing.variant_id, existing);
+        } else {
+          // Product-level ingredient
+          const existing = productIngredients.get(ing.product_id) || [];
+          existing.push({ item_id: ing.item_id, quantity: ing.quantity });
+          productIngredients.set(ing.product_id, existing);
+        }
+      });
+    }
+    
+    console.log('[getProductAvailability] Product ingredients map:', Array.from(productIngredients.entries()));
+    console.log('[getProductAvailability] Variant ingredients map:', Array.from(variantIngredients.entries()));
+
+    // Calculate max quantity for each product
+    if (products) {
+      for (const product of products) {
+        const variantIds = variantsByProduct.get(product.id) || [];
+        
+        console.log(`[getProductAvailability] Product ${product.id}: has_variants=${product.has_variants}, variantIds=`, variantIds);
+        
+        // If product has variants, calculate max for each variant
+        if (product.has_variants && variantIds.length > 0) {
+          let maxAcrossVariants = 0;
+          
+          for (const variantId of variantIds) {
+            const ingredients = variantIngredients.get(variantId) || [];
+            console.log(`[getProductAvailability] Variant ${variantId} ingredients:`, ingredients);
+            if (ingredients.length === 0) {
+              // No recipe means can't determine stock - treat as unlimited for now
+              maxAcrossVariants = 999;
+              continue;
+            }
+            
+            let maxForVariant = Infinity;
+            for (const ing of ingredients) {
+              const itemUnits = itemUnitMap.get(ing.item_id);
+              if (!itemUnits) continue;
+              
+              const stockQty = stockMap.get(ing.item_id) || 0;
+              const storageUnit = (itemUnits.storage_unit || 'grams') as StorageUnit;
+              const servingUnit = (itemUnits.unit || 'grams') as ServingUnit;
+              
+              let availableInServingUnits: number;
+              try {
+                availableInServingUnits = storageToServing(stockQty, storageUnit, servingUnit);
+              } catch {
+                availableInServingUnits = stockQty;
+              }
+              
+              const maxFromIngredient = ing.quantity > 0 
+                ? Math.floor(availableInServingUnits / ing.quantity) 
+                : Infinity;
+              maxForVariant = Math.min(maxForVariant, maxFromIngredient);
+            }
+            
+            maxAcrossVariants = Math.max(maxAcrossVariants, maxForVariant === Infinity ? 999 : maxForVariant);
+          }
+          
+          productMaxQuantities.set(product.id, maxAcrossVariants);
+        } else {
+          // Non-variant product - use product-level ingredients
+          const ingredients = productIngredients.get(product.id) || [];
+          if (ingredients.length === 0) {
+            // No recipe means can't determine stock
+            productMaxQuantities.set(product.id, 999);
+            continue;
+          }
+          
+          let maxQuantity = Infinity;
+          for (const ing of ingredients) {
+            const itemUnits = itemUnitMap.get(ing.item_id);
+            if (!itemUnits) continue;
+            
+            const stockQty = stockMap.get(ing.item_id) || 0;
+            const storageUnit = (itemUnits.storage_unit || 'grams') as StorageUnit;
+            const servingUnit = (itemUnits.unit || 'grams') as ServingUnit;
+            
+            let availableInServingUnits: number;
+            try {
+              availableInServingUnits = storageToServing(stockQty, storageUnit, servingUnit);
+            } catch {
+              availableInServingUnits = stockQty;
+            }
+            
+            const maxFromIngredient = ing.quantity > 0 
+              ? Math.floor(availableInServingUnits / ing.quantity) 
+              : Infinity;
+            maxQuantity = Math.min(maxQuantity, maxFromIngredient);
+          }
+          
+          productMaxQuantities.set(product.id, maxQuantity === Infinity ? 999 : maxQuantity);
+        }
+      }
+    }
+
+    return productMaxQuantities;
+  }
   
   /**
    * Create new order
@@ -453,148 +645,214 @@ export class POSService {
       throw new Error(`Failed to create order: ${error.message}`);
     }
 
-    // Create order items with cost snapshot for accurate profit tracking
-    const orderItems: OrderItem[] = [];
-    for (const { item, itemSubtotal, itemTotal, modifiersTotal } of processedItems) {
-      // Get product's current cost for profit calculation
-      let unitCostAtSale = 0;
-      if (item.product_id) {
-        const { data: product } = await supabaseAdmin
-          .from('products')
-          .select('total_cost')
-          .eq('id', item.product_id)
-          .single();
-        
-        unitCostAtSale = product?.total_cost || 0;
+    // OPTIMIZATION: Batch fetch all product costs from ingredients in ONE query
+    const productIds = processedItems
+      .map(p => p.item.product_id)
+      .filter((id): id is number => id !== undefined && id !== null);
+    const variantIds = processedItems
+      .map(p => p.item.variant_id)
+      .filter((id): id is number => id !== undefined && id !== null);
+    
+    const productCostsMap = new Map<number, number>();
+    const variantCostsMap = new Map<number, number>();
+    
+    if (productIds.length > 0 || variantIds.length > 0) {
+      // Get all ingredients for these products/variants
+      let ingredientsQuery = supabaseAdmin
+        .from('product_ingredients')
+        .select('product_id, variant_id, item_id, quantity');
+      
+      if (productIds.length > 0) {
+        ingredientsQuery = ingredientsQuery.in('product_id', productIds);
       }
+      
+      const { data: ingredients } = await ingredientsQuery;
+      
+      // Get item costs
+      const itemIds = new Set<number>();
+      (ingredients || []).forEach((ing: any) => itemIds.add(ing.item_id));
+      
+      const itemCostMap = new Map<number, number>();
+      if (itemIds.size > 0) {
+        // First get default costs from items table
+        const { data: items } = await supabaseAdmin
+          .from('items')
+          .select('id, cost_per_unit')
+          .in('id', Array.from(itemIds));
+        
+        items?.forEach((item: any) => itemCostMap.set(item.id, item.cost_per_unit || 0));
+        
+        // Override with business-specific prices if available
+        const { data: businessPrices } = await supabaseAdmin
+          .from('business_item_prices')
+          .select('item_id, cost_per_unit')
+          .eq('business_id', input.business_id)
+          .in('item_id', Array.from(itemIds));
+        
+        businessPrices?.forEach((bp: any) => {
+          if (bp.cost_per_unit) itemCostMap.set(bp.item_id, bp.cost_per_unit);
+        });
+      }
+      
+      // Calculate product/variant costs from ingredients
+      (ingredients || []).forEach((ing: any) => {
+        const itemCost = itemCostMap.get(ing.item_id) || 0;
+        const ingredientCost = ing.quantity * itemCost;
+        
+        if (ing.variant_id) {
+          // Variant-specific ingredient
+          const current = variantCostsMap.get(ing.variant_id) || 0;
+          variantCostsMap.set(ing.variant_id, current + ingredientCost);
+        } else if (ing.product_id) {
+          // Product-level ingredient (for non-variant products)
+          const current = productCostsMap.get(ing.product_id) || 0;
+          productCostsMap.set(ing.product_id, current + ingredientCost);
+        }
+      });
+    }
 
-      // Calculate cost-related metrics
+    // OPTIMIZATION: Build all order items for batch insert
+    const orderItemsToInsert = processedItems.map(({ item, itemSubtotal, itemTotal, modifiersTotal }) => {
+      // Get cost: prefer variant cost, then product cost, then 0
+      let unitCostAtSale = 0;
+      if (item.variant_id && variantCostsMap.has(item.variant_id)) {
+        unitCostAtSale = variantCostsMap.get(item.variant_id) || 0;
+      } else if (item.product_id && productCostsMap.has(item.product_id)) {
+        unitCostAtSale = productCostsMap.get(item.product_id) || 0;
+      }
       const totalCost = unitCostAtSale * item.quantity;
       const profit = itemTotal - totalCost;
       const profitMargin = itemTotal > 0 ? (profit / itemTotal) * 100 : 0;
+      
+      return {
+        business_id: input.business_id,
+        order_id: order.id,
+        product_id: item.product_id,
+        variant_id: item.variant_id,
+        product_name: item.product_name,
+        product_name_ar: item.product_name_ar,
+        product_sku: item.product_sku,
+        product_category: item.product_category,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        unit_cost_at_sale: unitCostAtSale,
+        total_cost: totalCost,
+        profit: profit,
+        profit_margin: Math.round(profitMargin * 100) / 100,
+        discount_amount: item.discount_amount || 0,
+        discount_percentage: item.discount_percentage || 0,
+        subtotal: itemSubtotal,
+        total: itemTotal,
+        has_modifiers: (item.modifiers && item.modifiers.length > 0) || false,
+        modifiers_total: modifiersTotal,
+        special_instructions: item.special_instructions,
+        item_status: 'pending',
+        is_combo: item.is_combo || false,
+        combo_id: item.combo_id,
+        is_void: false,
+      };
+    });
 
-      const { data: orderItem, error: itemError } = await supabaseAdmin
-        .from('order_items')
-        .insert({
-          business_id: input.business_id,  // Required by existing schema
-          order_id: order.id,
-          
-          product_id: item.product_id,
-          product_name: item.product_name,
-          product_name_ar: item.product_name_ar,
-          product_sku: item.product_sku,
-          product_category: item.product_category,
-          
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          
-          // Cost snapshot at time of sale
-          unit_cost_at_sale: unitCostAtSale,
-          total_cost: totalCost,
-          profit: profit,
-          profit_margin: Math.round(profitMargin * 100) / 100, // Round to 2 decimal places
-          
-          discount_amount: item.discount_amount || 0,
-          discount_percentage: item.discount_percentage || 0,
-          
-          subtotal: itemSubtotal,
-          total: itemTotal,
-          
-          has_modifiers: (item.modifiers && item.modifiers.length > 0) || false,
-          modifiers_total: modifiersTotal,
-          
-          special_instructions: item.special_instructions,
-          
-          item_status: 'pending',
-          
-          is_combo: item.is_combo || false,
-          combo_id: item.combo_id,
-          
-          is_void: false,
-        })
-        .select()
-        .single();
+    // OPTIMIZATION: Single batch insert for all order items
+    const { data: insertedItems, error: itemsError } = await supabaseAdmin
+      .from('order_items')
+      .insert(orderItemsToInsert)
+      .select();
 
-      if (itemError) {
-        console.error('Failed to create order item:', itemError);
-        throw new Error(`Failed to create order item: ${itemError.message}`);
-      }
+    if (itemsError) {
+      console.error('Failed to create order items:', itemsError);
+      throw new Error(`Failed to create order items: ${itemsError.message}`);
+    }
 
-      // Create modifiers for this item
+    // OPTIMIZATION: Batch insert all modifiers
+    const allModifiersToInsert: Array<{
+      order_item_id: number;
+      modifier_id?: number;
+      modifier_group_id?: number;
+      modifier_name: string;
+      modifier_name_ar?: string;
+      quantity: number;
+      unit_price: number;
+      total: number;
+      modifier_type?: string;
+    }> = [];
+
+    // Map inserted items back to their modifiers
+    processedItems.forEach(({ item }, index) => {
+      const orderItem = insertedItems[index];
       if (item.modifiers && item.modifiers.length > 0) {
-        const modifiers: OrderItemModifier[] = [];
         for (const mod of item.modifiers) {
           const modQuantity = mod.quantity || 1;
           const modTotal = modQuantity * mod.unit_price;
-          
-          const { data: modifier, error: modError } = await supabaseAdmin
-            .from('order_item_modifiers')
-            .insert({
-              order_item_id: orderItem.id,
-              
-              modifier_id: mod.modifier_id,
-              modifier_group_id: mod.modifier_group_id,
-              modifier_name: mod.modifier_name,
-              modifier_name_ar: mod.modifier_name_ar,
-              
-              quantity: modQuantity,
-              unit_price: mod.unit_price,
-              total: modTotal,
-              
-              modifier_type: mod.modifier_type,
-            })
-            .select()
-            .single();
-
-          if (modError) {
-            console.error('Failed to create order item modifier:', modError);
-          } else {
-            modifiers.push(modifier as OrderItemModifier);
-          }
+          allModifiersToInsert.push({
+            order_item_id: orderItem.id,
+            modifier_id: mod.modifier_id,
+            modifier_group_id: mod.modifier_group_id,
+            modifier_name: mod.modifier_name,
+            modifier_name_ar: mod.modifier_name_ar,
+            quantity: modQuantity,
+            unit_price: mod.unit_price,
+            total: modTotal,
+            modifier_type: mod.modifier_type,
+          });
         }
-        orderItem.modifiers = modifiers;
       }
+    });
 
-      orderItems.push(orderItem as OrderItem);
+    // Single batch insert for all modifiers
+    let insertedModifiers: OrderItemModifier[] = [];
+    if (allModifiersToInsert.length > 0) {
+      const { data: modifiers, error: modsError } = await supabaseAdmin
+        .from('order_item_modifiers')
+        .insert(allModifiersToInsert)
+        .select();
+
+      if (modsError) {
+        console.error('Failed to create order item modifiers:', modsError);
+      } else {
+        insertedModifiers = modifiers as OrderItemModifier[];
+      }
     }
 
-    // Reserve ingredients for this order
-    try {
-      const itemsForReservation = orderItems.map(oi => ({
-        product_id: oi.product_id,
-        variant_id: (oi as any).variant_id,
-        quantity: oi.quantity,
-        product_name: oi.product_name,
-      }));
-      
-      await inventoryStockService.reserveForOrder(
-        input.business_id,
-        input.branch_id,
-        itemsForReservation,
-        order.id,
-        input.created_by
-      );
-    } catch (reserveError) {
-      console.error('Failed to reserve ingredients:', reserveError);
-      // Don't fail order creation, just log the error
-    }
+    // Build final orderItems with their modifiers
+    const orderItems: OrderItem[] = insertedItems.map((orderItem, index) => {
+      const itemModifiers = insertedModifiers.filter(m => m.order_item_id === orderItem.id);
+      return {
+        ...orderItem,
+        modifiers: itemModifiers,
+      } as OrderItem;
+    });
 
-    // Log timeline event
-    try {
-      await orderTimelineService.logOrderCreated(order.id, {
-        order_number: orderNumber,
-        order_source: input.order_source,
-        order_type: input.order_type,
-        items_count: orderItems.length,
-        total_amount: total,
-        customer_name: input.customer_name,
-      }, input.created_by);
-    } catch (timelineError) {
-      console.error('Failed to log timeline:', timelineError);
-    }
+    // OPTIMIZATION: Fire-and-forget inventory reservation (non-blocking)
+    // Doesn't affect order creation - run in background
+    const itemsForReservation = orderItems.map(oi => ({
+      product_id: oi.product_id,
+      variant_id: (oi as any).variant_id,
+      quantity: oi.quantity,
+      product_name: oi.product_name,
+    }));
+    
+    inventoryStockService.reserveForOrder(
+      input.business_id,
+      input.branch_id,
+      itemsForReservation,
+      order.id,
+      input.created_by
+    ).catch(err => console.error('Failed to reserve ingredients:', err));
 
-    // Log status history
-    await this.logStatusChange(order.id, undefined, initialOrderStatus, input.created_by, 'Order created');
+    // OPTIMIZATION: Fire-and-forget logging (non-blocking)
+    // These don't affect order creation - run them in background
+    orderTimelineService.logOrderCreated(order.id, {
+      order_number: orderNumber,
+      order_source: input.order_source,
+      order_type: input.order_type,
+      items_count: orderItems.length,
+      total_amount: total,
+      customer_name: input.customer_name,
+    }, input.created_by).catch(err => console.error('Failed to log timeline:', err));
+    
+    this.logStatusChange(order.id, undefined, initialOrderStatus, input.created_by, 'Order created')
+      .catch(err => console.error('Failed to log status change:', err));
 
     return {
       ...order,
@@ -735,6 +993,7 @@ export class POSService {
   /**
    * Get order list stats for filters (without pagination)
    * Used to get accurate stats when paginating order lists
+   * Calculates total_profit = items_profit - delivery_partner_commission
    */
   async getOrderListStats(businessId: number, filters?: {
     branch_id?: number;
@@ -751,10 +1010,24 @@ export class POSService {
     completed_orders: number;
     in_progress_orders: number;
     total_revenue: number;
+    total_profit: number;
   }> {
+    // Get orders with items profit and delivery partner info
     let query = supabaseAdmin
       .from('orders')
-      .select('order_status, total_amount')
+      .select(`
+        id,
+        order_status,
+        total_amount,
+        delivery_partner_id,
+        delivery_partners (
+          commission_type,
+          commission_value
+        ),
+        order_items (
+          profit
+        )
+      `)
       .eq('business_id', businessId);
 
     // Apply same filters as getOrders
@@ -802,11 +1075,37 @@ export class POSService {
     const inProgressOrders = orders.filter(o => o.order_status === 'in_progress' || o.order_status === 'pending');
     const totalRevenue = completedOrders.reduce((sum, o) => sum + parseFloat(o.total_amount || '0'), 0);
 
+    // Calculate total profit: sum of item profits minus delivery partner commissions
+    let totalProfit = 0;
+    for (const order of completedOrders) {
+      // Sum item profits for this order
+      const itemsProfit = (order.order_items || []).reduce(
+        (sum: number, item: any) => sum + parseFloat(item.profit || '0'), 
+        0
+      );
+      
+      // Calculate delivery partner commission (if applicable)
+      let commission = 0;
+      const partner = order.delivery_partners as any;
+      if (partner && order.delivery_partner_id) {
+        const orderTotal = parseFloat(order.total_amount || '0');
+        if (partner.commission_type === 'percentage') {
+          commission = orderTotal * (parseFloat(partner.commission_value || '0') / 100);
+        } else if (partner.commission_type === 'fixed') {
+          commission = parseFloat(partner.commission_value || '0');
+        }
+      }
+      
+      // Order profit = items profit - commission
+      totalProfit += (itemsProfit - commission);
+    }
+
     return {
       total_orders: orders.length,
       completed_orders: completedOrders.length,
       in_progress_orders: inProgressOrders.length,
       total_revenue: totalRevenue,
+      total_profit: totalProfit,
     };
   }
 
@@ -940,12 +1239,21 @@ export class POSService {
     }
 
     // Consume inventory for all items
+    // Note: Supabase returns order_items, not items
+    const orderItems = (order as any).order_items || [];
     try {
-      const itemsForConsumption = (order.items || []).map(oi => ({
+      const itemsForConsumption = orderItems.map((oi: any) => ({
         product_id: oi.product_id,
-        variant_id: (oi as any).variant_id,
+        variant_id: oi.variant_id,
         quantity: oi.quantity,
         product_name: oi.product_name,
+        // Include modifiers for inventory adjustment (extras/removals)
+        modifiers: (oi.order_item_modifiers || []).map((mod: any) => ({
+          modifier_id: mod.modifier_id,
+          modifier_name: mod.modifier_name,
+          modifier_type: mod.modifier_type, // 'extra' or 'removal'
+          quantity: mod.quantity || 1,
+        })),
       }));
       
       await inventoryStockService.consumeForOrder(
@@ -953,7 +1261,8 @@ export class POSService {
         order.branch_id,
         itemsForConsumption,
         orderId,
-        completedBy
+        completedBy,
+        order.order_number
       );
     } catch (consumeError) {
       console.error('Failed to consume inventory:', consumeError);
@@ -964,7 +1273,7 @@ export class POSService {
     try {
       await orderTimelineService.logOrderCompleted(orderId, {
         completed_by_kitchen: true,
-        items_completed: (order.items || []).length,
+        items_completed: orderItems.length,
       }, completedBy);
     } catch (timelineError) {
       console.error('Failed to log timeline:', timelineError);
@@ -1021,10 +1330,12 @@ export class POSService {
     }
 
     // Calculate ingredients and handle reservation + cancellation queue
+    // Note: Supabase returns order_items, not items
+    const orderItems = (order as any).order_items || [];
     try {
-      const itemsForCancellation = (order.items || []).map(oi => ({
+      const itemsForCancellation = orderItems.map((oi: any) => ({
         product_id: oi.product_id,
-        variant_id: (oi as any).variant_id,
+        variant_id: oi.variant_id,
         quantity: oi.quantity,
         product_name: oi.product_name,
       }));
@@ -1518,16 +1829,19 @@ export class POSService {
     const previousTotal = parseFloat(String(order.total_amount || order.total || 0));
     let totalChange = 0;
 
+    // Note: Supabase returns order_items, not items
+    const orderItems = (order as any).order_items || [];
+
     // Handle items to remove
     if (updates.items_to_remove && updates.items_to_remove.length > 0) {
       for (const orderItemId of updates.items_to_remove) {
-        const orderItem = (order.items || []).find(oi => oi.id === orderItemId);
+        const orderItem = orderItems.find((oi: any) => oi.id === orderItemId);
         if (!orderItem) continue;
 
         // Calculate ingredients for removed item
         const itemsForCancellation = [{
           product_id: orderItem.product_id,
-          variant_id: (orderItem as any).variant_id,
+          variant_id: orderItem.variant_id,
           quantity: orderItem.quantity,
           product_name: orderItem.product_name,
         }];
@@ -1650,7 +1964,7 @@ export class POSService {
 
         // Log timeline
         await orderTimelineService.logItemAdded(orderId, {
-          product_id: newItem.product_id,
+          product_id: newItem.product_id || 0,
           product_name: newItem.product_name || product.name,
           quantity: newItem.quantity,
           unit_price: unitPrice,
@@ -1662,7 +1976,7 @@ export class POSService {
     // Handle item modifications (quantity changes and modifier changes)
     if (updates.items_to_modify && updates.items_to_modify.length > 0) {
       for (const mod of updates.items_to_modify) {
-        const orderItem = (order.items || []).find(oi => oi.id === mod.order_item_id);
+        const orderItem = orderItems.find((oi: any) => oi.id === mod.order_item_id);
         if (!orderItem) continue;
 
         // Handle quantity changes
@@ -1679,7 +1993,7 @@ export class POSService {
               order.branch_id,
               [{
                 product_id: orderItem.product_id,
-                variant_id: (orderItem as any).variant_id,
+                variant_id: orderItem.variant_id,
                 quantity: qtyDiff,
                 product_name: orderItem.product_name,
               }],
@@ -1692,7 +2006,7 @@ export class POSService {
               order.business_id,
               [{
                 product_id: orderItem.product_id,
-                variant_id: (orderItem as any).variant_id,
+                variant_id: orderItem.variant_id,
                 quantity: Math.abs(qtyDiff),
                 product_name: orderItem.product_name,
               }]
@@ -1842,7 +2156,7 @@ export class POSService {
 
     // Update order totals and is_edited flag
     const newTotal = previousTotal + totalChange;
-    const paidAmount = parseFloat(String(order.paid_amount || previousTotal));
+    const paidAmount = parseFloat(String((order as any).paid_amount || previousTotal));
     let remainingAmount = 0;
     let paymentStatus = order.payment_status;
 

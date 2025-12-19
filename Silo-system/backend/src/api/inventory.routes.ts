@@ -194,13 +194,13 @@ router.put('/items/:itemId', authenticateBusiness, asyncHandler(async (req: Auth
 
   try {
     // Use the new editItem method which handles both default and business items
+    // Note: item_type is not updatable after creation
     const item = await inventoryService.editItem(
       itemId,
       req.businessUser!.business_id,
       {
         name,
         name_ar,
-        item_type,
         category,
         unit,
         storage_unit,

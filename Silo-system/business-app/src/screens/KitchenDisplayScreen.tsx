@@ -850,7 +850,7 @@ export default function KitchenDisplayScreen({ navigation }: any) {
         <View style={styles.orderHeader}>
           <View>
             <Text style={styles.orderNumber}>
-              #{order.display_number || order.order_number}
+              #{order.order_number}
             </Text>
             <View style={styles.orderMeta}>
               <View style={styles.orderType}>
@@ -1123,7 +1123,7 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                Process Items - Order #{selectedOrderForWaste?.display_number || selectedOrderForWaste?.order_number}
+                Process Items - Order #{selectedOrderForWaste?.order_number}
               </Text>
               <TouchableOpacity onPress={() => setShowWasteModal(false)}>
                 <XCircle size={24} color={colors.mutedForeground} />

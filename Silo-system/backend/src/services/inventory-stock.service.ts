@@ -658,11 +658,10 @@ export class InventoryStockService {
 
     if (existing) return existing as InventoryStock;
 
-    // Use upsert to prevent race conditions creating duplicates
-    // The unique partial indexes will ensure only one record exists
+    // Insert new stock record
     const { data: newStock, error } = await supabaseAdmin
       .from('inventory_stock')
-      .upsert({
+      .insert({
         business_id: businessId,
         branch_id: branchId || null,
         item_id: itemId,
@@ -670,18 +669,29 @@ export class InventoryStockService {
         reserved_quantity: 0,
         held_quantity: 0,
         min_quantity: 0,
-      }, {
-        onConflict: branchId ? 'business_id,branch_id,item_id' : 'business_id,item_id',
-        ignoreDuplicates: false, // Return existing record if conflict
       })
       .select()
       .single();
 
     if (error) {
-      // If upsert failed due to race condition, try to fetch the existing record
-      console.warn('Upsert conflict, fetching existing record:', error.message);
-      const { data: retryExisting } = await query.single();
-      if (retryExisting) return retryExisting as InventoryStock;
+      // If insert failed due to race condition (duplicate), try to fetch the existing record
+      if (error.code === '23505') {
+        console.warn('Duplicate stock record, fetching existing:', error.message);
+        let retryQuery = supabaseAdmin
+          .from('inventory_stock')
+          .select('*')
+          .eq('business_id', businessId)
+          .eq('item_id', itemId);
+        
+        if (branchId) {
+          retryQuery = retryQuery.eq('branch_id', branchId);
+        } else {
+          retryQuery = retryQuery.is('branch_id', null);
+        }
+        
+        const { data: retryExisting } = await retryQuery.single();
+        if (retryExisting) return retryExisting as InventoryStock;
+      }
       
       console.error('Failed to create stock record:', error);
       throw new Error('Failed to create stock record');
@@ -2643,6 +2653,7 @@ export class InventoryStockService {
   /**
    * Calculate all ingredients required for an order's items
    * Gets ingredients from product_ingredients table, handles variants and quantities
+   * Also handles modifiers: extras (add items) and removals (skip items)
    */
   async calculateOrderIngredients(
     businessId: number,
@@ -2651,6 +2662,12 @@ export class InventoryStockService {
       variant_id?: number;
       quantity: number;
       product_name?: string;
+      modifiers?: Array<{
+        modifier_id?: number;
+        modifier_name: string;
+        modifier_type: string; // 'extra' or 'removal'
+        quantity: number;
+      }>;
     }>
   ): Promise<IngredientRequirement[]> {
     const ingredients: IngredientRequirement[] = [];
@@ -2658,67 +2675,141 @@ export class InventoryStockService {
     for (const orderItem of orderItems) {
       if (!orderItem.product_id) continue;
 
-      // Get ingredients for this product (variant-specific if applicable, else product-level)
-      let query = supabaseAdmin
-        .from('product_ingredients')
-        .select(`
-          item_id,
-          quantity,
-          variant_id,
-          items:item_id (
-            id,
-            name,
-            name_ar,
-            unit,
-            storage_unit
-          )
-        `)
-        .eq('product_id', orderItem.product_id);
+      let productIngredients: any[] = [];
+      let error: any = null;
 
       if (orderItem.variant_id) {
         // Get variant-specific ingredients
-        query = query.eq('variant_id', orderItem.variant_id);
+        const result = await supabaseAdmin
+          .from('product_ingredients')
+          .select(`
+            item_id,
+            quantity,
+            variant_id,
+            items:item_id (
+              id,
+              name,
+              name_ar,
+              unit,
+              storage_unit
+            )
+          `)
+          .eq('product_id', orderItem.product_id)
+          .eq('variant_id', orderItem.variant_id);
+        
+        productIngredients = result.data || [];
+        error = result.error;
       } else {
-        // Get product-level ingredients (no variant)
-        query = query.is('variant_id', null);
+        // First try to get product-level ingredients (no variant)
+        const productLevelResult = await supabaseAdmin
+          .from('product_ingredients')
+          .select(`
+            item_id,
+            quantity,
+            variant_id,
+            items:item_id (
+              id,
+              name,
+              name_ar,
+              unit,
+              storage_unit
+            )
+          `)
+          .eq('product_id', orderItem.product_id)
+          .is('variant_id', null);
+        
+        productIngredients = productLevelResult.data || [];
+        error = productLevelResult.error;
+        
+        // If no product-level ingredients found, get ingredients from the default variant
+        if (!error && productIngredients.length === 0) {
+          // First try to find a variant named "Original" (case-insensitive)
+          let { data: defaultVariant } = await supabaseAdmin
+            .from('product_variants')
+            .select('id, name')
+            .eq('product_id', orderItem.product_id)
+            .ilike('name', 'original')
+            .limit(1)
+            .single();
+          
+          // If no "Original" variant, get the first variant by sort_order
+          if (!defaultVariant) {
+            const { data: firstVariant } = await supabaseAdmin
+              .from('product_variants')
+              .select('id, name')
+              .eq('product_id', orderItem.product_id)
+              .order('sort_order', { ascending: true })
+              .order('id', { ascending: true })
+              .limit(1)
+              .single();
+            defaultVariant = firstVariant;
+          }
+          
+          if (defaultVariant) {
+            const variantResult = await supabaseAdmin
+              .from('product_ingredients')
+              .select(`
+                item_id,
+                quantity,
+                variant_id,
+                items:item_id (
+                  id,
+                  name,
+                  name_ar,
+                  unit,
+                  storage_unit
+                )
+              `)
+              .eq('product_id', orderItem.product_id)
+              .eq('variant_id', defaultVariant.id);
+            
+            productIngredients = variantResult.data || [];
+            error = variantResult.error;
+          }
+        }
       }
-
-      const { data: productIngredients, error } = await query;
 
       if (error) {
         console.error(`Failed to get ingredients for product ${orderItem.product_id}:`, error);
         continue;
       }
 
-      for (const ing of productIngredients || []) {
+      // Build a set of removed item names (case-insensitive) to skip
+      const removedItemNames = new Set<string>();
+      if (orderItem.modifiers) {
+        for (const mod of orderItem.modifiers) {
+          if (mod.modifier_type === 'removal') {
+            removedItemNames.add(mod.modifier_name.toLowerCase());
+          }
+        }
+      }
+
+      for (const ing of productIngredients) {
         const item = ing.items as any;
         if (!item) continue;
+
+        // Skip this ingredient if it was marked as removed
+        if (removedItemNames.has(item.name.toLowerCase())) {
+          continue;
+        }
 
         const servingUnit = item.unit || 'grams';
         const storageUnit = item.storage_unit || servingUnit;
         
-        // Calculate total quantity needed (ingredient qty per product × order qty)
-        const totalQuantityInServing = ing.quantity * orderItem.quantity;
-        
-        // Convert to storage units for inventory tracking
-        let quantityInStorage = totalQuantityInServing;
-        try {
-          quantityInStorage = convertUnits(totalQuantityInServing, servingUnit as StorageUnit, storageUnit as StorageUnit);
-        } catch {
-          // If conversion fails, use as-is (same units)
-          quantityInStorage = totalQuantityInServing;
-        }
+        // product_ingredients.quantity is ALREADY in storage units (e.g., 0.030 Kg, not 30 grams)
+        // Just multiply by order quantity - NO unit conversion needed
+        const quantityInStorage = ing.quantity * orderItem.quantity;
 
         // Check if this ingredient already exists (aggregate)
         const existing = ingredients.find(i => i.item_id === ing.item_id);
         if (existing) {
-          existing.quantity += totalQuantityInServing;
+          existing.quantity += quantityInStorage;
           existing.quantity_in_storage += quantityInStorage;
         } else {
           ingredients.push({
             item_id: ing.item_id,
             item_name: item.name,
-            quantity: totalQuantityInServing,
+            quantity: quantityInStorage,
             serving_unit: servingUnit,
             storage_unit: storageUnit,
             quantity_in_storage: quantityInStorage,
@@ -2726,6 +2817,84 @@ export class InventoryStockService {
             product_name: orderItem.product_name,
             variant_id: orderItem.variant_id,
           });
+        }
+      }
+
+      // Handle extra modifiers - add their items to the ingredients
+      if (orderItem.modifiers) {
+        for (const mod of orderItem.modifiers) {
+          if (mod.modifier_type === 'extra') {
+            let modifierData: any = null;
+
+            if (mod.modifier_id) {
+              // Get by modifier_id if available
+              const { data } = await supabaseAdmin
+                .from('product_modifiers')
+                .select(`
+                  item_id,
+                  quantity,
+                  items:item_id (
+                    id,
+                    name,
+                    unit,
+                    storage_unit
+                  )
+                `)
+                .eq('id', mod.modifier_id)
+                .single();
+              modifierData = data;
+            } else if (mod.modifier_name && orderItem.product_id) {
+              // Fallback: lookup by name and product_id
+              const { data } = await supabaseAdmin
+                .from('product_modifiers')
+                .select(`
+                  item_id,
+                  quantity,
+                  items:item_id (
+                    id,
+                    name,
+                    unit,
+                    storage_unit
+                  )
+                `)
+                .eq('product_id', orderItem.product_id)
+                .ilike('name', mod.modifier_name)
+                .single();
+              modifierData = data;
+            }
+
+            if (modifierData?.item_id && modifierData?.items) {
+              const item = modifierData.items as any;
+              const storageUnit = item.storage_unit || item.unit || 'piece';
+              
+              // product_modifiers.quantity is the amount per extra (already in storage units)
+              // e.g., 1 piece of cheese per extra
+              const perExtraQty = modifierData.quantity || 1;
+              
+              // Extra quantity = per_extra_qty × modifier_count × order_qty
+              // e.g., 1 piece × 2 extras × 1 burger = 2 pieces
+              const extraQuantity = perExtraQty * (mod.quantity || 1) * orderItem.quantity;
+
+              // Add to existing or create new
+              const existing = ingredients.find(i => i.item_id === modifierData.item_id);
+              if (existing) {
+                existing.quantity += extraQuantity;
+                existing.quantity_in_storage += extraQuantity;
+              } else {
+                ingredients.push({
+                  item_id: modifierData.item_id,
+                  item_name: item.name,
+                  quantity: extraQuantity,
+                  serving_unit: item.unit || 'piece',
+                  storage_unit: storageUnit,
+                  quantity_in_storage: extraQuantity,
+                  product_id: orderItem.product_id,
+                  product_name: `${orderItem.product_name} (extra: ${mod.modifier_name})`,
+                  variant_id: orderItem.variant_id,
+                });
+              }
+            }
+          }
         }
       }
     }
@@ -2856,12 +3025,37 @@ export class InventoryStockService {
       product_name?: string;
     }>,
     orderId: number,
-    userId?: number
+    userId?: number,
+    orderNumber?: string
   ): Promise<{ success: boolean; consumed: IngredientRequirement[] }> {
+    // Use order_number for display, fallback to orderId
+    const orderRef = orderNumber || `#${orderId}`;
     const ingredients = await this.calculateOrderIngredients(businessId, orderItems);
 
+    if (ingredients.length === 0) {
+      return { success: true, consumed: [] };
+    }
+
     for (const ing of ingredients) {
-      const stock = await this.getOrCreateStock(businessId, ing.item_id, branchId);
+      // Find stock with actual quantity - first try specified branch, then any branch with stock
+      let stock = await this.getOrCreateStock(businessId, ing.item_id, branchId);
+      
+      // If the stock has 0 quantity and no branch was specified, look for stock in any branch
+      if (stock.quantity === 0 && !branchId) {
+        const { data: stockWithQty } = await supabaseAdmin
+          .from('inventory_stock')
+          .select('*')
+          .eq('business_id', businessId)
+          .eq('item_id', ing.item_id)
+          .gt('quantity', 0)
+          .order('quantity', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (stockWithQty) {
+          stock = stockWithQty;
+        }
+      }
       
       const quantityBefore = stock.quantity;
       const reservedBefore = stock.reserved_quantity || 0;
@@ -2884,12 +3078,15 @@ export class InventoryStockService {
         throw new Error(`Failed to consume ingredient: ${ing.item_name}`);
       }
 
+      // Use the actual branch where stock was consumed (might differ from order branch if order has no branch)
+      const consumedFromBranchId = stock.branch_id;
+
       // Log the consumption movement
       await supabaseAdmin
         .from('inventory_movements')
         .insert({
           business_id: businessId,
-          branch_id: branchId || null,
+          branch_id: consumedFromBranchId,
           item_id: ing.item_id,
           movement_type: 'sale_consume',
           reference_type: 'order',
@@ -2897,9 +3094,37 @@ export class InventoryStockService {
           quantity: -ing.quantity_in_storage,
           quantity_before: quantityBefore,
           quantity_after: newQuantity,
-          notes: `Consumed for completed order #${orderId}`,
+          notes: `Consumed for completed order ${orderRef}`,
           created_by: userId || null,
         });
+
+      // Also record in inventory_transactions for timeline
+      try {
+        const { data: itemInfo } = await supabaseAdmin
+          .from('items')
+          .select('storage_unit, unit')
+          .eq('id', ing.item_id)
+          .single();
+
+        await supabaseAdmin
+          .from('inventory_transactions')
+          .insert({
+            business_id: businessId,
+            branch_id: consumedFromBranchId,
+            item_id: ing.item_id,
+            transaction_type: 'order_sale',
+            quantity: ing.quantity_in_storage,
+            unit: itemInfo?.storage_unit || itemInfo?.unit || 'unit',
+            reference_type: 'order',
+            reference_id: orderId,
+            notes: `Consumed for order ${orderRef}`,
+            performed_by: userId || null,
+            quantity_before: quantityBefore,
+            quantity_after: newQuantity,
+          });
+      } catch (txError) {
+        console.error('Failed to log inventory transaction for order consumption:', txError);
+      }
     }
 
     return { success: true, consumed: ingredients };
@@ -2957,6 +3182,35 @@ export class InventoryStockService {
           notes: reason || `Waste from cancelled order #${orderId}`,
           created_by: userId || null,
         });
+
+      // Also record in inventory_transactions for timeline
+      try {
+        const { data: itemInfo } = await supabaseAdmin
+          .from('items')
+          .select('storage_unit, unit')
+          .eq('id', item.item_id)
+          .single();
+
+        await supabaseAdmin
+          .from('inventory_transactions')
+          .insert({
+            business_id: businessId,
+            branch_id: branchId || null,
+            item_id: item.item_id,
+            transaction_type: 'manual_deduction',
+            quantity: item.quantity_in_storage,
+            unit: itemInfo?.storage_unit || itemInfo?.unit || 'unit',
+            deduction_reason: 'spoiled',
+            reference_type: 'order',
+            reference_id: orderId,
+            notes: reason || `Waste from cancelled order #${orderId}`,
+            performed_by: userId || null,
+            quantity_before: quantityBefore,
+            quantity_after: newQuantity,
+          });
+      } catch (txError) {
+        console.error('Failed to log inventory transaction for waste:', txError);
+      }
     }
   }
 

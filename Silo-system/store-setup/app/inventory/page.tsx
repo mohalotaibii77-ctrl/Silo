@@ -486,7 +486,7 @@ function InventoryStockTab() {
                           stockStatus.status === 'low' ? 'text-amber-600 dark:text-amber-400' :
                           'text-zinc-900 dark:text-white'
                         }`}>
-                          {stock.quantity.toLocaleString()}
+                          {stock.quantity}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -582,7 +582,7 @@ function InventoryStockTab() {
                 <div className={`p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800 ${isRTL ? 'text-right' : ''}`}>
                   <p className="text-xs text-zinc-500 mb-1">{t('Current Stock', 'المخزون الحالي')}</p>
                   <p className="text-2xl font-bold text-zinc-900 dark:text-white">
-                    {selectedStock.quantity.toLocaleString()} <span className="text-sm font-normal text-zinc-500">{selectedStock.item?.storage_unit || selectedStock.item?.unit}</span>
+                    {selectedStock.quantity} <span className="text-sm font-normal text-zinc-500">{selectedStock.item?.storage_unit || selectedStock.item?.unit}</span>
                   </p>
                 </div>
 
@@ -967,7 +967,7 @@ function TimelineTab() {
                       {tx.branch && <span>• {isRTL ? tx.branch.name_ar || tx.branch.name : tx.branch.name}</span>}
                       {tx.quantity_before !== null && tx.quantity_after !== null && (
                         <span className={`flex items-center gap-1 ${isRTL ? 'flex-row-reverse' : ''}`}>
-                          • {tx.quantity_before.toFixed(2)} → {tx.quantity_after.toFixed(2)}
+                          • {tx.quantity_before} → {tx.quantity_after}
                         </span>
                       )}
                     </div>

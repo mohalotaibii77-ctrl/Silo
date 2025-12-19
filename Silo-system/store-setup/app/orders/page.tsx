@@ -99,7 +99,8 @@ export default function OrdersPage() {
     completed_orders: number;
     in_progress_orders: number;
     total_revenue: number;
-  }>({ total_orders: 0, completed_orders: 0, in_progress_orders: 0, total_revenue: 0 });
+    total_profit: number;
+  }>({ total_orders: 0, completed_orders: 0, in_progress_orders: 0, total_revenue: 0, total_profit: 0 });
 
   // Order statuses (fixed values)
   const orderStatuses = [
@@ -169,6 +170,10 @@ export default function OrdersPage() {
       setError(null);
       
       const params = new URLSearchParams();
+      // Branch isolation - only show orders for the current branch
+      if (currentBranch?.id) {
+        params.append('branch_id', String(currentBranch.id));
+      }
       if (statusFilter) {
         params.append('status', statusFilter);
       }
@@ -418,6 +423,40 @@ export default function OrdersPage() {
           </div>
         </div>
 
+        {/* Summary Stats - using backend-calculated values */}
+        {!isLoading && filteredOrders.length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Total Orders', 'إجمالي الطلبات')}</p>
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">{orderStats.total_orders}</p>
+            </div>
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Completed', 'مكتمل')}</p>
+              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+                {orderStats.completed_orders}
+              </p>
+            </div>
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('In Progress', 'قيد التنفيذ')}</p>
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
+                {orderStats.in_progress_orders}
+              </p>
+            </div>
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Total Sales', 'إجمالي المبيعات')}</p>
+              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
+                {formatCurrency(orderStats.total_revenue)}
+              </p>
+            </div>
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Profit', 'الربح')}</p>
+              <p className={`text-2xl font-bold mt-1 ${orderStats.total_profit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                {formatCurrency(orderStats.total_profit)}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Orders Table */}
         <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
           {isLoading ? (
@@ -488,7 +527,7 @@ export default function OrdersPage() {
                       <td className="px-4 py-4">
                         <div className="flex items-center gap-2">
                           <span className="font-mono font-bold text-zinc-900 dark:text-white">
-                            #{order.display_number || order.order_number}
+                            #{order.order_number}
                           </span>
                         </div>
                       </td>
@@ -568,34 +607,6 @@ export default function OrdersPage() {
             </div>
           )}
         </div>
-
-        {/* Summary Stats - using backend-calculated values */}
-        {!isLoading && filteredOrders.length > 0 && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Total Orders', 'إجمالي الطلبات')}</p>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">{orderStats.total_orders}</p>
-            </div>
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Completed', 'مكتمل')}</p>
-              <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
-                {orderStats.completed_orders}
-              </p>
-            </div>
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('In Progress', 'قيد التنفيذ')}</p>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1">
-                {orderStats.in_progress_orders}
-              </p>
-            </div>
-            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 p-4">
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Total Revenue', 'إجمالي الإيرادات')}</p>
-              <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-1">
-                {formatCurrency(orderStats.total_revenue)}
-              </p>
-            </div>
-          </div>
-        )}
       </motion.div>
 
       {/* Order Detail Modal */}
@@ -619,7 +630,7 @@ export default function OrdersPage() {
               <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
                 <div>
                   <h2 className="text-xl font-bold text-zinc-900 dark:text-white">
-                    {t('Order', 'الطلب')} #{selectedOrder.display_number || selectedOrder.order_number}
+                    {t('Order', 'الطلب')} #{selectedOrder.order_number}
                   </h2>
                   <p className="text-sm text-zinc-500 dark:text-zinc-400">
                     {formatDateTime(selectedOrder.order_date, selectedOrder.order_time)}

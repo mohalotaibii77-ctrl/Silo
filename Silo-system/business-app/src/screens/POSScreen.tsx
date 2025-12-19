@@ -180,6 +180,8 @@ export default function POSScreen({ navigation }: any) {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [productAvailability, setProductAvailability] = useState<Record<string, number>>({}); // product_id -> max available qty
+  const [availabilityLoaded, setAvailabilityLoaded] = useState(false); // Track if availability has been loaded
   const [currency, setCurrency] = useState(''); // Loaded from business settings
   const [vatEnabled, setVatEnabled] = useState(false);
   const [taxRate, setTaxRate] = useState(0); // VAT rate from business settings
@@ -246,6 +248,11 @@ export default function POSScreen({ navigation }: any) {
   const [showOrderDetailsModal, setShowOrderDetailsModal] = useState(false);
   const [updatingOrderStatus, setUpdatingOrderStatus] = useState(false);
   
+  // Order timeline modal state
+  const [showTimelineModal, setShowTimelineModal] = useState(false);
+  const [orderTimeline, setOrderTimeline] = useState<any[]>([]);
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  
   // Order item editing state (editing modifiers within the order details modal)
   const [editingOrderItem, setEditingOrderItem] = useState<any>(null);
   const [editItemRemovedMods, setEditItemRemovedMods] = useState<Set<string>>(new Set());
@@ -253,15 +260,50 @@ export default function POSScreen({ navigation }: any) {
   const [orderItemEdits, setOrderItemEdits] = useState<Map<number, { removed: string[], added: { name: string, price: number, quantity: number }[] }>>(new Map());
   const [savingOrderEdit, setSavingOrderEdit] = useState(false);
 
-  // Load recent orders for the Orders tab
+  // Load recent orders for the Orders tab (filtered by branch)
   const loadRecentOrders = async () => {
     try {
       setLoadingOrders(true);
       const token = await AsyncStorage.getItem('token');
+      const userData = await AsyncStorage.getItem('user');
+      const branchData = await AsyncStorage.getItem('branch');
+      const businessData = await AsyncStorage.getItem('business');
       if (!token || !API_URL) return;
+
+      // Get branch_id for order isolation
+      let branchId: number | null = null;
+      if (userData) {
+        const user = JSON.parse(userData);
+        branchId = user.branch_id;
+      }
+      if (!branchId && branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+      // If still no branch_id, fetch main branch for the business
+      if (!branchId && businessData) {
+        const business = JSON.parse(businessData);
+        try {
+          const branchesResponse = await fetch(`${API_URL}/businesses/${business.id}/branches`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const branchesResult = await branchesResponse.json();
+          if (branchesResult.branches && branchesResult.branches.length > 0) {
+            const mainBranch = branchesResult.branches.find((b: any) => b.is_main) || branchesResult.branches[0];
+            branchId = mainBranch.id;
+          }
+        } catch (err) {
+          console.error('Error fetching branches for orders:', err);
+        }
+      }
 
       const today = new Date().toISOString().split('T')[0];
       let url = `${API_URL}/pos/orders?date=${today}&limit=50`;
+      
+      // Branch isolation - only show orders for this branch
+      if (branchId) {
+        url += `&branch_id=${branchId}`;
+      }
       
       if (ordersFilter !== 'all') {
         url += `&status=${ordersFilter}`;
@@ -284,6 +326,148 @@ export default function POSScreen({ navigation }: any) {
     } finally {
       setLoadingOrders(false);
     }
+  };
+
+  // Mark a delivery order as picked up (driver collected)
+  const markOrderAsPickedUp = async (orderId: number) => {
+    try {
+      setUpdatingOrderStatus(true);
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos/orders/${orderId}/pickup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          // Use selected employee ID, or fallback to session's cashier_id (for restored sessions)
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
+        }),
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        // Update the order in state
+        setSelectedOrderForView(result.data);
+        // Refresh orders list
+        loadRecentOrders();
+        Alert.alert('Success', 'Order marked as picked up');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to update order');
+      }
+    } catch (error) {
+      console.error('Error marking order as picked up:', error);
+      Alert.alert('Error', 'Failed to update order');
+    } finally {
+      setUpdatingOrderStatus(false);
+    }
+  };
+
+  // Fetch order timeline
+  const fetchOrderTimeline = async (orderId: number) => {
+    try {
+      setLoadingTimeline(true);
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      const response = await fetch(`${API_URL}/pos/orders/${orderId}/timeline`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        setOrderTimeline(result.data || []);
+        setShowTimelineModal(true);
+      } else {
+        Alert.alert('Error', result.error || 'Failed to load timeline');
+      }
+    } catch (error) {
+      console.error('Error fetching timeline:', error);
+      Alert.alert('Error', 'Failed to load timeline');
+    } finally {
+      setLoadingTimeline(false);
+    }
+  };
+
+  // Get timeline event color
+  const getTimelineEventColor = (eventType: string) => {
+    const colors: Record<string, string> = {
+      created: '#3b82f6',
+      item_added: '#10b981',
+      item_removed: '#ef4444',
+      item_modified: '#f59e0b',
+      status_changed: '#8b5cf6',
+      payment_received: '#22c55e',
+      payment_updated: '#f59e0b',
+      cancelled: '#ef4444',
+      completed: '#22c55e',
+      picked_up: '#10b981',
+      ingredient_wasted: '#ef4444',
+      ingredient_returned: '#3b82f6',
+    };
+    return colors[eventType] || '#6b7280';
+  };
+
+  // Format timeline event description
+  const formatTimelineEvent = (event: any) => {
+    const data = event.event_data || {};
+    switch (event.event_type) {
+      case 'created':
+        return `Order created - ${data.order_type?.replace('_', ' ')} (${data.items_count} items)`;
+      case 'status_changed':
+        const fromStatus = data.from_status || data.previous_status;
+        const toStatus = data.to_status || data.new_status;
+        if (fromStatus && toStatus) {
+          return `Status changed: ${fromStatus.replace(/_/g, ' ')} → ${toStatus.replace(/_/g, ' ')}`;
+        } else if (toStatus) {
+          return `Status set to: ${toStatus.replace(/_/g, ' ')}`;
+        } else if (data.reason) {
+          return `Status updated: ${data.reason}`;
+        }
+        return 'Status updated';
+      case 'payment_received':
+        return `Payment received via ${data.payment_method}`;
+      case 'payment_updated':
+        return `Payment updated${data.remaining_amount ? ` - ${data.remaining_amount} remaining` : ''}`;
+      case 'item_added':
+        return `Item added: ${data.item_name || data.product_name || 'Item'}`;
+      case 'item_removed':
+        return `Item removed: ${data.item_name || data.product_name || 'Item'}`;
+      case 'item_modified':
+        return `Item modified: ${data.item_name || data.product_name || 'Item'}`;
+      case 'picked_up':
+        return 'Order picked up by driver';
+      case 'completed':
+        return 'Order completed';
+      case 'cancelled':
+        return `Order cancelled${data.reason ? `: ${data.reason}` : ''}`;
+      case 'ingredient_wasted':
+        return `Ingredient wasted: ${data.item_name || 'Item'}`;
+      case 'ingredient_returned':
+        return `Ingredient returned: ${data.item_name || 'Item'}`;
+      default:
+        return event.event_type?.replace(/_/g, ' ');
+    }
+  };
+
+  // Format user name from timeline event
+  const formatTimelineUser = (event: any) => {
+    if (!event.user) return null;
+    const user = event.user;
+    // Show full name if available (this is the actual employee)
+    if (user.first_name && user.last_name) {
+      return `${user.first_name} ${user.last_name}`;
+    }
+    if (user.first_name) return user.first_name;
+    // Username only - likely a POS terminal user or incomplete profile
+    if (user.username) return user.username;
+    return null;
   };
 
   // Load orders when orders tab is selected or filter changes
@@ -682,10 +866,76 @@ export default function POSScreen({ navigation }: any) {
     }
   };
 
+  // Cancel an order (pending/in_progress → cancelled)
+  const handleCancelOrder = async (orderId: number) => {
+    // On web, Alert.alert doesn't work, so use window.confirm
+    const confirmed = Platform.OS === 'web' 
+      ? window.confirm('Are you sure you want to cancel this order? This cannot be undone.')
+      : await new Promise<boolean>(resolve => {
+          Alert.alert(
+            'Cancel Order',
+            'Are you sure you want to cancel this order? This cannot be undone.',
+            [
+              { text: 'No', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Yes, Cancel Order', style: 'destructive', onPress: () => resolve(true) },
+            ]
+          );
+        });
+
+    if (!confirmed) return;
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) {
+        if (Platform.OS === 'web') {
+          window.alert('Not authenticated');
+        } else {
+          Alert.alert('Error', 'Not authenticated');
+        }
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/pos/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ reason: 'Cancelled by cashier' }),
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        if (Platform.OS === 'web') {
+          window.alert('Order cancelled successfully');
+        } else {
+          Alert.alert('Success', 'Order cancelled successfully');
+        }
+        setShowOrderDetailsModal(false);
+        loadRecentOrders();
+      } else {
+        if (Platform.OS === 'web') {
+          window.alert(result.error || 'Failed to cancel order');
+        } else {
+          Alert.alert('Error', result.error || 'Failed to cancel order');
+        }
+      }
+    } catch (error: any) {
+      console.error('Error cancelling order:', error);
+      if (Platform.OS === 'web') {
+        window.alert('Failed to cancel order. Please try again.');
+      } else {
+        Alert.alert('Error', 'Failed to cancel order. Please try again.');
+      }
+    }
+  };
+
   useEffect(() => {
     loadUser();
     loadBusinessSettings();
     loadProducts();
+    loadProductAvailability(); // Load stock availability for cart limits
     loadDeliveryPartners();
     loadRestaurantTables();
     loadDrivers();
@@ -729,6 +979,13 @@ export default function POSScreen({ navigation }: any) {
           // Session is still valid - restore it
           setPosSession(parsedSession);
           setCashDrawerBalance(result.data.current_balance || parsedSession.opening_float || 0);
+          // Restore the employee info from the session so actions are attributed correctly
+          if (parsedSession.cashier_id) {
+            setSelectedPosEmployee({
+              id: parsedSession.cashier_id,
+              name: parsedSession.cashier_name || 'Unknown',
+            });
+          }
           return;
         } else {
           // Session no longer valid - clear stored session
@@ -747,6 +1004,13 @@ export default function POSScreen({ navigation }: any) {
         await AsyncStorage.setItem('pos_session', JSON.stringify(result.data));
         setPosSession(result.data);
         setCashDrawerBalance(result.data.cash_summary?.current_balance || 0);
+        // Restore the employee info from the session so actions are attributed correctly
+        if (result.data.cashier_id) {
+          setSelectedPosEmployee({
+            id: result.data.cashier_id,
+            name: result.data.cashier_name || 'Unknown',
+          });
+        }
       } else {
         // No active session - show POS login
         setPosSession(null);
@@ -762,6 +1026,13 @@ export default function POSScreen({ navigation }: any) {
           const parsedSession = JSON.parse(storedSession);
           setPosSession(parsedSession);
           setCashDrawerBalance(parsedSession.opening_float || 0);
+          // Restore the employee info from the session so actions are attributed correctly
+          if (parsedSession.cashier_id) {
+            setSelectedPosEmployee({
+              id: parsedSession.cashier_id,
+              name: parsedSession.cashier_name || 'Unknown',
+            });
+          }
         } else {
           loadPosEmployees();
           setShowPosLoginModal(true);
@@ -1373,6 +1644,70 @@ export default function POSScreen({ navigation }: any) {
     }
   };
 
+  // Load available quantities for each product based on inventory
+  const loadProductAvailability = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (!token || !API_URL) return;
+
+      // Get branch ID for stock checking
+      const userData = await AsyncStorage.getItem('user');
+      const branchData = await AsyncStorage.getItem('branch');
+      
+      let branchId: number | null = null;
+      if (userData) {
+        const user = JSON.parse(userData);
+        branchId = user.branch_id;
+      }
+      if (!branchId && branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+
+      const url = branchId 
+        ? `${API_URL}/pos/product-availability?branch_id=${branchId}`
+        : `${API_URL}/pos/product-availability`;
+      
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const result = await response.json();
+      
+      if (result.success && result.data) {
+        console.log('[POS] Product availability loaded:', Object.keys(result.data).length, 'products');
+        console.log('[POS] Availability data:', JSON.stringify(result.data));
+        setProductAvailability(result.data);
+        setAvailabilityLoaded(true);
+      } else {
+        console.log('[POS] Failed to load availability:', result);
+        setAvailabilityLoaded(true); // Mark as loaded even on failure to allow ordering
+      }
+    } catch (error) {
+      console.error('Error loading product availability:', error);
+      setAvailabilityLoaded(true); // Mark as loaded even on error
+    }
+  };
+
+  // Get current quantity of a product in the cart
+  const getCartQuantityForProduct = (productId: string): number => {
+    return cart
+      .filter(item => item.productId === productId)
+      .reduce((sum, item) => sum + item.quantity, 0);
+  };
+
+  // Get available quantity for a product (max - already in cart)
+  const getAvailableForProduct = (productId: string): number => {
+    // Try both string and numeric key since API returns numeric keys
+    const maxAvailable = productAvailability[productId] ?? productAvailability[parseInt(productId)] ?? 999;
+    const inCart = getCartQuantityForProduct(productId);
+    return Math.max(0, maxAvailable - inCart);
+  };
+  
+  // Get max available for a product (from availability data)
+  const getMaxAvailableForProduct = (productId: string): number => {
+    return productAvailability[productId] ?? productAvailability[parseInt(productId)] ?? 999;
+  };
+
   const handleLogout = async () => {
     // On web, Alert.alert doesn't work, so use window.confirm
     if (Platform.OS === 'web') {
@@ -1593,6 +1928,29 @@ export default function POSScreen({ navigation }: any) {
       });
     }
 
+    // Check if we can add this product based on available stock
+    const maxQty = getMaxAvailableForProduct(selectedProduct.id);
+    const inCart = getCartQuantityForProduct(selectedProduct.id);
+    const availableQty = maxQty - inCart;
+    
+    console.log(`[Stock Check - Add] Product: ${selectedProduct.name} (${selectedProduct.id}), Max: ${maxQty}, In Cart: ${inCart}, Available: ${availableQty}, AvailabilityLoaded: ${availabilityLoaded}`);
+    console.log(`[Stock Check - Add] productAvailability keys:`, Object.keys(productAvailability));
+    
+    // If availability is loaded and we have data for this product, enforce the limit
+    if (availabilityLoaded && maxQty !== 999) {
+      if (availableQty <= 0) {
+        const msg = maxQty === 0
+          ? `${selectedProduct.name} is out of stock`
+          : `Cannot add more ${selectedProduct.name}. Maximum available: ${maxQty}`;
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Stock Limit', msg);
+        }
+        return;
+      }
+    }
+
     const cartItem: CartItem = {
       id: `${selectedProduct.id}-${Date.now()}`,
       productId: selectedProduct.id,
@@ -1615,14 +1973,40 @@ export default function POSScreen({ navigation }: any) {
   };
 
   const updateQuantity = (id: string, delta: number) => {
-    setCart(prev => {
-      const updated = prev.map(item => {
-        if (item.id === id) {
-          const newQty = item.quantity + delta;
-          return newQty > 0 ? { ...item, quantity: newQty } : item;
+    // Find item first to get product info
+    const targetItem = cart.find(i => i.id === id);
+    if (!targetItem) return;
+
+    // Check stock limit when increasing quantity
+    if (delta > 0) {
+      const maxAvailable = getMaxAvailableForProduct(targetItem.productId);
+      // Calculate current total in cart for this product (using current cart state)
+      const currentTotalInCart = cart
+        .filter(item => item.productId === targetItem.productId)
+        .reduce((sum, item) => sum + item.quantity, 0);
+      
+      console.log(`[Stock Check - Update] Product: ${targetItem.name}, Max: ${maxAvailable}, In Cart: ${currentTotalInCart}, AvailabilityLoaded: ${availabilityLoaded}`);
+      
+      // If availability is loaded and we have data for this product, enforce the limit
+      if (availabilityLoaded && maxAvailable !== 999 && currentTotalInCart >= maxAvailable) {
+        const msg = `Cannot add more ${targetItem.name}. Maximum available: ${maxAvailable}`;
+        if (Platform.OS === 'web') {
+          window.alert(msg);
+        } else {
+          Alert.alert('Stock Limit', msg);
         }
-        return item;
-      }).filter(item => item.quantity > 0);
+        return; // Don't update
+      }
+    }
+
+    setCart(prev => {
+      const updated = prev.map(cartItem => {
+        if (cartItem.id === id) {
+          const newQty = cartItem.quantity + delta;
+          return newQty > 0 ? { ...cartItem, quantity: newQty } : cartItem;
+        }
+        return cartItem;
+      }).filter(cartItem => cartItem.quantity > 0);
       return updated;
     });
   };
@@ -1696,7 +2080,8 @@ export default function POSScreen({ navigation }: any) {
   const processPayment = async (
     method: 'cash' | 'card' | 'pay_later' | 'app_payment', 
     paymentReference?: string,
-    cashDetails?: { amount_received: number; change_given: number }
+    cashDetails?: { amount_received: number; change_given: number },
+    orderTypeOverride?: OrderType // Used when called before state update completes
   ) => {
     // Prevent double-clicks
     if (isProcessingPayment) {
@@ -1709,6 +2094,9 @@ export default function POSScreen({ navigation }: any) {
     
     try {
       const token = await AsyncStorage.getItem('token');
+      const userData = await AsyncStorage.getItem('user');
+      const branchData = await AsyncStorage.getItem('branch');
+      const businessData = await AsyncStorage.getItem('business');
       
       if (!token || !API_URL) {
         console.error('Not authenticated - no token or API_URL');
@@ -1719,6 +2107,33 @@ export default function POSScreen({ navigation }: any) {
         }
         setIsProcessingPayment(false);
         return;
+      }
+
+      // Get branch_id for order isolation
+      let branchId: number | null = null;
+      if (userData) {
+        const user = JSON.parse(userData);
+        branchId = user.branch_id;
+      }
+      if (!branchId && branchData) {
+        const branch = JSON.parse(branchData);
+        branchId = branch.id;
+      }
+      // If still no branch_id (e.g., owner account), fetch the main branch
+      if (!branchId && businessData) {
+        const business = JSON.parse(businessData);
+        try {
+          const branchesResponse = await fetch(`${API_URL}/businesses/${business.id}/branches`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const branchesResult = await branchesResponse.json();
+          if (branchesResult.branches && branchesResult.branches.length > 0) {
+            const mainBranch = branchesResult.branches.find((b: any) => b.is_main) || branchesResult.branches[0];
+            branchId = mainBranch.id;
+          }
+        } catch (err) {
+          console.error('Error fetching branches for order:', err);
+        }
       }
 
       // Check if this is an extra payment for an order edit
@@ -1817,7 +2232,12 @@ export default function POSScreen({ navigation }: any) {
 
       console.log('Sending order to API...');
       
-      // Create order via API
+      // Use orderTypeOverride if provided (for calls before state update completes), otherwise use state
+      const effectiveOrderType = orderTypeOverride || orderType;
+      
+      // Create order via API - OPTIMIZED: process payment inline to avoid second API call
+      const shouldProcessPaymentInline = method !== 'pay_later' && method !== 'app_payment';
+      
       const response = await fetch(`${API_URL}/pos/orders`, {
         method: 'POST',
         headers: {
@@ -1825,22 +2245,29 @@ export default function POSScreen({ navigation }: any) {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
+          branch_id: branchId, // Branch isolation - orders belong to specific branch
           order_source: 'pos',
-          order_type: orderType.type,
-          table_number: orderType.tableNumber,
-          customer_name: orderType.customerName,
-          delivery_address: orderType.deliveryAddress,
-          customer_phone: orderType.deliveryPhone,
+          order_type: effectiveOrderType.type,
+          table_number: effectiveOrderType.tableNumber,
+          customer_name: effectiveOrderType.customerName,
+          delivery_address: effectiveOrderType.deliveryAddress,
+          customer_phone: effectiveOrderType.deliveryPhone,
           // For delivery partner orders, send the partner ID (backend sets app_payment status)
           // For in-house delivery, deliveryMethod is 'in_house' - don't send as partner ID
-          delivery_partner_id: orderType.type === 'delivery' && orderType.deliveryMethod && orderType.deliveryMethod !== 'in_house' 
-            ? parseInt(orderType.deliveryMethod) 
+          delivery_partner_id: effectiveOrderType.type === 'delivery' && effectiveOrderType.deliveryMethod && effectiveOrderType.deliveryMethod !== 'in_house' 
+            ? parseInt(effectiveOrderType.deliveryMethod) 
             : undefined,
           items: orderItems,
           // For app_payment (delivery partner), don't send payment_method - backend handles it
           payment_method: method === 'app_payment' ? undefined : method,
           payment_reference: paymentReference, // Transaction number for card payments
           pos_session_id: posSession?.id, // Link order to current POS session
+          // Use selected employee ID, or fallback to session's cashier_id (for restored sessions)
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
+          // OPTIMIZATION: Process payment inline (no second API call needed)
+          process_payment_inline: shouldProcessPaymentInline,
+          amount_received: cashDetails?.amount_received,
+          change_given: cashDetails?.change_given,
         }),
       });
 
@@ -1852,36 +2279,14 @@ export default function POSScreen({ navigation }: any) {
         throw new Error(result.error || 'Failed to create order');
       }
 
-      // Order created successfully
+      // Order created successfully - payment already processed inline by backend
       setLastOrderNumber(result.data.order_number || result.data.display_number);
       setShowPaymentModal(false);
       setShowReceiptModal(true);
 
-      // Only mark as paid for immediate payment methods (NOT pay_later or app_payment)
-      // - pay_later (dine-in): customer pays after eating when they ask for the check
-      // - app_payment (delivery partner): partner handles all payments
-      if (result.data.id && method !== 'pay_later' && method !== 'app_payment') {
-        await fetch(`${API_URL}/pos/orders/${result.data.id}/payment`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            payment_method: method,
-            amount: total,
-            reference: paymentReference, // Transaction number for card payments
-            // Cash details for drawer reconciliation
-            amount_received: cashDetails?.amount_received,
-            change_given: cashDetails?.change_given,
-            pos_session_id: posSession?.id, // Link payment to current POS session
-          }),
-        });
-        
-        // Refresh cash drawer balance after cash payment
-        if (method === 'cash') {
-          refreshCashDrawerBalance();
-        }
+      // Refresh cash drawer balance after cash payment (fire and forget)
+      if (method === 'cash') {
+        refreshCashDrawerBalance();
       }
 
     } catch (error: any) {
@@ -1904,7 +2309,9 @@ export default function POSScreen({ navigation }: any) {
     // Reset order type completely - clear table and delivery selections
     setOrderType({ type: 'dine_in', tableId: undefined, tableNumber: undefined, deliveryMethod: undefined });
     setLastOrderNumber(null);
-    Alert.alert('Success', 'Order completed successfully!');
+    // Refresh product availability after order (stock has changed)
+    setAvailabilityLoaded(false); // Mark as not loaded so it refreshes
+    loadProductAvailability();
   };
 
   const styles = StyleSheet.create({
@@ -3013,6 +3420,7 @@ export default function POSScreen({ navigation }: any) {
                     preparing: '#8b5cf6',
                     ready: '#10b981',
                     completed: '#22c55e',
+                    picked_up: '#10b981',
                     cancelled: '#ef4444',
                   };
                   const statusColor = statusColors[item.order_status] || colors.mutedForeground;
@@ -4209,7 +4617,7 @@ export default function POSScreen({ navigation }: any) {
                     }
                   ]}
                   onPress={() => {
-                    const newOrderType = { 
+                    const newOrderType: OrderType = { 
                       ...orderType, 
                       type: 'delivery' as const, 
                       deliveryMethod: String(partner.id),
@@ -4218,12 +4626,7 @@ export default function POSScreen({ navigation }: any) {
                     };
                     setOrderType(newOrderType);
                     setShowDeliveryMethodModal(false);
-                    // For delivery partners, skip payment modal - partner handles payment
-                    // Process order directly with app_payment
-                    if (cart.length > 0) {
-                      // Use setTimeout to ensure state is updated before processing
-                      setTimeout(() => processPayment('app_payment'), 100);
-                    }
+                    // Just set the delivery partner - user will click Charge to submit
                   }}
                 >
                   <View style={[
@@ -4839,11 +5242,26 @@ export default function POSScreen({ navigation }: any) {
               <>
                 {/* Header */}
                 <View style={[styles.modalHeader, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
-                  <View>
-                    <Text style={styles.modalTitle}>Order #{selectedOrderForView.order_number}</Text>
-                    <Text style={{ color: colors.mutedForeground, fontSize: 12, marginTop: 2 }}>
-                      {new Date(selectedOrderForView.created_at).toLocaleString()}
-                    </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <View>
+                      <Text style={styles.modalTitle}>Order #{selectedOrderForView.order_number}</Text>
+                      <Text style={{ color: colors.mutedForeground, fontSize: 12, marginTop: 2 }}>
+                        {new Date(selectedOrderForView.created_at).toLocaleString()}
+                      </Text>
+                    </View>
+                    {/* Timeline Icon */}
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: colors.muted,
+                        padding: 8,
+                        borderRadius: 8,
+                        opacity: loadingTimeline ? 0.5 : 1,
+                      }}
+                      onPress={() => fetchOrderTimeline(selectedOrderForView.id)}
+                      disabled={loadingTimeline}
+                    >
+                      <Clock size={18} color={colors.mutedForeground} />
+                    </TouchableOpacity>
                   </View>
                   <TouchableOpacity
                     style={styles.closeBtn}
@@ -4868,6 +5286,7 @@ export default function POSScreen({ navigation }: any) {
                             pending: '#f59e0b20',
                             in_progress: '#3b82f620',
                             completed: '#22c55e20',
+                            picked_up: '#10b98120',
                             cancelled: '#ef444420',
                             rejected: '#ef444420',
                           };
@@ -4883,6 +5302,7 @@ export default function POSScreen({ navigation }: any) {
                               pending: '#f59e0b',
                               in_progress: '#3b82f6',
                               completed: '#22c55e',
+                              picked_up: '#10b981',
                               cancelled: '#ef4444',
                               rejected: '#ef4444',
                             };
@@ -5231,61 +5651,228 @@ export default function POSScreen({ navigation }: any) {
                   padding: 16, 
                   borderTopWidth: 1, 
                   borderTopColor: colors.border,
-                  flexDirection: 'row',
                   gap: 12,
                 }}>
-                  {/* Print Receipt Button */}
-                  <TouchableOpacity
-                    style={{
-                      flex: 1,
-                      backgroundColor: colors.primary,
+                  {/* Mark as Picked Up Button - Only for delivery orders in completed status */}
+                  {selectedOrderForView.order_type === 'delivery' && 
+                   selectedOrderForView.order_status === 'completed' && (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: '#10b981',
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 8,
+                        opacity: updatingOrderStatus ? 0.7 : 1,
+                      }}
+                      onPress={() => markOrderAsPickedUp(selectedOrderForView.id)}
+                      disabled={updatingOrderStatus}
+                    >
+                      <Truck size={18} color="#fff" />
+                      <Text style={{ color: '#fff', fontWeight: '600' }}>
+                        {updatingOrderStatus ? 'Updating...' : 'Mark as Picked Up'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Show "Picked Up" badge for already picked up orders */}
+                  {selectedOrderForView.order_status === 'picked_up' && (
+                    <View style={{
+                      backgroundColor: '#10b98120',
                       padding: 14,
                       borderRadius: 12,
                       alignItems: 'center',
                       flexDirection: 'row',
                       justifyContent: 'center',
                       gap: 8,
-                    }}
-                    onPress={() => {
-                      if (selectedOrderForView) {
-                        // Build receipt data and trigger print
-                        Alert.alert(
-                          'Print Receipt',
-                          `Receipt for Order #${selectedOrderForView.order_number}\n\nTable: ${selectedOrderForView.table_number || 'N/A'}\nType: ${selectedOrderForView.order_type?.replace('_', ' ')}\nItems: ${selectedOrderForView.order_items?.length || 0}\nTotal: ${formatCurrency(selectedOrderForView.total_amount || 0)}\nPayment: ${selectedOrderForView.payment_status === 'paid' ? 'Paid' : selectedOrderForView.payment_status === 'app_payment' ? 'App Payment' : 'Unpaid'}`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Print', onPress: () => {
-                              // TODO: Integrate with actual printer
-                              Alert.alert('Printing', 'Receipt sent to printer');
-                            }},
-                          ]
-                        );
-                      }
-                    }}
-                  >
-                    <Printer size={18} color={colors.primaryForeground} />
-                    <Text style={{ color: colors.primaryForeground, fontWeight: '600' }}>Print Receipt</Text>
-                  </TouchableOpacity>
-                  
-                  {/* Close Button */}
-                  <TouchableOpacity
-                    style={{
-                      flex: 1,
-                      backgroundColor: colors.muted,
-                      padding: 14,
-                      borderRadius: 12,
-                      alignItems: 'center',
-                    }}
-                    onPress={() => {
-                      cancelEditingOrderItem();
-                      setShowOrderDetailsModal(false);
-                    }}
-                  >
-                    <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
-                  </TouchableOpacity>
+                    }}>
+                      <CheckCircle size={18} color="#10b981" />
+                      <Text style={{ color: '#10b981', fontWeight: '600' }}>Order Picked Up</Text>
+                    </View>
+                  )}
+
+                  {/* Cancel Order Button - only show for pending/in_progress orders */}
+                  {selectedOrderForView && ['pending', 'in_progress'].includes(selectedOrderForView.order_status) && (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: colors.destructive + '15',
+                        borderWidth: 1,
+                        borderColor: colors.destructive,
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 8,
+                        marginBottom: 12,
+                      }}
+                      onPress={() => handleCancelOrder(selectedOrderForView.id)}
+                    >
+                      <X size={18} color={colors.destructive} />
+                      <Text style={{ color: colors.destructive, fontWeight: '600' }}>Cancel Order</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <View style={{ flexDirection: 'row', gap: 12 }}>
+                    {/* Print Receipt Button */}
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        backgroundColor: colors.primary,
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                        flexDirection: 'row',
+                        justifyContent: 'center',
+                        gap: 8,
+                      }}
+                      onPress={() => {
+                        if (selectedOrderForView) {
+                          // Build receipt data and trigger print
+                          Alert.alert(
+                            'Print Receipt',
+                            `Receipt for Order #${selectedOrderForView.order_number}\n\nTable: ${selectedOrderForView.table_number || 'N/A'}\nType: ${selectedOrderForView.order_type?.replace('_', ' ')}\nItems: ${selectedOrderForView.order_items?.length || 0}\nTotal: ${formatCurrency(selectedOrderForView.total_amount || 0)}\nPayment: ${selectedOrderForView.payment_status === 'paid' ? 'Paid' : selectedOrderForView.payment_status === 'app_payment' ? 'App Payment' : 'Unpaid'}`,
+                            [
+                              { text: 'Cancel', style: 'cancel' },
+                              { text: 'Print', onPress: () => {
+                                // TODO: Integrate with actual printer
+                                Alert.alert('Printing', 'Receipt sent to printer');
+                              }},
+                            ]
+                          );
+                        }
+                      }}
+                    >
+                      <Printer size={18} color={colors.primaryForeground} />
+                      <Text style={{ color: colors.primaryForeground, fontWeight: '600' }}>Print Receipt</Text>
+                    </TouchableOpacity>
+                    
+                    {/* Close Button */}
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        backgroundColor: colors.muted,
+                        padding: 14,
+                        borderRadius: 12,
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        cancelEditingOrderItem();
+                        setShowOrderDetailsModal(false);
+                      }}
+                    >
+                      <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               </>
             )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Timeline Modal */}
+      <Modal
+        visible={showTimelineModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTimelineModal(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowTimelineModal(false)}
+        >
+          <TouchableOpacity 
+            activeOpacity={1} 
+            style={[styles.modalContent, { width: isTablet ? 450 : width - 32, maxHeight: '80%' }]}
+          >
+            {/* Header */}
+            <View style={[styles.modalHeader, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Clock size={20} color={colors.foreground} />
+                <Text style={styles.modalTitle}>Order Timeline</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => setShowTimelineModal(false)}
+              >
+                <X size={20} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Timeline Content */}
+            <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
+              {orderTimeline.length === 0 ? (
+                <Text style={{ color: colors.mutedForeground, textAlign: 'center', padding: 20 }}>
+                  No timeline events
+                </Text>
+              ) : (
+                orderTimeline.map((event: any, index: number) => {
+                  const eventColor = getTimelineEventColor(event.event_type);
+                  const isLast = index === orderTimeline.length - 1;
+                  
+                  return (
+                    <View key={event.id || index} style={{ flexDirection: 'row', marginBottom: isLast ? 0 : 16 }}>
+                      {/* Timeline line and dot */}
+                      <View style={{ alignItems: 'center', marginRight: 12 }}>
+                        <View style={{
+                          width: 12,
+                          height: 12,
+                          borderRadius: 6,
+                          backgroundColor: eventColor,
+                        }} />
+                        {!isLast && (
+                          <View style={{
+                            width: 2,
+                            flex: 1,
+                            backgroundColor: colors.border,
+                            marginTop: 4,
+                          }} />
+                        )}
+                      </View>
+                      
+                      {/* Event content */}
+                      <View style={{ flex: 1, paddingBottom: isLast ? 0 : 8 }}>
+                        <Text style={{ 
+                          color: colors.foreground, 
+                          fontWeight: '600',
+                          fontSize: 14,
+                          marginBottom: 2,
+                        }}>
+                          {formatTimelineEvent(event)}
+                        </Text>
+                        <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
+                          {new Date(event.created_at).toLocaleString()}
+                        </Text>
+                        {formatTimelineUser(event) && (
+                          <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>
+                            by {formatTimelineUser(event)}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+
+            {/* Close Button */}
+            <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.border }}>
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.muted,
+                  padding: 14,
+                  borderRadius: 12,
+                  alignItems: 'center',
+                }}
+                onPress={() => setShowTimelineModal(false)}
+              >
+                <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>

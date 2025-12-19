@@ -79,7 +79,7 @@ export function requirePOSAccess(req: Request, res: Response, next: NextFunction
     });
   }
 
-  const allowedRoles: UserRole[] = ['pos', 'cashier', 'owner', 'super_admin'];
+  const allowedRoles: UserRole[] = ['pos', 'owner', 'manager', 'super_admin'];
   
   if (!allowedRoles.includes(req.user.role)) {
     return res.status(403).json({

@@ -77,6 +77,7 @@ interface CancelledItem {
   quantity: number;
   unit?: string;
   decision?: 'waste' | 'return' | null;
+  created_at?: string;
   orders?: {
     order_number: string;
     created_at: string;
@@ -86,6 +87,24 @@ interface CancelledItem {
     name_ar?: string;
   };
 }
+
+// Helper function to calculate time remaining until auto-expire (24 hours)
+const getTimeRemaining = (createdAt: string): { hours: number; minutes: number; isUrgent: boolean; isExpired: boolean } => {
+  const created = new Date(createdAt);
+  const expiresAt = new Date(created.getTime() + 24 * 60 * 60 * 1000); // 24 hours from creation
+  const now = new Date();
+  const diffMs = expiresAt.getTime() - now.getTime();
+  
+  if (diffMs <= 0) {
+    return { hours: 0, minutes: 0, isUrgent: true, isExpired: true };
+  }
+  
+  const hours = Math.floor(diffMs / (60 * 60 * 1000));
+  const minutes = Math.floor((diffMs % (60 * 60 * 1000)) / (60 * 1000));
+  const isUrgent = hours < 6; // Less than 6 hours remaining
+  
+  return { hours, minutes, isUrgent, isExpired: false };
+};
 
 // Skeleton component for kitchen display
 const KitchenSkeleton = ({ colors }: { colors: any }) => {
@@ -950,29 +969,70 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           </View>
         )}
 
-        {order.order_status === 'cancelled' && hasPendingDecisions && (
-          <View style={[styles.orderFooter, { position: 'relative' }]}>
-            <View style={styles.pendingBadge}>
-              <Text style={styles.pendingBadgeText}>{pendingItems.length}</Text>
+        {order.order_status === 'cancelled' && hasPendingDecisions && (() => {
+          // Get the oldest pending item to show time remaining
+          const oldestItem = pendingItems.reduce((oldest, item) => {
+            if (!oldest || (item.created_at && (!oldest.created_at || item.created_at < oldest.created_at))) {
+              return item;
+            }
+            return oldest;
+          }, pendingItems[0]);
+          
+          const timeInfo = oldestItem?.created_at ? getTimeRemaining(oldestItem.created_at) : null;
+          
+          return (
+            <View style={[styles.orderFooter, { position: 'relative', flexDirection: 'column', gap: 8 }]}>
+              {/* Time remaining warning */}
+              {timeInfo && (
+                <View style={{ 
+                  flexDirection: 'row', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  backgroundColor: timeInfo.isUrgent ? '#ef444420' : colors.muted,
+                  paddingVertical: 6,
+                  paddingHorizontal: 12,
+                  borderRadius: 8,
+                  marginBottom: 4,
+                }}>
+                  <Clock size={14} color={timeInfo.isUrgent ? '#ef4444' : colors.mutedForeground} />
+                  <Text style={{ 
+                    fontSize: 12, 
+                    marginLeft: 6,
+                    color: timeInfo.isUrgent ? '#ef4444' : colors.mutedForeground,
+                    fontWeight: timeInfo.isUrgent ? '600' : '400',
+                  }}>
+                    {timeInfo.isExpired 
+                      ? '⚠️ Expired - will auto-waste soon' 
+                      : `Auto-waste in ${timeInfo.hours}h ${timeInfo.minutes}m`}
+                  </Text>
+                </View>
+              )}
+              
+              {/* Process button */}
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.pendingBadge}>
+                  <Text style={styles.pendingBadgeText}>{pendingItems.length}</Text>
+                </View>
+                <TouchableOpacity
+                  style={[styles.wasteButton, { flex: 1 }]}
+                  onPress={() => {
+                    setSelectedOrderForWaste(order);
+                    // Initialize decisions for this order's items
+                    const initialDecisions: Record<number, 'waste' | 'return'> = {};
+                    pendingItems.forEach(item => {
+                      initialDecisions[item.id] = 'return'; // Default to return
+                    });
+                    setWasteDecisions(initialDecisions);
+                    setShowWasteModal(true);
+                  }}
+                >
+                  <AlertCircle size={18} color={colors.foreground} />
+                  <Text style={styles.wasteButtonText}>Process Waste/Return</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <TouchableOpacity
-              style={styles.wasteButton}
-              onPress={() => {
-                setSelectedOrderForWaste(order);
-                // Initialize decisions for this order's items
-                const initialDecisions: Record<number, 'waste' | 'return'> = {};
-                pendingItems.forEach(item => {
-                  initialDecisions[item.id] = 'return'; // Default to return
-                });
-                setWasteDecisions(initialDecisions);
-                setShowWasteModal(true);
-              }}
-            >
-              <AlertCircle size={18} color={colors.foreground} />
-              <Text style={styles.wasteButtonText}>Process Waste/Return</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+          );
+        })()}
       </View>
     );
   };
@@ -1135,43 +1195,62 @@ export default function KitchenDisplayScreen({ navigation }: any) {
                 Decide for each ingredient: Was it used (waste) or can it go back to inventory (return)?
               </Text>
 
-              {selectedOrderForWaste && getPendingItemsForOrder(selectedOrderForWaste.id).map((item) => (
-                <View key={item.id} style={styles.wasteItemRow}>
-                  <View style={styles.wasteItemInfo}>
-                    <Text style={styles.wasteItemName}>
-                      {item.items?.name || item.product_name || `Item ${item.item_id}`}
-                    </Text>
-                    <Text style={styles.wasteItemQty}>
-                      {item.quantity} {item.unit || 'units'} • {item.product_name && `From: ${item.product_name}`}
-                    </Text>
-                  </View>
-                  <View style={styles.wasteToggleContainer}>
-                    <View style={{ alignItems: 'center' }}>
-                      <RotateCcw size={16} color={wasteDecisions[item.id] === 'return' ? '#22c55e' : colors.mutedForeground} />
-                      <Text style={[styles.wasteToggleLabel, { color: wasteDecisions[item.id] === 'return' ? '#22c55e' : colors.mutedForeground }]}>
-                        Return
+              {selectedOrderForWaste && getPendingItemsForOrder(selectedOrderForWaste.id).map((item) => {
+                const timeInfo = item.created_at ? getTimeRemaining(item.created_at) : null;
+                
+                return (
+                  <View key={item.id} style={styles.wasteItemRow}>
+                    <View style={styles.wasteItemInfo}>
+                      <Text style={styles.wasteItemName}>
+                        {item.items?.name || item.product_name || `Item ${item.item_id}`}
                       </Text>
-                    </View>
-                    <Switch
-                      value={wasteDecisions[item.id] === 'waste'}
-                      onValueChange={(val) => {
-                        setWasteDecisions(prev => ({
-                          ...prev,
-                          [item.id]: val ? 'waste' : 'return',
-                        }));
-                      }}
-                      trackColor={{ false: '#22c55e', true: '#ef4444' }}
-                      thumbColor="#ffffff"
-                    />
-                    <View style={{ alignItems: 'center' }}>
-                      <Trash2 size={16} color={wasteDecisions[item.id] === 'waste' ? '#ef4444' : colors.mutedForeground} />
-                      <Text style={[styles.wasteToggleLabel, { color: wasteDecisions[item.id] === 'waste' ? '#ef4444' : colors.mutedForeground }]}>
-                        Waste
+                      <Text style={styles.wasteItemQty}>
+                        {item.quantity} {item.unit || 'units'} • {item.product_name && `From: ${item.product_name}`}
                       </Text>
+                      {timeInfo && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                          <Clock size={12} color={timeInfo.isUrgent ? '#ef4444' : colors.mutedForeground} />
+                          <Text style={{ 
+                            fontSize: 11, 
+                            marginLeft: 4,
+                            color: timeInfo.isUrgent ? '#ef4444' : colors.mutedForeground,
+                            fontWeight: timeInfo.isUrgent ? '600' : '400',
+                          }}>
+                            {timeInfo.isExpired 
+                              ? 'Expired - will auto-waste' 
+                              : `Auto-waste in ${timeInfo.hours}h ${timeInfo.minutes}m`}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.wasteToggleContainer}>
+                      <View style={{ alignItems: 'center' }}>
+                        <RotateCcw size={16} color={wasteDecisions[item.id] === 'return' ? '#22c55e' : colors.mutedForeground} />
+                        <Text style={[styles.wasteToggleLabel, { color: wasteDecisions[item.id] === 'return' ? '#22c55e' : colors.mutedForeground }]}>
+                          Return
+                        </Text>
+                      </View>
+                      <Switch
+                        value={wasteDecisions[item.id] === 'waste'}
+                        onValueChange={(val) => {
+                          setWasteDecisions(prev => ({
+                            ...prev,
+                            [item.id]: val ? 'waste' : 'return',
+                          }));
+                        }}
+                        trackColor={{ false: '#22c55e', true: '#ef4444' }}
+                        thumbColor="#ffffff"
+                      />
+                      <View style={{ alignItems: 'center' }}>
+                        <Trash2 size={16} color={wasteDecisions[item.id] === 'waste' ? '#ef4444' : colors.mutedForeground} />
+                        <Text style={[styles.wasteToggleLabel, { color: wasteDecisions[item.id] === 'waste' ? '#ef4444' : colors.mutedForeground }]}>
+                          Waste
+                        </Text>
+                      </View>
                     </View>
                   </View>
-                </View>
-              ))}
+                );
+              })}
             </ScrollView>
 
             <View style={styles.modalFooter}>

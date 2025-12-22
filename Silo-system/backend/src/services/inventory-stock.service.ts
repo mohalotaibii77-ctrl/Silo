@@ -505,12 +505,9 @@ export class InventoryStockService {
       query = query.eq('item_id', filters.itemId);
     }
 
-    // Apply lowStock filter at database level using raw filter
-    // This ensures count reflects the filtered dataset
-    if (lowStock) {
-      // Filter where quantity <= min_quantity using raw SQL filter
-      query = query.filter('quantity', 'lte', 'min_quantity');
-    }
+    // Note: lowStock filter is applied in-memory after fetch because
+    // Supabase PostgREST doesn't support column-to-column comparison
+    // The filter will be applied after data is fetched
 
     // Apply pagination AFTER filters to get correct count
     if (page && limit) {
@@ -552,18 +549,17 @@ export class InventoryStockService {
       stocks = Array.from(itemStockMap.values());
     }
 
+    // Apply lowStock filter in-memory (Supabase can't do column-to-column comparison)
+    if (lowStock) {
+      stocks = stocks.filter((s: InventoryStock) => s.quantity <= s.min_quantity);
+    }
+
     // Return paginated response if pagination was requested
     if (page && limit && count !== null) {
       return {
         data: stocks,
-        total: stocks.length, // Use deduplicated count
+        total: stocks.length, // Use filtered/deduplicated count
       };
-    }
-
-    // For non-paginated requests with lowStock filter, apply in-memory filter
-    // (database filter may not work without pagination mode)
-    if (lowStock && !(page && limit)) {
-      return stocks.filter((s: InventoryStock) => s.quantity <= s.min_quantity);
     }
 
     return stocks;

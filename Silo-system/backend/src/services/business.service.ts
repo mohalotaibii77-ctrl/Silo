@@ -6,6 +6,7 @@
 import bcrypt from 'bcryptjs';
 import { supabaseAdmin } from '../config/database';
 import { storageService } from './storage.service';
+import { inventoryService } from './inventory.service';
 
 // Types matching the database schema
 export interface DBBusiness {
@@ -367,6 +368,16 @@ export class BusinessService {
           }
         }
       }
+    }
+
+    // Initialize business items by copying all system items
+    // Each business owns their own items from day 1
+    try {
+      const result = await inventoryService.initializeBusinessItems(business.id);
+      console.log(`[createBusiness] Initialized ${result.copied} items for business ${business.id}`);
+    } catch (itemError) {
+      // Log error but don't fail business creation
+      console.error('[createBusiness] Failed to initialize items:', itemError);
     }
 
     return { business, userCredentials, branches: createdBranches };

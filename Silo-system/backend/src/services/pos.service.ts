@@ -2336,6 +2336,158 @@ export class POSService {
   async getOrderTimeline(orderId: number): Promise<any[]> {
     return orderTimelineService.getTimeline(orderId);
   }
+
+  /**
+   * Auto-expire cancelled items older than 24 hours
+   * Marks all pending decisions as 'waste' automatically
+   * Should be called by a scheduled job (cron)
+   */
+  async autoExpireCancelledItems(): Promise<{ expired: number; errors: string[] }> {
+    const errors: string[] = [];
+    let expired = 0;
+
+    // Calculate 24 hours ago
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+    // Find all cancelled items older than 24 hours with no decision
+    const { data: expiredItems, error: fetchError } = await supabaseAdmin
+      .from('cancelled_order_items')
+      .select(`
+        *,
+        orders (
+          id,
+          business_id,
+          branch_id
+        )
+      `)
+      .is('decision', null)
+      .lt('created_at', twentyFourHoursAgo.toISOString());
+
+    if (fetchError) {
+      console.error('Failed to fetch expired cancelled items:', fetchError);
+      return { expired: 0, errors: ['Failed to fetch expired items'] };
+    }
+
+    if (!expiredItems || expiredItems.length === 0) {
+      console.log('[Auto-Expire] No expired cancelled items found');
+      return { expired: 0, errors: [] };
+    }
+
+    console.log(`[Auto-Expire] Found ${expiredItems.length} items to auto-expire as waste`);
+
+    // Process each expired item as waste
+    for (const item of expiredItems) {
+      try {
+        const orderInfo = item.orders as any;
+
+        // Process as waste - deduct from actual quantity
+        await inventoryStockService.deductWasteOnly(
+          orderInfo.business_id,
+          orderInfo.branch_id,
+          [{
+            item_id: item.item_id,
+            quantity_in_storage: item.quantity,
+            item_name: item.product_name,
+          }],
+          item.order_id,
+          undefined, // No user - auto-expired
+          'Auto-expired as waste after 24 hours'
+        );
+
+        // Log timeline
+        await orderTimelineService.logIngredientWasted(item.order_id, {
+          item_id: item.item_id,
+          item_name: item.product_name || `Item ${item.item_id}`,
+          quantity: item.quantity,
+          unit: item.unit || 'units',
+          reason: 'Auto-expired as waste after 24 hours (no kitchen decision)',
+        }, undefined);
+
+        // Update the cancelled item record
+        await supabaseAdmin
+          .from('cancelled_order_items')
+          .update({
+            decision: 'waste',
+            decided_at: new Date().toISOString(),
+            // decided_by is NULL - indicates auto-expired
+          })
+          .eq('id', item.id);
+
+        expired++;
+
+      } catch (err: any) {
+        console.error(`[Auto-Expire] Failed to process item ${item.id}:`, err);
+        errors.push(`Failed to auto-expire item ${item.id}: ${err.message}`);
+      }
+    }
+
+    console.log(`[Auto-Expire] Completed: ${expired} items expired, ${errors.length} errors`);
+    return { expired, errors };
+  }
+
+  /**
+   * Get cancelled items statistics for dashboard/monitoring
+   */
+  async getCancelledItemsStats(businessId: number, branchId?: number): Promise<{
+    pending_count: number;
+    expired_soon_count: number; // Items that will expire in next 6 hours
+    oldest_pending_hours: number | null;
+  }> {
+    // Get all pending items
+    let query = supabaseAdmin
+      .from('cancelled_order_items')
+      .select(`
+        id,
+        created_at,
+        orders!inner (business_id, branch_id)
+      `)
+      .is('decision', null)
+      .eq('orders.business_id', businessId);
+
+    if (branchId) {
+      query = query.eq('orders.branch_id', branchId);
+    }
+
+    const { data: pendingItems } = await query;
+
+    if (!pendingItems || pendingItems.length === 0) {
+      return { pending_count: 0, expired_soon_count: 0, oldest_pending_hours: null };
+    }
+
+    const now = new Date();
+    const sixHoursFromNow = new Date(now.getTime() + 6 * 60 * 60 * 1000);
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    let expiredSoonCount = 0;
+    let oldestCreatedAt: Date | null = null;
+
+    for (const item of pendingItems) {
+      const createdAt = new Date(item.created_at);
+      
+      // Check if this item will expire within 6 hours (created 18+ hours ago)
+      const expiresAt = new Date(createdAt.getTime() + 24 * 60 * 60 * 1000);
+      if (expiresAt <= sixHoursFromNow) {
+        expiredSoonCount++;
+      }
+
+      // Track oldest item
+      if (!oldestCreatedAt || createdAt < oldestCreatedAt) {
+        oldestCreatedAt = createdAt;
+      }
+    }
+
+    // Calculate hours since oldest item was created
+    const oldestPendingHours = oldestCreatedAt
+      ? Math.floor((now.getTime() - oldestCreatedAt.getTime()) / (60 * 60 * 1000))
+      : null;
+
+    return {
+      pending_count: pendingItems.length,
+      expired_soon_count: expiredSoonCount,
+      oldest_pending_hours: oldestPendingHours,
+    };
+  }
 }
 
 export const posService = new POSService();

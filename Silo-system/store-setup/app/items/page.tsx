@@ -11,11 +11,10 @@ import { EditPriceModal } from '@/components/items/edit-price-modal';
 import { ViewItemModal } from '@/components/items/view-item-modal';
 import { EditItemModal } from '@/components/items/edit-item-modal';
 import { DeleteItemModal } from '@/components/items/delete-item-modal';
-import { ProductionTemplateModal } from '@/components/items/production-template-modal';
 import { ProduceModal } from '@/components/items/produce-modal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Item, ItemCategory, ItemType, CompositeItem } from '@/types/items';
-import { getItems, getCompositeItems, getCompositeItem, getProductionTemplates, deleteProductionTemplate, getProductions, getProductionStats, Production, ProductionStats, ProductionTemplate } from '@/lib/items-api';
+import { getItems, getCompositeItems, getCompositeItem, getProductions, getProductionStats, Production, ProductionStats } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
 import { useConfig } from '@/lib/config-context';
 import api from '@/lib/api';
@@ -109,11 +108,8 @@ export default function ItemsPage() {
   const [showBranchDropdown, setShowBranchDropdown] = useState(false);
   
   // Production state
-  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [showProduceModal, setShowProduceModal] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<ProductionTemplate | null>(null);
-  const [producingTemplate, setProducingTemplate] = useState<ProductionTemplate | null>(null);
-  const [templates, setTemplates] = useState<ProductionTemplate[]>([]);
+  const [producingItem, setProducingItem] = useState<CompositeItem | null>(null);
   const [productions, setProductions] = useState<Production[]>([]);
   const [productionStats, setProductionStats] = useState<ProductionStats | null>(null);
   const [productionsLoading, setProductionsLoading] = useState(false);
@@ -286,16 +282,14 @@ export default function ItemsPage() {
     }
   }, [loading, fetchItems, fetchCompositeItemsList]);
 
-  // Fetch templates and productions for the production tab
+  // Fetch productions for the production tab
   const fetchProductionData = useCallback(async () => {
     setProductionsLoading(true);
     try {
-      const [templatesData, productionsData, statsData] = await Promise.all([
-        getProductionTemplates(),
+      const [productionsData, statsData] = await Promise.all([
         getProductions({ limit: 10 }),
         getProductionStats(),
       ]);
-      setTemplates(templatesData);
       setProductions(productionsData);
       setProductionStats(statsData);
     } catch (err) {
@@ -305,23 +299,13 @@ export default function ItemsPage() {
     }
   }, []);
 
-  const handleDeleteTemplate = async (templateId: number) => {
-    const confirmMsg = isRTL ? 'هل أنت متأكد من حذف هذا القالب؟' : 'Are you sure you want to delete this template?';
-    if (!confirm(confirmMsg)) return;
-    try {
-      await deleteProductionTemplate(templateId);
-      fetchProductionData();
-    } catch (err) {
-      console.error('Failed to delete template:', err);
-    }
-  };
-
   // Fetch production data when tab changes to composite-production
   useEffect(() => {
     if (!loading && activeTab === 'composite-production') {
       fetchProductionData();
+      fetchCompositeItemsList();
     }
-  }, [loading, activeTab, fetchProductionData]);
+  }, [loading, activeTab, fetchProductionData, fetchCompositeItemsList]);
 
   const handleLogout = () => {
     localStorage.removeItem('setup_token');
@@ -728,25 +712,13 @@ export default function ItemsPage() {
               <div className="space-y-6">
                 {/* Header with Stats */}
                 <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6">
-                  <div className="flex items-center justify-between mb-6">
-                    <div>
-                      <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
-                        {t('Production Templates', 'قوالب الإنتاج')}
-                      </h2>
-                      <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-                        {t('Create templates for quick production of composite items', 'أنشئ قوالب للإنتاج السريع للمواد المركبة')}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setShowTemplateModal(true);
-                      }}
-                      className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2.5 rounded-xl font-medium transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      {t('New Template', 'قالب جديد')}
-                    </button>
+                  <div className="mb-6">
+                    <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                      {t('Composite Item Production', 'إنتاج المواد المركبة')}
+                    </h2>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+                      {t('Produce composite items from their recipes', 'إنتاج المواد المركبة من وصفاتها')}
+                    </p>
                   </div>
 
                   {/* Quick Stats */}
@@ -784,107 +756,94 @@ export default function ItemsPage() {
                         </div>
                         <div>
                           <p className="text-2xl font-bold text-zinc-900 dark:text-white">
-                            {templates.length}
+                            {compositeItemsList.length}
                           </p>
-                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Templates', 'القوالب')}</p>
+                          <p className="text-xs text-zinc-500 dark:text-zinc-400">{t('Composite Items', 'المواد المركبة')}</p>
                         </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Templates List */}
-                {productionsLoading ? (
+                {/* Composite Items List */}
+                {compositeItemsLoading || productionsLoading ? (
                   <div className="flex items-center justify-center py-12">
                     <Command className="w-6 h-6 animate-spin text-zinc-400" />
                   </div>
-                ) : templates.length === 0 ? (
+                ) : compositeItemsList.length === 0 ? (
                   <div className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 border-dashed p-12 text-center">
                     <div className="w-16 h-16 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center mx-auto mb-4">
-                      <ClipboardList className="w-8 h-8 text-zinc-400 dark:text-zinc-500" />
+                      <Layers className="w-8 h-8 text-zinc-400 dark:text-zinc-500" />
                     </div>
                     <h3 className="font-semibold text-zinc-900 dark:text-white mb-2">
-                      {t('No production templates yet', 'لا توجد قوالب إنتاج بعد')}
+                      {t('No composite items yet', 'لا توجد مواد مركبة بعد')}
                     </h3>
-                    <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-6 max-w-md mx-auto">
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400 max-w-md mx-auto">
                       {t(
-                        'Create a template to quickly produce composite items with one click',
-                        'أنشئ قالباً لإنتاج المواد المركبة بسرعة بضغطة واحدة'
+                        'Create composite items in the "Composite Items" tab first, then you can produce them here',
+                        'أنشئ مواد مركبة في تبويب "المواد المركبة" أولاً، ثم يمكنك إنتاجها هنا'
                       )}
                     </p>
-                    <button
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setShowTemplateModal(true);
-                      }}
-                      className="inline-flex items-center gap-2 bg-zinc-900 dark:bg-white hover:bg-zinc-800 dark:hover:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 rounded-xl font-medium transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      {t('Create First Template', 'إنشاء أول قالب')}
-                    </button>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {templates.map((template) => (
-                      <motion.div
-                        key={template.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors"
-                      >
-                        <div className="p-5">
-                          <div className="flex items-start gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0">
-                              <Layers className="w-6 h-6 text-zinc-500 dark:text-zinc-400" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold text-zinc-900 dark:text-white truncate">
-                                {isRTL && template.name_ar ? template.name_ar : template.name}
-                              </h3>
-                              <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-                                {isRTL && template.composite_item?.name_ar 
-                                  ? template.composite_item.name_ar 
-                                  : template.composite_item?.name}
-                              </p>
-                              <p className="text-xs text-zinc-400 dark:text-zinc-500 mt-2">
-                                {t('Default:', 'افتراضي:')} {template.default_batch_count} {t('batch(es)', 'دفعة')}
-                              </p>
+                    {compositeItemsList.map((item) => {
+                      const details = compositeDetails.get(item.id);
+                      return (
+                        <motion.div
+                          key={item.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 overflow-hidden hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors flex flex-col"
+                        >
+                          <div className="p-5 flex-1">
+                            <div className="flex items-start gap-4">
+                              <div className="w-12 h-12 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0">
+                                <Layers className="w-6 h-6 text-zinc-500 dark:text-zinc-400" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h3 className="font-semibold text-zinc-900 dark:text-white truncate">
+                                  {isRTL && item.name_ar ? item.name_ar : item.name}
+                                </h3>
+                                {/* Show secondary name - always reserve space for consistent height */}
+                                <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-0.5 truncate min-h-[20px]">
+                                  {((isRTL && item.name) || (!isRTL && item.name_ar)) 
+                                    ? (isRTL ? item.name : item.name_ar)
+                                    : '\u00A0' /* non-breaking space to maintain height */
+                                  }
+                                </p>
+                                <div className="flex items-center gap-2 mt-2">
+                                  <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                                    {t('Batch:', 'الدفعة:')} {item.batch_quantity || 1} {item.batch_unit || item.unit}
+                                  </span>
+                                  {details?.components && (
+                                    <span className="text-xs text-zinc-400 dark:text-zinc-500">
+                                      • {details.components.length} {t('ingredients', 'مكون')}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        
-                        {/* Action Buttons */}
-                        <div className="flex border-t border-zinc-200 dark:border-zinc-800">
-                          <button
-                            onClick={() => handleDeleteTemplate(template.id)}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-red-600 dark:hover:text-red-400 transition-colors border-r border-zinc-200 dark:border-zinc-800"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            {t('Delete', 'حذف')}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setEditingTemplate(template);
-                              setShowTemplateModal(true);
-                            }}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors border-r border-zinc-200 dark:border-zinc-800"
-                          >
-                            <Edit className="w-4 h-4" />
-                            {t('Edit', 'تعديل')}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setProducingTemplate(template);
-                              setShowProduceModal(true);
-                            }}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-zinc-900 dark:text-white bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
-                          >
-                            <Play className="w-4 h-4" />
-                            {t('Produce', 'إنتاج')}
-                          </button>
-                        </div>
-                      </motion.div>
-                    ))}
+                          
+                          {/* Action Button - always at bottom */}
+                          <div className="flex border-t border-zinc-200 dark:border-zinc-800 mt-auto">
+                            <button
+                              onClick={() => {
+                                // Use the details if available, otherwise use basic item info
+                                const compositeItem = details || { ...item, components: [] } as CompositeItem;
+                                setProducingItem(compositeItem);
+                                setShowProduceModal(true);
+                              }}
+                              className="flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium text-zinc-900 dark:text-white bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                            >
+                              <Play className="w-4 h-4" />
+                              {t('Produce', 'إنتاج')}
+                            </button>
+                          </div>
+                        </motion.div>
+                      );
+                    })}
                   </div>
                 )}
 
@@ -1166,26 +1125,18 @@ export default function ItemsPage() {
         onSuccess={fetchItems}
       />
 
-      {/* Production Template Modal */}
-      <ProductionTemplateModal
-        isOpen={showTemplateModal}
-        onClose={() => {
-          setShowTemplateModal(false);
-          setEditingTemplate(null);
-        }}
-        onSuccess={fetchProductionData}
-        editTemplate={editingTemplate}
-      />
-
       {/* Produce Modal */}
       <ProduceModal
         isOpen={showProduceModal}
         onClose={() => {
           setShowProduceModal(false);
-          setProducingTemplate(null);
+          setProducingItem(null);
         }}
-        onSuccess={fetchProductionData}
-        template={producingTemplate}
+        onSuccess={() => {
+          fetchProductionData();
+          fetchCompositeItemsList();
+        }}
+        compositeItem={producingItem}
         currency={business?.currency}
       />
 

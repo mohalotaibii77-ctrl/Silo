@@ -271,6 +271,11 @@ export class InventoryProductionService {
    * IMPORTANT: Recipe components store quantities in base units (grams, mL, piece)
    * but inventory can be stored in storage units (Kg, L, etc.)
    * This function converts everything to base units for comparison.
+   * 
+   * BRANCH HANDLING:
+   * - First checks for stock at the specified branch
+   * - If no stock at branch, falls back to business-level stock (branch_id = null)
+   * - This ensures production can use business-wide inventory when branch-specific isn't set
    */
   async checkInventoryAvailability(
     businessId: number,
@@ -293,14 +298,39 @@ export class InventoryProductionService {
 
     for (const component of compositeItem.components) {
       // Get current stock for this component
-      const stockResult = await inventoryStockService.getStockLevels(businessId, {
+      // First try branch-specific stock, then fall back to business-level stock
+      
+      let stockResult = await inventoryStockService.getStockLevels(businessId, {
         itemId: component.component_item_id,
         branchId,
       });
 
       // Handle both array and paginated result formats
-      const stocks = Array.isArray(stockResult) ? stockResult : stockResult.data;
-      const stock = stocks[0];
+      let stocks = Array.isArray(stockResult) ? stockResult : stockResult.data;
+      let stock = stocks[0];
+      
+      // If branchId was provided but no stock found (or quantity is 0),
+      // also check for business-level stock (where branch_id is null)
+      if (branchId && (!stock || stock.quantity === 0)) {
+        const businessLevelStockResult = await inventoryStockService.getStockLevels(businessId, {
+          itemId: component.component_item_id,
+          // branchId: undefined means we want business-level stock, but getStockLevels
+          // returns all stocks when branchId is undefined, so we query without branchId
+          // and filter for records where branch_id is null
+        });
+        
+        const businessLevelStocks = Array.isArray(businessLevelStockResult) 
+          ? businessLevelStockResult 
+          : businessLevelStockResult.data;
+        
+        // Find stock record with no branch (business-level stock)
+        const businessLevelStock = businessLevelStocks.find((s: any) => s.branch_id === null);
+        
+        // Use business-level stock if it exists and has quantity
+        if (businessLevelStock && businessLevelStock.quantity > 0) {
+          stock = businessLevelStock;
+        }
+      }
       
       // Get the component item's storage unit (how inventory is tracked)
       // This could be Kg, L, or base units like grams, mL
@@ -470,14 +500,44 @@ export class InventoryProductionService {
     await supabaseAdmin.from('production_consumed_items').insert(consumedItemsToInsert);
 
     // Deduct raw items from inventory (use storage units since inventory is in storage units)
+    // BRANCH HANDLING: Check if stock exists at the branch level, otherwise use business-level stock
     for (const consumed of consumedItems) {
+      // Determine which branch to deduct from:
+      // 1. First check if there's stock at the specified branch
+      // 2. If not (or quantity is 0), fall back to business-level stock (branch_id = null)
+      let deductFromBranchId: number | undefined = branch_id;
+      
+      if (branch_id) {
+        // Check branch-specific stock
+        const branchStockResult = await inventoryStockService.getStockLevels(business_id, {
+          itemId: consumed.item_id,
+          branchId: branch_id,
+        });
+        const branchStocks = Array.isArray(branchStockResult) ? branchStockResult : branchStockResult.data;
+        const branchStock = branchStocks[0];
+        
+        // If no branch stock or quantity is insufficient, check business-level stock
+        if (!branchStock || branchStock.quantity < consumed.quantity_storage) {
+          const businessStockResult = await inventoryStockService.getStockLevels(business_id, {
+            itemId: consumed.item_id,
+          });
+          const businessStocks = Array.isArray(businessStockResult) ? businessStockResult : businessStockResult.data;
+          const businessLevelStock = businessStocks.find((s: any) => s.branch_id === null);
+          
+          // Use business-level stock if it has sufficient quantity
+          if (businessLevelStock && businessLevelStock.quantity >= consumed.quantity_storage) {
+            deductFromBranchId = undefined; // Deduct from business-level stock
+          }
+        }
+      }
+      
       await inventoryStockService.updateStock(
         business_id,
         consumed.item_id,
         -consumed.quantity_storage,  // Deduct in storage units (e.g., 0.1 Kg, not 100 grams)
         'production_consume',
         {
-          branchId: branch_id,
+          branchId: deductFromBranchId,
           referenceType: 'production',
           referenceId: production.id,
           unitCost: consumed.unit_cost,

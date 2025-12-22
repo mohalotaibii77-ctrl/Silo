@@ -61,3 +61,55 @@ The backend is a **Modular Monolith** containing all microservices:
 - POS, Inventory, HR, Accounting, Operations, QHSE, Maintenance, Training, Customer Care, AI Core, or any features we will add later.
 - Controls all business logic and Data proccesing to be the single source of truth that serves all frontends for unity.
 - Serves as the single source of truth for all three frontends (SuperAdmin, Business App, Main)
+
+
+## API Testing Requirement
+
+### Core Principle
+**Every API endpoint MUST have a corresponding test.** When implementing or modifying any backend API endpoint, the test script must be updated in the same commit/session.
+
+### Test Structure
+Tests are organized by module in `backend/tests/`:
+- `inventory.test.ts` - Inventory items, stock, vendors, PO, transfers, production
+- `products.test.ts` - Products, categories, bundles, discounts, recipes
+- `pos.test.ts` - Orders, payments, kitchen display, tables, sessions
+- `users.test.ts` - Business users, owners, permissions
+- `business.test.ts` - Business settings, branches, analytics
+- `delivery.test.ts` - Delivery partners, drivers, customers
+- `config.test.ts` - System configuration, images
+
+### When Adding/Modifying API Endpoints
+1. **Implement** the endpoint in the appropriate routes file
+2. **Add test** to the corresponding test file immediately
+3. **Run test** to verify: `npm run test:<module>`
+
+### Test Pattern Template
+// For each endpoint, test:
+// 1. Success case (happy path)
+// 2. Validation errors (400)
+// 3. Not found cases (404) if applicable
+// 4. Authorization (401/403) if applicable
+
+// Example for a new endpoint:
+const result = await apiRequest(ctx, 'METHOD', '/api/path', body);
+track(assertSuccess(result, 'METHOD /api/path - Description'));### Package.json Scripts
+{
+  "test:inventory": "npx ts-node tests/inventory.test.ts",
+  "test:products": "npx ts-node tests/products.test.ts",
+  "test:pos": "npx ts-node tests/pos.test.ts",
+  "test:users": "npx ts-node tests/users.test.ts",
+  "test:business": "npx ts-node tests/business.test.ts",
+  "test:delivery": "npx ts-node tests/delivery.test.ts",
+  "test:config": "npx ts-node tests/config.test.ts",
+  "test:all": "npm run test:inventory && npm run test:products && npm run test:pos && npm run test:users && npm run test:business && npm run test:delivery && npm run test:config"
+}### Checklist Before Completing Any API Work
+- [ ] Endpoint implemented in `src/api/*.routes.ts`
+- [ ] Test added to `tests/*.test.ts`
+- [ ] Test passes locally
+- [ ] Related endpoints also tested if affected
+
+### Never
+- ❌ Create an endpoint without a test
+- ❌ Modify an endpoint without updating its test
+- ❌ Delete an endpoint without removing its test
+- ❌ Mark API work as complete until tests pass

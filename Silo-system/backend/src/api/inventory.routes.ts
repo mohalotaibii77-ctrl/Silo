@@ -580,15 +580,33 @@ router.post('/composite-items', authenticateBusiness, asyncHandler(async (req: A
 
     res.status(201).json({ success: true, data: item });
   } catch (err: any) {
-    // Handle unit validation errors from service
-    if (err.message && err.message.includes('Storage unit')) {
-      const compatibleOptions = getCompatibleStorageUnits(unit);
-      return res.status(400).json({
-        success: false,
-        error: 'incompatible_units',
-        message: err.message,
-        compatible_storage_units: compatibleOptions,
-      });
+    // Handle specific error types
+    if (err.message) {
+      // Unit validation errors
+      if (err.message.includes('Storage unit')) {
+        const compatibleOptions = getCompatibleStorageUnits(unit);
+        return res.status(400).json({
+          success: false,
+          error: 'incompatible_units',
+          message: err.message,
+          compatible_storage_units: compatibleOptions,
+        });
+      }
+      // Duplicate name errors
+      if (err.message.includes('already exists')) {
+        return res.status(400).json({
+          success: false,
+          error: 'duplicate_name',
+          message: err.message,
+        });
+      }
+      // Failed to create errors
+      if (err.message.includes('Failed to create')) {
+        return res.status(400).json({
+          success: false,
+          error: err.message,
+        });
+      }
     }
     throw err;
   }
@@ -742,6 +760,40 @@ router.put('/products/:productId/accessories', authenticateBusiness, asyncHandle
     success: true,
     data: updatedAccessories,
     message: 'Product accessories updated successfully',
+  });
+}));
+
+// ============ BUSINESS ITEM INITIALIZATION ============
+
+/**
+ * POST /api/inventory/initialize-items
+ * Initialize business items by copying all system items
+ * This is called when setting up a new business
+ */
+router.post('/initialize-items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const result = await inventoryService.initializeBusinessItems(req.businessUser!.business_id);
+
+  res.json({
+    success: true,
+    message: `Initialized ${result.copied} items for business`,
+    data: result,
+  });
+}));
+
+/**
+ * POST /api/inventory/migrate-to-own-items
+ * Migrate business to use their own items instead of system items
+ * - Copies any missing system items
+ * - Updates all references to use business items
+ * - Transfers inventory stock
+ */
+router.post('/migrate-to-own-items', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const result = await inventoryService.migrateBusinessToOwnItems(req.businessUser!.business_id);
+
+  res.json({
+    success: true,
+    message: `Migration completed: ${result.itemsCopied} items copied, ${result.referencesUpdated} references updated, ${result.stockTransferred} stock records transferred`,
+    data: result,
   });
 }));
 

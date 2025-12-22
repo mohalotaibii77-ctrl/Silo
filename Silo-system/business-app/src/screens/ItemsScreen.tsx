@@ -377,26 +377,27 @@ export default function ItemsScreen({ navigation }: any) {
     (template.composite_item?.name && template.composite_item.name.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  // Handle produce button press
-  const handleProduce = async (template: ProductionTemplate) => {
-    setProducingTemplateId(template.id);
+  // Handle produce button press - works directly with composite items
+  const handleProduce = async (compositeItem: Item) => {
+    setProducingTemplateId(compositeItem.id);
+    const defaultBatchCount = 1; // Default to 1 batch
     
     try {
       // First check availability
       const availabilityResponse = await api.get('/inventory/production/check-availability', {
         params: {
-          composite_item_id: template.composite_item_id,
-          batch_count: template.default_batch_count,
+          composite_item_id: compositeItem.id,
+          batch_count: defaultBatchCount,
         }
       });
       
       const availability = availabilityResponse.data;
       
-      if (!availability.can_produce) {
+      if (!availability.canProduce) {
         // Not enough inventory - show detailed message
-        const missingItems = availability.missing_items || [];
-        const missingList = missingItems.map((item: any) => 
-          `• ${item.name}: ${t('need')} ${item.required}, ${t('have')} ${item.available}`
+        const insufficientItems = availability.availability?.filter((a: any) => !a.is_sufficient) || [];
+        const missingList = insufficientItems.map((ing: any) => 
+          `• ${language === 'ar' && ing.item_name_ar ? ing.item_name_ar : ing.item_name}: ${t('need')} ${ing.required_quantity.toFixed(1)}, ${t('have')} ${ing.available_quantity.toFixed(1)} ${ing.unit}`
         ).join('\n');
         
         Alert.alert(
@@ -407,15 +408,18 @@ export default function ItemsScreen({ navigation }: any) {
         return;
       }
       
+      const itemName = language === 'ar' && compositeItem.name_ar 
+        ? compositeItem.name_ar 
+        : compositeItem.name;
+      const batchYield = `${compositeItem.batch_quantity || 1} ${compositeItem.batch_unit || compositeItem.unit}`;
+      
       // Confirm production
       Alert.alert(
         t('confirmProduction'),
         `${t('produceConfirmMessage', { 
-          count: template.default_batch_count, 
-          name: language === 'ar' && template.composite_item?.name_ar 
-            ? template.composite_item.name_ar 
-            : template.composite_item?.name || template.name 
-        })}`,
+          count: defaultBatchCount, 
+          name: itemName 
+        })}\n\n${t('yield')}: ${batchYield}`,
         [
           { text: t('cancel'), style: 'cancel' },
           {
@@ -424,13 +428,13 @@ export default function ItemsScreen({ navigation }: any) {
             onPress: async () => {
               try {
                 await api.post('/inventory/production', {
-                  composite_item_id: template.composite_item_id,
-                  batch_count: template.default_batch_count,
-                  template_id: template.id,
+                  composite_item_id: compositeItem.id,
+                  batch_count: defaultBatchCount,
                 });
                 
                 Alert.alert(t('success'), t('productionCompleted'));
                 fetchProductionData(); // Refresh data
+                fetchCompositeItems(); // Refresh composite items too
               } catch (error: any) {
                 console.error('Production error:', error);
                 Alert.alert(
@@ -581,52 +585,52 @@ export default function ItemsScreen({ navigation }: any) {
             <Layers size={18} color={colors.primary} />
           </View>
           <View style={styles.statTextContainer}>
-            <Text style={styles.statValue}>{templates.length}</Text>
-            <Text style={styles.statLabel} numberOfLines={1}>{t('templates')}</Text>
+            <Text style={styles.statValue}>{compositeItems.length}</Text>
+            <Text style={styles.statLabel} numberOfLines={1}>{t('compositeItems')}</Text>
           </View>
         </View>
       </View>
 
-      {/* Templates */}
-      <Text style={[styles.sectionTitle, isRTL && styles.rtlText]}>{t('productionTemplates')}</Text>
+      {/* Composite Items for Production */}
+      <Text style={[styles.sectionTitle, isRTL && styles.rtlText]}>{t('compositeItemProduction')}</Text>
       
-      {productionLoading ? (
+      {compositeLoading || productionLoading ? (
         <>
           <ItemSkeleton />
           <ItemSkeleton />
         </>
-      ) : filteredTemplates.length === 0 ? (
+      ) : filteredCompositeItems.length === 0 ? (
         <View style={styles.emptyState}>
-          <ClipboardList size={48} color={colors.mutedForeground} />
+          <Layers size={48} color={colors.mutedForeground} />
           <Text style={styles.emptyText}>
-            {searchQuery ? t('noMatchingTemplates') : t('noTemplates')}
+            {searchQuery ? t('noMatchingCompositeItems') : t('noCompositeItems')}
           </Text>
-          <Text style={styles.emptySubtext}>{t('createTemplateDesc')}</Text>
+          <Text style={styles.emptySubtext}>{t('createCompositeItemFirst')}</Text>
         </View>
       ) : (
-        filteredTemplates.map((template) => (
-          <View key={template.id} style={styles.templateCard}>
+        filteredCompositeItems.map((item) => (
+          <View key={item.id} style={styles.templateCard}>
             <View style={[styles.templateContent, isRTL && styles.rtlRow]}>
               <View style={styles.templateIcon}>
                 <Layers size={24} color={colors.primary} />
               </View>
               <View style={[styles.templateInfo, isRTL && { alignItems: 'flex-end', marginRight: isRTL ? 12 : 0, marginLeft: isRTL ? 0 : 12 }]}>
                 <Text style={[styles.templateName, isRTL && styles.rtlText]} numberOfLines={1}>
-                  {language === 'ar' && template.name_ar ? template.name_ar : template.name}
+                  {language === 'ar' && item.name_ar ? item.name_ar : item.name}
                 </Text>
-                <Text style={[styles.templateItem, isRTL && styles.rtlText]} numberOfLines={1}>
-                  {language === 'ar' && template.composite_item?.name_ar 
-                    ? template.composite_item.name_ar 
-                    : template.composite_item?.name}
-                </Text>
+                {((isRTL && item.name) || (!isRTL && item.name_ar)) && (
+                  <Text style={[styles.templateItem, isRTL && styles.rtlText]} numberOfLines={1}>
+                    {isRTL ? item.name : item.name_ar}
+                  </Text>
+                )}
                 <Text style={styles.templateBatch}>
-                  {t('defaultBatches')}: {template.default_batch_count}
+                  {t('batch')}: {item.batch_quantity || 1} {item.batch_unit || item.unit}
                 </Text>
               </View>
               <TouchableOpacity 
-                style={[styles.produceButton, producingTemplateId === template.id && styles.produceButtonDisabled]}
-                onPress={() => handleProduce(template)}
-                disabled={producingTemplateId === template.id}
+                style={[styles.produceButton, producingTemplateId === item.id && styles.produceButtonDisabled]}
+                onPress={() => handleProduce(item)}
+                disabled={producingTemplateId === item.id}
               >
                 <Play size={16} color="#fff" />
                 <Text style={styles.produceButtonText}>{t('produce')}</Text>
@@ -728,7 +732,7 @@ export default function ItemsScreen({ navigation }: any) {
     switch (activeTab) {
       case 'raw': return t('addItem');
       case 'composite': return t('addCompositeItem');
-      case 'production': return t('newTemplate');
+      case 'production': return null; // No add button for production tab
     }
   };
 
@@ -743,10 +747,13 @@ export default function ItemsScreen({ navigation }: any) {
         setShowAddCompositeModal(true);
         break;
       case 'production':
-        setShowAddTemplateModal(true);
+        // No action - production tab doesn't have an add button
         break;
     }
   };
+  
+  // Check if we should show the add button
+  const showAddButton = activeTab !== 'production';
 
   return (
     <View style={styles.container}>
@@ -773,12 +780,14 @@ export default function ItemsScreen({ navigation }: any) {
             <Text style={[styles.headerTitle, isRTL && styles.rtlText]}>
               {t('items')}
             </Text>
-            <TouchableOpacity 
-              style={styles.headerAddButton} 
-              onPress={handleAddPress}
-            >
-              <Plus size={20} color={colors.background} />
-            </TouchableOpacity>
+            {showAddButton && (
+              <TouchableOpacity 
+                style={styles.headerAddButton} 
+                onPress={handleAddPress}
+              >
+                <Plus size={20} color={colors.background} />
+              </TouchableOpacity>
+            )}
           </View>
           
           {/* Search */}
@@ -786,7 +795,7 @@ export default function ItemsScreen({ navigation }: any) {
             <Search size={20} color={colors.mutedForeground} />
             <TextInput
               style={[styles.searchInput, isRTL && styles.rtlText]}
-              placeholder={activeTab === 'production' ? t('searchTemplates') : t('searchItems')}
+              placeholder={t('searchItems')}
               placeholderTextColor={colors.mutedForeground}
               value={searchQuery}
               onChangeText={setSearchQuery}

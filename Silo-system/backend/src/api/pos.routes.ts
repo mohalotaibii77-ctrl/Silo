@@ -887,4 +887,51 @@ router.post('/kitchen/process-waste', requireBusinessAccess, asyncHandler(async 
   });
 }));
 
+/**
+ * POST /api/pos/kitchen/auto-expire
+ * Auto-expire cancelled items older than 24 hours as waste
+ * This should be called by a scheduled job (cron) or can be triggered manually
+ * No authentication required for cron jobs (should be secured by network/API key in production)
+ */
+router.post('/kitchen/auto-expire', asyncHandler(async (req, res) => {
+  // Optional: Add API key validation for cron jobs
+  const cronKey = req.headers['x-cron-key'];
+  const expectedKey = process.env.CRON_API_KEY;
+  
+  // If CRON_API_KEY is set, validate it
+  if (expectedKey && cronKey !== expectedKey) {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid cron key',
+    });
+  }
+
+  const result = await posService.autoExpireCancelledItems();
+
+  res.json({
+    success: true,
+    data: result,
+    message: `Auto-expired ${result.expired} items as waste`,
+  });
+}));
+
+/**
+ * GET /api/pos/kitchen/cancelled-stats
+ * Get statistics about pending cancelled items
+ * Useful for dashboard/monitoring
+ */
+router.get('/kitchen/cancelled-stats', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { branch_id } = req.query;
+
+  const stats = await posService.getCancelledItemsStats(
+    parseInt(req.user!.businessId),
+    branch_id ? parseInt(branch_id as string) : undefined
+  );
+
+  res.json({
+    success: true,
+    data: stats,
+  });
+}));
+
 export default router;

@@ -122,21 +122,28 @@ export class InventoryService {
    * Generate unique SKU for a new business item
    */
   private async generateItemSku(businessId: number): Promise<string> {
-    // Get the highest item ID for this business to generate next SKU
+    // Get the highest existing SKU number for this business
+    // This handles the case where items have been deleted
     const { data, error } = await supabaseAdmin
       .from('items')
-      .select('id')
+      .select('sku')
       .eq('business_id', businessId)
-      .order('id', { ascending: false })
+      .not('sku', 'is', null)
+      .order('sku', { ascending: false })
       .limit(1);
     
-    // Get next sequence number based on count
-    const { count } = await supabaseAdmin
-      .from('items')
-      .select('*', { count: 'exact', head: true })
-      .eq('business_id', businessId);
+    let nextSequence = 1;
     
-    const sequence = String((count || 0) + 1).padStart(4, '0');
+    if (data && data.length > 0 && data[0].sku) {
+      // Parse the existing SKU to get the sequence number
+      // Format: {businessId}-ITM-{sequence}
+      const match = data[0].sku.match(/-ITM-(\d+)$/);
+      if (match) {
+        nextSequence = parseInt(match[1], 10) + 1;
+      }
+    }
+    
+    const sequence = String(nextSequence).padStart(4, '0');
     return `${businessId}-ITM-${sequence}`;
   }
 
@@ -150,14 +157,25 @@ export class InventoryService {
     page?: number;
     limit?: number;
     fields?: string[];
+    includeSystemItems?: boolean;  // For backward compatibility, defaults to false
   }): Promise<Item[] | { data: Item[]; total: number }> {
-    const { page, limit, fields } = filters || {};
+    const { page, limit, fields, includeSystemItems = false } = filters || {};
     
-    // Build base query
+    // Build base query - ONLY business items by default
+    // Each business owns their items, no shared system items
     let query = supabaseAdmin
       .from('items')
       .select('*', { count: page && limit ? 'exact' : undefined })
       .eq('status', 'active');
+
+    // Filter by business - only show items owned by this business
+    if (includeSystemItems) {
+      // Backward compatibility: include both business and system items
+      query = query.or(`business_id.eq.${businessId},business_id.is.null`);
+    } else {
+      // New default: only business-owned items
+      query = query.eq('business_id', businessId);
+    }
 
     // Filter by item_type if specified
     if (filters?.item_type) {
@@ -168,9 +186,6 @@ export class InventoryService {
     if (filters?.category) {
       query = query.eq('category', filters.category);
     }
-
-    // Get items that belong to this business OR are general items (business_id is null)
-    query = query.or(`business_id.eq.${businessId},business_id.is.null`);
 
     // Apply pagination if provided
     if (page && limit) {
@@ -185,60 +200,9 @@ export class InventoryService {
       throw new Error('Failed to fetch items');
     }
 
-    // Get business-specific prices for this business
-    const { data: businessPrices, error: pricesError } = await supabaseAdmin
-      .from('business_item_prices')
-      .select('*')
-      .eq('business_id', businessId);
-
-    if (pricesError) {
-      console.error('Failed to fetch business prices:', pricesError);
-      // Continue without business prices - will use default prices
-    }
-
-    // Get items that this business has "deleted" (business_deleted_items)
-    const { data: deletedItems } = await supabaseAdmin
-      .from('business_deleted_items')
-      .select('item_id')
-      .eq('business_id', businessId);
-    
-    const deletedItemIds = new Set((deletedItems || []).map(d => d.item_id));
-
-    // Create a map of item_id to business price
-    const priceMap = new Map<number, number>();
-    if (businessPrices) {
-      businessPrices.forEach(bp => {
-        priceMap.set(bp.item_id, bp.cost_per_unit);
-      });
-    }
-
-    // Filter out default items that have been "overridden" by business-specific clones
-    // This happens when a user edits a default item - it creates a clone for their business
-    const businessItemNames = new Set(
-      (items || [])
-        .filter(item => item.business_id === businessId)
-        .map(item => item.name.toLowerCase())
-    );
-    
-    // Remove default items that have been cloned (same name exists in business items)
-    // Also remove default items that have been explicitly deleted by this business
-    const filteredItems = (items || []).filter(item => {
-      // Keep all business-owned items
-      if (item.business_id === businessId) return true;
-      // For default items, check if deleted or cloned
-      if (item.business_id === null) {
-        // Skip if this business has deleted this default item
-        if (deletedItemIds.has(item.id)) return false;
-        // Skip if there's a business item with the same name (cloned)
-        return !businessItemNames.has(item.name.toLowerCase());
-      }
-      return true;
-    });
-
-    // Merge business prices with items and parse production_rate_custom_dates
-    const itemsWithPrices = filteredItems.map(item => {
+    // Parse production_rate_custom_dates from JSONB if present
+    const processedItems = (items || []).map(item => {
       let parsedItem = { ...item };
-      // Parse production_rate_custom_dates from JSONB if present
       if (item.production_rate_custom_dates) {
         try {
           parsedItem.production_rate_custom_dates = typeof item.production_rate_custom_dates === 'string' 
@@ -249,23 +213,18 @@ export class InventoryService {
           parsedItem.production_rate_custom_dates = null;
         }
       }
-      return {
-        ...parsedItem,
-        business_price: priceMap.get(item.id) ?? null,
-        // Use business price if available, otherwise use default
-        effective_price: priceMap.get(item.id) ?? item.cost_per_unit,
-      };
+      return parsedItem;
     });
     
     // Return paginated response if pagination was requested
     if (page && limit && count !== null) {
       return {
-        data: itemsWithPrices as Item[],
+        data: processedItems as Item[],
         total: count,
       };
     }
 
-    return itemsWithPrices as Item[];
+    return processedItems as Item[];
   }
 
   /**
@@ -327,7 +286,13 @@ export class InventoryService {
     // Check for duplicate name using the comprehensive public method
     const duplicateCheck = await this.checkDuplicateItemName(data.business_id, data.name);
     if (duplicateCheck.isDuplicate) {
-      throw new Error('An item with this name already exists');
+      const existingItem = duplicateCheck.existingItem;
+      const itemType = existingItem?.business_id === null ? 'system' : 'business';
+      throw new Error(
+        `An item with this name already exists. ` +
+        `Existing item: "${existingItem?.name}" (ID: ${existingItem?.id}, Type: ${itemType}). ` +
+        `Please use the existing item or choose a different name.`
+      );
     }
 
     const servingUnit = data.unit || 'grams';
@@ -384,7 +349,13 @@ export class InventoryService {
     if (data.name && businessId) {
       const duplicateCheck = await this.checkDuplicateItemName(businessId, data.name, itemId);
       if (duplicateCheck.isDuplicate) {
-        throw new Error('An item with this name already exists');
+        const existingItem = duplicateCheck.existingItem;
+        const itemType = existingItem?.business_id === null ? 'system' : 'business';
+        throw new Error(
+          `An item with this name already exists. ` +
+          `Existing item: "${existingItem?.name}" (ID: ${existingItem?.id}, Type: ${itemType}). ` +
+          `Please use a different name.`
+        );
       }
     }
 
@@ -514,9 +485,98 @@ export class InventoryService {
           .eq('component_item_id', itemId)
           .in('composite_item_id', compositeIds);
       }
+
+      // Transfer inventory stock from system item to the new business item
+      // This ensures the business's stock is tracked under their own item
+      const { data: existingStock } = await supabaseAdmin
+        .from('inventory_stock')
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('item_id', itemId);
+
+      if (existingStock && existingStock.length > 0) {
+        for (const stock of existingStock) {
+          // Check if stock already exists for the new item at this branch
+          const { data: newItemStock } = await supabaseAdmin
+            .from('inventory_stock')
+            .select('id, quantity')
+            .eq('business_id', businessId)
+            .eq('item_id', newItem.id)
+            .eq('branch_id', stock.branch_id)
+            .maybeSingle();
+
+          if (newItemStock) {
+            // Add to existing stock
+            await supabaseAdmin
+              .from('inventory_stock')
+              .update({ 
+                quantity: newItemStock.quantity + stock.quantity,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', newItemStock.id);
+          } else {
+            // Create new stock record for the business item
+            await supabaseAdmin
+              .from('inventory_stock')
+              .insert({
+                business_id: businessId,
+                branch_id: stock.branch_id,
+                item_id: newItem.id,
+                quantity: stock.quantity,
+                reserved_quantity: stock.reserved_quantity || 0,
+                held_quantity: stock.held_quantity || 0,
+                min_quantity: stock.min_quantity || 0,
+                max_quantity: stock.max_quantity,
+              });
+          }
+
+          // Zero out the old system item stock for this business (don't delete, just zero)
+          await supabaseAdmin
+            .from('inventory_stock')
+            .update({ 
+              quantity: 0,
+              reserved_quantity: 0,
+              held_quantity: 0,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', stock.id);
+        }
+        
+        console.log(`Transferred inventory stock from system item ${itemId} to business item ${newItem.id} for business ${businessId}`);
+      }
+
+      // Also update inventory_movements to reference the new item (for history accuracy)
+      await supabaseAdmin
+        .from('inventory_movements')
+        .update({ item_id: newItem.id })
+        .eq('business_id', businessId)
+        .eq('item_id', itemId);
+
+      // Update inventory_transactions to reference the new item
+      await supabaseAdmin
+        .from('inventory_transactions')
+        .update({ item_id: newItem.id })
+        .eq('business_id', businessId)
+        .eq('item_id', itemId);
+
     } catch (updateError) {
       console.error('Failed to update references to new item:', updateError);
       // Don't fail the whole operation - the item was cloned successfully
+    }
+
+    // Mark the system item as "deleted" for this business so they don't see duplicates
+    try {
+      await supabaseAdmin
+        .from('business_deleted_items')
+        .upsert({
+          business_id: businessId,
+          item_id: itemId,
+          deleted_at: new Date().toISOString(),
+        }, {
+          onConflict: 'business_id,item_id',
+        });
+    } catch (deleteError) {
+      console.error('Failed to mark system item as deleted for business:', deleteError);
     }
 
     return newItem as Item;
@@ -917,7 +977,13 @@ export class InventoryService {
     // Check for duplicate name (composite items are stored in the items table)
     const duplicateCheck = await this.checkDuplicateItemName(business_id, name);
     if (duplicateCheck.isDuplicate) {
-      throw new Error('An item with this name already exists');
+      const existingItem = duplicateCheck.existingItem;
+      const itemType = existingItem?.business_id === null ? 'system' : 'business';
+      throw new Error(
+        `An item with this name already exists. ` +
+        `Existing item: "${existingItem?.name}" (ID: ${existingItem?.id}, Type: ${itemType}). ` +
+        `Please use a different name.`
+      );
     }
 
     // Determine storage unit (default based on serving unit)
@@ -979,29 +1045,47 @@ export class InventoryService {
 
     // Create the composite item
     // cost_per_unit stores the unit price for inventory calculations
-    const { data: item, error } = await supabaseAdmin
+    const itemData = {
+      business_id,
+      name,
+      name_ar: name_ar || null,
+      category,
+      unit, // The serving unit used for this item in recipes/products (e.g., grams)
+      storage_unit: storageUnit, // The storage unit for inventory (e.g., Kg)
+      cost_per_unit: unitPrice, // Cost per single unit (e.g., per gram)
+      batch_quantity, // How much one batch produces
+      batch_unit, // Unit of the batch quantity
+      is_system_item: false,
+      is_composite: true,
+      status: 'active',
+      sku,
+      production_rate_type: production_rate_type || null,
+      production_rate_weekly_day: production_rate_weekly_day ?? null,
+      production_rate_monthly_day: production_rate_monthly_day ?? null,
+      production_rate_custom_dates: production_rate_custom_dates ? JSON.stringify(production_rate_custom_dates) : null,
+    };
+
+    let { data: item, error } = await supabaseAdmin
       .from('items')
-      .insert({
-        business_id,
-        name,
-        name_ar: name_ar || null,
-        category,
-        unit, // The serving unit used for this item in recipes/products (e.g., grams)
-        storage_unit: storageUnit, // The storage unit for inventory (e.g., Kg)
-        cost_per_unit: unitPrice, // Cost per single unit (e.g., per gram)
-        batch_quantity, // How much one batch produces
-        batch_unit, // Unit of the batch quantity
-        is_system_item: false,
-        is_composite: true,
-        status: 'active',
-        sku,
-        production_rate_type: production_rate_type || null,
-        production_rate_weekly_day: production_rate_weekly_day ?? null,
-        production_rate_monthly_day: production_rate_monthly_day ?? null,
-        production_rate_custom_dates: production_rate_custom_dates ? JSON.stringify(production_rate_custom_dates) : null,
-      })
+      .insert(itemData)
       .select()
       .single();
+
+    // Handle duplicate SKU error - retry with a timestamp-based SKU
+    if (error && error.code === '23505' && error.message?.includes('sku')) {
+      console.warn('SKU collision detected, retrying with timestamp-based SKU');
+      const timestamp = Date.now().toString().slice(-6);
+      const retrySku = `${business_id}-ITM-T${timestamp}`;
+      
+      const retryResult = await supabaseAdmin
+        .from('items')
+        .insert({ ...itemData, sku: retrySku })
+        .select()
+        .single();
+      
+      item = retryResult.data;
+      error = retryResult.error;
+    }
 
     if (error) {
       console.error('Failed to create composite item:', error);
@@ -2101,6 +2185,264 @@ export class InventoryService {
       const types = acc.applicable_order_types || ['always'];
       return types.includes('always') || types.includes(orderType as AccessoryOrderType);
     });
+  }
+
+  // ==================== BUSINESS ITEM INITIALIZATION ====================
+
+  /**
+   * Copy all system items for a new business
+   * This ensures each business has their own items from day 1
+   * Called when a business is created
+   */
+  async initializeBusinessItems(businessId: number): Promise<{ copied: number; skipped: number }> {
+    console.log(`[initializeBusinessItems] Starting for business ${businessId}`);
+    
+    // Get all system items (business_id IS NULL)
+    const { data: systemItems, error: fetchError } = await supabaseAdmin
+      .from('items')
+      .select('*')
+      .is('business_id', null)
+      .eq('status', 'active');
+
+    if (fetchError) {
+      console.error('Failed to fetch system items:', fetchError);
+      throw new Error('Failed to fetch system items');
+    }
+
+    if (!systemItems || systemItems.length === 0) {
+      console.log('[initializeBusinessItems] No system items to copy');
+      return { copied: 0, skipped: 0 };
+    }
+
+    // Get existing business items to avoid duplicates
+    const { data: existingItems } = await supabaseAdmin
+      .from('items')
+      .select('name')
+      .eq('business_id', businessId)
+      .eq('status', 'active');
+
+    const existingNames = new Set((existingItems || []).map(i => i.name.toLowerCase()));
+
+    let copied = 0;
+    let skipped = 0;
+
+    for (const systemItem of systemItems) {
+      // Skip if business already has an item with this name
+      if (existingNames.has(systemItem.name.toLowerCase())) {
+        console.log(`[initializeBusinessItems] Skipping "${systemItem.name}" - already exists`);
+        skipped++;
+        continue;
+      }
+
+      // Generate unique SKU for the business item
+      const sku = await this.generateItemSku(businessId);
+
+      // Copy the system item for this business
+      const { error: insertError } = await supabaseAdmin
+        .from('items')
+        .insert({
+          business_id: businessId,
+          name: systemItem.name,
+          name_ar: systemItem.name_ar,
+          item_type: systemItem.item_type,
+          category: systemItem.category,
+          unit: systemItem.unit,
+          storage_unit: systemItem.storage_unit,
+          cost_per_unit: systemItem.cost_per_unit,
+          is_system_item: false,  // Now owned by business
+          is_composite: systemItem.is_composite || false,
+          status: 'active',
+          sku: sku,
+        });
+
+      if (insertError) {
+        console.error(`Failed to copy item "${systemItem.name}":`, insertError);
+        skipped++;
+      } else {
+        copied++;
+      }
+    }
+
+    console.log(`[initializeBusinessItems] Completed for business ${businessId}: copied=${copied}, skipped=${skipped}`);
+    return { copied, skipped };
+  }
+
+  /**
+   * Migrate existing business to have their own items
+   * - Copies system items that the business doesn't have
+   * - Updates all references (products, composites, inventory) to use business items
+   * - Transfers inventory stock from system items to business items
+   */
+  async migrateBusinessToOwnItems(businessId: number): Promise<{
+    itemsCopied: number;
+    referencesUpdated: number;
+    stockTransferred: number;
+  }> {
+    console.log(`[migrateBusinessToOwnItems] Starting migration for business ${businessId}`);
+    
+    let itemsCopied = 0;
+    let referencesUpdated = 0;
+    let stockTransferred = 0;
+
+    // Get all system items
+    const { data: systemItems } = await supabaseAdmin
+      .from('items')
+      .select('*')
+      .is('business_id', null)
+      .eq('status', 'active');
+
+    if (!systemItems || systemItems.length === 0) {
+      return { itemsCopied: 0, referencesUpdated: 0, stockTransferred: 0 };
+    }
+
+    // Get existing business items
+    const { data: existingBusinessItems } = await supabaseAdmin
+      .from('items')
+      .select('id, name')
+      .eq('business_id', businessId)
+      .eq('status', 'active');
+
+    const existingNameToId = new Map<string, number>();
+    (existingBusinessItems || []).forEach(i => existingNameToId.set(i.name.toLowerCase(), i.id));
+
+    // Map: system item ID -> business item ID
+    const systemToBusinessMap = new Map<number, number>();
+
+    for (const systemItem of systemItems) {
+      const normalizedName = systemItem.name.toLowerCase();
+      
+      // Check if business already has this item
+      if (existingNameToId.has(normalizedName)) {
+        // Use existing business item
+        systemToBusinessMap.set(systemItem.id, existingNameToId.get(normalizedName)!);
+        continue;
+      }
+
+      // Create business-owned copy of the system item
+      const sku = await this.generateItemSku(businessId);
+      
+      const { data: newItem, error: insertError } = await supabaseAdmin
+        .from('items')
+        .insert({
+          business_id: businessId,
+          name: systemItem.name,
+          name_ar: systemItem.name_ar,
+          item_type: systemItem.item_type,
+          category: systemItem.category,
+          unit: systemItem.unit,
+          storage_unit: systemItem.storage_unit,
+          cost_per_unit: systemItem.cost_per_unit,
+          is_system_item: false,
+          is_composite: systemItem.is_composite || false,
+          status: 'active',
+          sku: sku,
+        })
+        .select('id')
+        .single();
+
+      if (insertError || !newItem) {
+        console.error(`Failed to create business item for "${systemItem.name}":`, insertError);
+        continue;
+      }
+
+      systemToBusinessMap.set(systemItem.id, newItem.id);
+      itemsCopied++;
+    }
+
+    // Now update all references from system items to business items
+    for (const [systemItemId, businessItemId] of systemToBusinessMap) {
+      if (systemItemId === businessItemId) continue; // Same item, no update needed
+
+      // Update product_ingredients
+      const { count: ingredientCount } = await supabaseAdmin
+        .from('product_ingredients')
+        .update({ item_id: businessItemId })
+        .eq('item_id', systemItemId)
+        .in('product_id', supabaseAdmin
+          .from('products')
+          .select('id')
+          .eq('business_id', businessId)
+        );
+      
+      // Update composite_item_components
+      const { count: componentCount } = await supabaseAdmin
+        .from('composite_item_components')
+        .update({ component_item_id: businessItemId })
+        .eq('component_item_id', systemItemId)
+        .in('composite_item_id', supabaseAdmin
+          .from('items')
+          .select('id')
+          .eq('business_id', businessId)
+          .eq('is_composite', true)
+        );
+
+      referencesUpdated += (ingredientCount || 0) + (componentCount || 0);
+
+      // Transfer inventory stock
+      const { data: stockRecords } = await supabaseAdmin
+        .from('inventory_stock')
+        .select('*')
+        .eq('business_id', businessId)
+        .eq('item_id', systemItemId);
+
+      for (const stock of stockRecords || []) {
+        // Check if stock exists for business item
+        const { data: existingStock } = await supabaseAdmin
+          .from('inventory_stock')
+          .select('id, quantity')
+          .eq('business_id', businessId)
+          .eq('item_id', businessItemId)
+          .eq('branch_id', stock.branch_id)
+          .maybeSingle();
+
+        if (existingStock) {
+          // Add to existing
+          await supabaseAdmin
+            .from('inventory_stock')
+            .update({ quantity: existingStock.quantity + stock.quantity })
+            .eq('id', existingStock.id);
+        } else {
+          // Create new stock record
+          await supabaseAdmin
+            .from('inventory_stock')
+            .insert({
+              business_id: businessId,
+              branch_id: stock.branch_id,
+              item_id: businessItemId,
+              quantity: stock.quantity,
+              reserved_quantity: stock.reserved_quantity || 0,
+              held_quantity: stock.held_quantity || 0,
+              min_quantity: stock.min_quantity || 0,
+              max_quantity: stock.max_quantity,
+            });
+        }
+
+        // Zero out the old stock
+        await supabaseAdmin
+          .from('inventory_stock')
+          .update({ quantity: 0, reserved_quantity: 0, held_quantity: 0 })
+          .eq('id', stock.id);
+
+        stockTransferred++;
+      }
+
+      // Update inventory movements history
+      await supabaseAdmin
+        .from('inventory_movements')
+        .update({ item_id: businessItemId })
+        .eq('business_id', businessId)
+        .eq('item_id', systemItemId);
+
+      // Update inventory transactions history  
+      await supabaseAdmin
+        .from('inventory_transactions')
+        .update({ item_id: businessItemId })
+        .eq('business_id', businessId)
+        .eq('item_id', systemItemId);
+    }
+
+    console.log(`[migrateBusinessToOwnItems] Completed for business ${businessId}: items=${itemsCopied}, refs=${referencesUpdated}, stock=${stockTransferred}`);
+    return { itemsCopied, referencesUpdated, stockTransferred };
   }
 }
 

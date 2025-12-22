@@ -3,18 +3,19 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Minus, AlertCircle, CheckCircle, Loader2, Layers } from 'lucide-react';
-import { checkProductionAvailability, createProduction, InventoryAvailability, ProductionTemplate } from '@/lib/items-api';
+import { checkProductionAvailability, createProduction, InventoryAvailability } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { CompositeItem } from '@/types/items';
 
 interface ProduceModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  template: ProductionTemplate | null;
+  compositeItem: CompositeItem | null;
   currency?: string;
 }
 
-export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }: ProduceModalProps) {
+export function ProduceModal({ isOpen, onClose, onSuccess, compositeItem, currency }: ProduceModalProps) {
   const { isRTL, t } = useLanguage();
   
   const [batchCount, setBatchCount] = useState(1);
@@ -25,28 +26,28 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
   const [canProduce, setCanProduce] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (isOpen && template) {
-      setBatchCount(template.default_batch_count || 1);
+    if (isOpen && compositeItem) {
+      setBatchCount(1);
       setError('');
       setAvailability(null);
       setCanProduce(null);
       // Check availability immediately
-      checkAvailability(template.default_batch_count || 1);
+      checkAvailabilityFn(1);
     }
-  }, [isOpen, template]);
+  }, [isOpen, compositeItem]);
 
   // Re-check when batch count changes
   useEffect(() => {
-    if (isOpen && template && batchCount > 0) {
+    if (isOpen && compositeItem && batchCount > 0) {
       const timeout = setTimeout(() => {
-        checkAvailability(batchCount);
+        checkAvailabilityFn(batchCount);
       }, 300); // Debounce
       return () => clearTimeout(timeout);
     }
   }, [batchCount]);
 
-  const checkAvailability = async (count: number) => {
-    if (!template) return;
+  const checkAvailabilityFn = async (count: number) => {
+    if (!compositeItem) return;
     
     setChecking(true);
     try {
@@ -54,7 +55,7 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
       const storedBranch = localStorage.getItem('setup_branch');
       const branch = storedBranch ? JSON.parse(storedBranch) : null;
       
-      const result = await checkProductionAvailability(template.composite_item_id, count, branch?.id);
+      const result = await checkProductionAvailability(compositeItem.id, count, branch?.id);
       setAvailability(result.availability);
       setCanProduce(result.canProduce);
       setError('');
@@ -68,7 +69,7 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
   };
 
   const handleProduce = async () => {
-    if (!template || !canProduce) return;
+    if (!compositeItem || !canProduce) return;
 
     setSubmitting(true);
     setError('');
@@ -79,10 +80,10 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
       const branch = storedBranch ? JSON.parse(storedBranch) : null;
       
       await createProduction({
-        composite_item_id: template.composite_item_id,
+        composite_item_id: compositeItem.id,
         batch_count: batchCount,
         branch_id: branch?.id,  // Pass the current branch ID
-        notes: `Produced from template: ${template.name}`,
+        notes: `Produced: ${compositeItem.name}`,
       });
 
       onSuccess();
@@ -95,11 +96,10 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
     }
   };
 
-  if (!isOpen || !template) return null;
+  if (!isOpen || !compositeItem) return null;
 
-  const compositeItem = template.composite_item;
-  const totalYield = (batchCount || 0) * (compositeItem?.batch_quantity || 1);
-  const yieldUnit = compositeItem?.batch_unit || compositeItem?.unit || 'unit';
+  const totalYield = (batchCount || 0) * (compositeItem.batch_quantity || 1);
+  const yieldUnit = compositeItem.batch_unit || compositeItem.unit || 'unit';
 
   return (
     <AnimatePresence>
@@ -130,7 +130,7 @@ export function ProduceModal({ isOpen, onClose, onSuccess, template, currency }:
                   {t('Produce', 'إنتاج')}
                 </h2>
                 <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                  {isRTL && template.name_ar ? template.name_ar : template.name}
+                  {isRTL && compositeItem.name_ar ? compositeItem.name_ar : compositeItem.name}
                 </p>
               </div>
             </div>

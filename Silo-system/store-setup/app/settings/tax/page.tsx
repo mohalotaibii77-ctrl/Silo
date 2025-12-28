@@ -219,12 +219,15 @@ export default function TaxSettingsPage() {
                 <div className="flex gap-3">
                   <div className="relative flex-1">
                     <input
-                      type="number"
-                      value={settings.tax_rate}
-                      onChange={(e) => setSettings({ ...settings, tax_rate: parseFloat(e.target.value) || 0 })}
-                      min="0"
-                      max="100"
-                      step="0.1"
+                      type="text"
+                      inputMode="decimal"
+                      value={settings.tax_rate || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setSettings({ ...settings, tax_rate: val === '' ? 0 : parseFloat(val) || 0 });
+                        }
+                      }}
                       className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 pr-12"
                       placeholder="0"
                     />

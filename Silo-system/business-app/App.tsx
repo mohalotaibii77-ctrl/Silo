@@ -55,11 +55,11 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <LocalizationProvider>
-        <ConfigProvider>
+      <ConfigProvider>
+        <LocalizationProvider>
           <AppContent />
-        </ConfigProvider>
-      </LocalizationProvider>
+        </LocalizationProvider>
+      </ConfigProvider>
     </ThemeProvider>
   );
 }

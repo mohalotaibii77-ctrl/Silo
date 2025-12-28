@@ -12,10 +12,11 @@ import {
   TextInput,
   Alert
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import { 
   ArrowLeft,
@@ -64,6 +65,8 @@ interface DeliveryPartner {
 type FilterType = 'all' | 'active' | 'inactive';
 
 export default function DeliveryPartnersScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const { t, isRTL, formatCurrency } = useLocalization();
   
   // State
@@ -394,7 +397,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
           <View style={[styles.header, isRTL && styles.headerRTL]}>
             <TouchableOpacity 
               style={styles.backButton}
-              onPress={() => navigation.goBack()}
+              onPress={() => safeGoBack(navigation)}
             >
               <BackIcon size={24} color={colors.text} />
             </TouchableOpacity>
@@ -665,7 +668,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

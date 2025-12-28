@@ -529,8 +529,8 @@ export class POSService {
     const total = afterDiscount + taxAmount + deliveryFee + packagingFee + serviceCharge + tipAmount;
 
     // Determine if this is an API order (from delivery partners)
-    const isPOSOrder = ['pos', 'phone', 'walk_in'].includes(input.order_source);
-    const isApiOrder = !isPOSOrder;
+    const isApiOrder = input.order_source === 'api';
+    const isPOSOrder = !isApiOrder;
 
     // Determine initial payment status based on order source and type
     // Payment Workflow:
@@ -727,8 +727,8 @@ export class POSService {
       return {
         business_id: input.business_id,
         order_id: order.id,
-        product_id: item.product_id,
-        variant_id: item.variant_id,
+        product_id: item.product_id || null,  // Bundles don't have product_id, set to null explicitly
+        variant_id: item.variant_id || null,
         product_name: item.product_name,
         product_name_ar: item.product_name_ar,
         product_sku: item.product_sku,
@@ -861,7 +861,8 @@ export class POSService {
   }
 
   /**
-   * Create order from delivery app webhook
+   * Create order from delivery app webhook (external API)
+   * The specific delivery partner is identified by delivery_partner_id
    */
   async createDeliveryAppOrder(
     source: OrderSource,
@@ -869,6 +870,7 @@ export class POSService {
     businessId: number,
     branchId: number | undefined,
     orderData: {
+      delivery_partner_id?: number;
       customer_name?: string;
       customer_phone?: string;
       customer_email?: string;
@@ -891,6 +893,7 @@ export class POSService {
       order_source: source,
       order_type: 'delivery',
       external_order_id: externalOrderId,
+      delivery_partner_id: orderData.delivery_partner_id,
       customer_name: orderData.customer_name,
       customer_phone: orderData.customer_phone,
       customer_email: orderData.customer_email,
@@ -1568,7 +1571,9 @@ export class POSService {
       .gte('created_at', `${new Date().toISOString().slice(0, 10)}T00:00:00`);
 
     const sequence = String((count || 0) + 1).padStart(4, '0');
-    return `ORD-${today}-${sequence}`;
+    // Add random suffix to prevent race condition duplicates
+    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `ORD-${today}-${sequence}-${randomSuffix}`;
   }
 
   /**

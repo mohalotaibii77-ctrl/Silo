@@ -7,6 +7,35 @@ const router = Router();
 
 const DEFAULT_PASSWORD = '90074009';
 
+/**
+ * Generate a unique 4-digit PIN for a business
+ * Ensures no duplicate PINs within the same business
+ */
+async function generateUniquePIN(businessId: number): Promise<string> {
+  const maxAttempts = 100;
+  
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // Generate random 4-digit PIN (1000-9999)
+    const pin = String(Math.floor(1000 + Math.random() * 9000));
+    
+    // Check if PIN already exists in this business
+    const { data: existing } = await supabase
+      .from('business_users')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('pos_pin', pin)
+      .single();
+    
+    if (!existing) {
+      return pin;
+    }
+  }
+  
+  // Fallback to 6-digit PIN if all 4-digit PINs are taken (very unlikely)
+  const pin6 = String(Math.floor(100000 + Math.random() * 900000));
+  return pin6;
+}
+
 // Default permissions by role
 const DEFAULT_PERMISSIONS = {
   manager: {
@@ -177,7 +206,7 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
 
     const { data: users, error } = await supabase
       .from('business_users')
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, last_login, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, last_login, created_at, pos_pin')
       .eq('business_id', businessId)
       .order('created_at', { ascending: true });
 
@@ -251,6 +280,16 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
       }
     }
 
+    // Check if user needs a POS PIN
+    // PIN is required if: role is 'pos', 'manager', or has pos_access permission
+    const needsPosPin = role === 'pos' || role === 'manager' || 
+      (userPermissions && userPermissions.pos_access);
+    
+    let posPin = null;
+    if (needsPosPin) {
+      posPin = await generateUniquePIN(businessId!);
+    }
+
     const { data: user, error } = await supabase
       .from('business_users')
       .insert({
@@ -265,8 +304,9 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
         status: 'active',
         permissions: userPermissions,
         password_changed: false, // Requires password change on first login
+        pos_pin: posPin,
       })
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin')
       .single();
 
     if (error) throw error;
@@ -279,8 +319,11 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
 
     res.status(201).json({ 
       data: user, 
-      message: 'User created successfully',
+      message: posPin 
+        ? `User created successfully. POS PIN: ${posPin}` 
+        : 'User created successfully',
       default_password: DEFAULT_PASSWORD,
+      pos_pin: posPin,
     });
   } catch (error: any) {
     console.error('Error creating user:', error);
@@ -368,11 +411,32 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
       updateData.permissions = DEFAULT_PERMISSIONS[role as 'manager' | 'employee'];
     }
 
+    // Handle POS PIN generation/update
+    // Check if user now needs a PIN (didn't have one before, now needs POS access)
+    const currentPermissions = user.permissions || {};
+    const newPermissions = updateData.permissions || currentPermissions;
+    const effectiveRoleFinal = updateData.role || user.role;
+    
+    const previouslyNeededPin = user.role === 'pos' || user.role === 'manager' || currentPermissions.pos_access;
+    const nowNeedsPin = effectiveRoleFinal === 'pos' || effectiveRoleFinal === 'manager' || 
+      (newPermissions && newPermissions.pos_access);
+    
+    // Generate PIN if user now needs one but doesn't have one
+    if (nowNeedsPin && !user.pos_pin) {
+      updateData.pos_pin = await generateUniquePIN(businessId!);
+    }
+    
+    // Optionally clear PIN if user no longer needs POS access
+    // (commented out - we keep the PIN in case they need it again)
+    // if (!nowNeedsPin && previouslyNeededPin) {
+    //   updateData.pos_pin = null;
+    // }
+
     const { data, error } = await supabase
       .from('business_users')
       .update(updateData)
       .eq('id', userId)
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin')
       .single();
 
     if (error) throw error;
@@ -485,6 +549,104 @@ router.post('/:id/reset-password', authenticateOwner, async (req: AuthenticatedR
     res.json({ message: 'Password reset to default', default_password: DEFAULT_PASSWORD });
   } catch (error: any) {
     console.error('Error resetting password:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/business-users/:id/reset-pin - Reset user POS PIN
+router.post('/:id/reset-pin', authenticateOwner, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    const userId = parseInt(req.params.id);
+
+    // Check if user belongs to this business
+    const { data: user } = await supabase
+      .from('business_users')
+      .select('id, role, permissions')
+      .eq('id', userId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if user has POS access
+    const hasPosAccess = user.role === 'pos' || user.role === 'manager' || user.role === 'owner' ||
+      (user.permissions && user.permissions.pos_access);
+
+    if (!hasPosAccess) {
+      return res.status(400).json({ error: 'User does not have POS access' });
+    }
+
+    // Generate new unique PIN
+    const newPin = await generateUniquePIN(businessId!);
+
+    const { error } = await supabase
+      .from('business_users')
+      .update({ pos_pin: newPin, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (error) throw error;
+
+    res.json({ message: 'POS PIN reset successfully', pos_pin: newPin });
+  } catch (error: any) {
+    console.error('Error resetting PIN:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/business-users/:id/set-pin - Set a specific POS PIN (owner can set custom PIN)
+router.put('/:id/set-pin', authenticateOwner, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    const userId = parseInt(req.params.id);
+    const { pin } = req.body;
+
+    if (!pin) {
+      return res.status(400).json({ error: 'PIN is required' });
+    }
+
+    // Validate PIN format (4-6 digits)
+    if (!/^\d{4,6}$/.test(pin)) {
+      return res.status(400).json({ error: 'PIN must be 4-6 digits' });
+    }
+
+    // Check if user belongs to this business
+    const { data: user } = await supabase
+      .from('business_users')
+      .select('id, role, permissions')
+      .eq('id', userId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Check if PIN is already used by another user in this business
+    const { data: existingPin } = await supabase
+      .from('business_users')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('pos_pin', pin)
+      .neq('id', userId)
+      .single();
+
+    if (existingPin) {
+      return res.status(400).json({ error: 'This PIN is already in use by another employee' });
+    }
+
+    const { error } = await supabase
+      .from('business_users')
+      .update({ pos_pin: pin, updated_at: new Date().toISOString() })
+      .eq('id', userId);
+
+    if (error) throw error;
+
+    res.json({ message: 'POS PIN updated successfully', pos_pin: pin });
+  } catch (error: any) {
+    console.error('Error setting PIN:', error);
     res.status(500).json({ error: error.message });
   }
 });

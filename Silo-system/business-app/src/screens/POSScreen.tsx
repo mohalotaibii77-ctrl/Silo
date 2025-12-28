@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -42,10 +42,21 @@ import {
   ClipboardList,
   Command,
   Edit2,
+  Lock,
+  Hash,
+  Delete,
 } from 'lucide-react-native';
 import { API_URL } from '../api/client';
 import { dataPreloader, CACHE_KEYS } from '../services/DataPreloader';
 import { useLocalization } from '../localization/LocalizationContext';
+import { idleTimeout } from '../services/IdleTimeout';
+// QRCode component - optional dependency for receipt scanning feature
+let QRCode: any = null;
+try {
+  QRCode = require('react-native-qrcode-svg').default;
+} catch (e) {
+  // QRCode package not installed - feature will be disabled
+}
 
 const { width, height } = Dimensions.get('window');
 const isTablet = width >= 768;
@@ -204,16 +215,22 @@ export default function POSScreen({ navigation }: any) {
   
   // POS Session state (shift management)
   const [posSession, setPosSession] = useState<any>(null);
-  const [showPosLoginModal, setShowPosLoginModal] = useState(false);
   const [showOpeningFloatModal, setShowOpeningFloatModal] = useState(false);
   const [showCloseSessionModal, setShowCloseSessionModal] = useState(false);
-  const [posEmployees, setPosEmployees] = useState<any[]>([]);
   const [selectedPosEmployee, setSelectedPosEmployee] = useState<any>(null);
-  const [posPassword, setPosPassword] = useState('');
+  
+  // PIN Lock Screen state (for idle timeout AND initial employee selection)
+  const [showPinLockScreen, setShowPinLockScreen] = useState(false);
+  const [needsInitialPinAuth, setNeedsInitialPinAuth] = useState(false); // Show PIN screen after password login
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [isAuthenticatingPin, setIsAuthenticatingPin] = useState(false);
+  const lastActivityRef = useRef<number>(Date.now());
+  const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes idle timeout
   const [openingFloat, setOpeningFloat] = useState('');
   const [cashDrawerBalance, setCashDrawerBalance] = useState<number>(0);
   const [actualCashCount, setActualCashCount] = useState('');
-  const [posLoginError, setPosLoginError] = useState<string | null>(null);
   
   const [activeSidebarTab, setActiveSidebarTab] = useState<'pos' | 'orders'>('pos');
   const [showDeliveryMethodModal, setShowDeliveryMethodModal] = useState(false);
@@ -957,6 +974,102 @@ export default function POSScreen({ navigation }: any) {
     };
   }, [navigation]);
 
+  // Idle timeout - lock screen after 5 minutes of inactivity
+  useEffect(() => {
+    // Only track idle if we have an active session AND employee is authenticated (not on login modal or initial PIN)
+    if (!posSession || !selectedPosEmployee) {
+      return;
+    }
+
+    const resetIdleTimer = () => {
+      lastActivityRef.current = Date.now();
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
+      idleTimerRef.current = setTimeout(() => {
+        // Lock the screen
+        setShowPinLockScreen(true);
+      }, IDLE_TIMEOUT_MS);
+    };
+
+    // Start idle timer
+    resetIdleTimer();
+
+    // Cleanup
+    return () => {
+      if (idleTimerRef.current) {
+        clearTimeout(idleTimerRef.current);
+      }
+    };
+  }, [posSession]);
+
+  // Reset idle timer on any user activity
+  const resetIdleTimer = useCallback(() => {
+    if (!posSession || showPinLockScreen || !selectedPosEmployee) return;
+    
+    lastActivityRef.current = Date.now();
+    if (idleTimerRef.current) {
+      clearTimeout(idleTimerRef.current);
+    }
+    idleTimerRef.current = setTimeout(() => {
+      setShowPinLockScreen(true);
+    }, IDLE_TIMEOUT_MS);
+  }, [posSession, showPinLockScreen]);
+
+  // PIN authentication handler
+  const handlePinAuthentication = async (pin: string) => {
+    if (pin.length < 4) {
+      setPinError('PIN must be at least 4 digits');
+      return;
+    }
+
+    setIsAuthenticatingPin(true);
+    setPinError(null);
+
+    try {
+      const token = await AsyncStorage.getItem('token');
+      
+      const response = await fetch(`${API_URL}/pos-sessions/pin-authenticate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ pin }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Invalid PIN');
+      }
+
+      // Success - update current employee and unlock
+      const employee = data.data.employee;
+      setSelectedPosEmployee({
+        id: employee.id,
+        name: employee.display_name || employee.username,
+        role: employee.role,
+      });
+      
+      setPinInput('');
+      setPinError(null);
+      setShowPinLockScreen(false);
+      setNeedsInitialPinAuth(false); // Clear initial auth flag
+      resetIdleTimer();
+      
+      // If this was the initial PIN auth after session opening, show success message
+      if (needsInitialPinAuth) {
+        Alert.alert('Welcome', `Logged in as ${employee.display_name || employee.username}`);
+      }
+    } catch (err: any) {
+      setPinError(err.message || 'Invalid PIN');
+      setPinInput('');
+    } finally {
+      setIsAuthenticatingPin(false);
+    }
+  };
+
   // Check for active POS session - first check local storage, then verify with backend
   const checkPosSession = async () => {
     try {
@@ -979,13 +1092,10 @@ export default function POSScreen({ navigation }: any) {
           // Session is still valid - restore it
           setPosSession(parsedSession);
           setCashDrawerBalance(result.data.current_balance || parsedSession.opening_float || 0);
-          // Restore the employee info from the session so actions are attributed correctly
-          if (parsedSession.cashier_id) {
-            setSelectedPosEmployee({
-              id: parsedSession.cashier_id,
-              name: parsedSession.cashier_name || 'Unknown',
-            });
-          }
+          // Don't auto-select employee - require PIN authentication
+          setSelectedPosEmployee(null);
+          setNeedsInitialPinAuth(true);
+          setShowPinLockScreen(true);
           return;
         } else {
           // Session no longer valid - clear stored session
@@ -993,29 +1103,27 @@ export default function POSScreen({ navigation }: any) {
         }
       }
 
-      // No stored session or it was invalid - check if current user has an active session
-      const response = await fetch(`${API_URL}/pos-sessions/active`, {
+      // No stored session or it was invalid - check if business has an active session
+      const response = await fetch(`${API_URL}/pos-sessions/business-active`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const result = await response.json();
       
       if (result.success && result.data) {
-        // Found active session for current user - store and use it
+        // Found active session for business - store and use it
         await AsyncStorage.setItem('pos_session', JSON.stringify(result.data));
         setPosSession(result.data);
-        setCashDrawerBalance(result.data.cash_summary?.current_balance || 0);
-        // Restore the employee info from the session so actions are attributed correctly
-        if (result.data.cashier_id) {
-          setSelectedPosEmployee({
-            id: result.data.cashier_id,
-            name: result.data.cashier_name || 'Unknown',
-          });
-        }
+        setCashDrawerBalance(result.data.cash_summary?.current_balance || result.data.opening_float || 0);
+        // Don't auto-select employee - require PIN authentication
+        setSelectedPosEmployee(null);
+        setNeedsInitialPinAuth(true);
+        setShowPinLockScreen(true);
       } else {
-        // No active session - show POS login
+        // No active session - show PIN screen to select employee
         setPosSession(null);
-        loadPosEmployees();
-        setShowPosLoginModal(true);
+        setSelectedPosEmployee(null);
+        setNeedsInitialPinAuth(true);
+        setShowPinLockScreen(true);
       }
     } catch (error) {
       console.error('Error checking POS session:', error);
@@ -1026,93 +1134,39 @@ export default function POSScreen({ navigation }: any) {
           const parsedSession = JSON.parse(storedSession);
           setPosSession(parsedSession);
           setCashDrawerBalance(parsedSession.opening_float || 0);
-          // Restore the employee info from the session so actions are attributed correctly
-          if (parsedSession.cashier_id) {
-            setSelectedPosEmployee({
-              id: parsedSession.cashier_id,
-              name: parsedSession.cashier_name || 'Unknown',
-            });
-          }
+          // Don't auto-select employee - require PIN authentication
+          setSelectedPosEmployee(null);
+          setNeedsInitialPinAuth(true);
+          setShowPinLockScreen(true);
         } else {
-          loadPosEmployees();
-          setShowPosLoginModal(true);
+          // No stored session - show PIN screen
+          setPosSession(null);
+          setSelectedPosEmployee(null);
+          setNeedsInitialPinAuth(true);
+          setShowPinLockScreen(true);
         }
       } catch (e) {
-        loadPosEmployees();
-        setShowPosLoginModal(true);
+        // Error - show PIN screen
+        setPosSession(null);
+        setSelectedPosEmployee(null);
+        setNeedsInitialPinAuth(true);
+        setShowPinLockScreen(true);
       }
-    }
-  };
-
-  // Load employees with POS access
-  const loadPosEmployees = async () => {
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (!token || !API_URL) return;
-
-      const response = await fetch(`${API_URL}/pos-sessions/employees`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const result = await response.json();
-      
-      if (result.success) {
-        setPosEmployees(result.data || []);
-      }
-    } catch (error) {
-      console.error('Error loading POS employees:', error);
-    }
-  };
-
-  // Authenticate POS employee
-  const authenticatePosEmployee = async () => {
-    if (!selectedPosEmployee || !posPassword) {
-      setPosLoginError('Please select an employee and enter password');
-      return;
-    }
-
-    try {
-      const token = await AsyncStorage.getItem('token');
-      if (!token || !API_URL) return;
-
-      const response = await fetch(`${API_URL}/pos-sessions/authenticate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          employee_id: selectedPosEmployee.id,
-          password: posPassword,
-        }),
-      });
-      const result = await response.json();
-
-      if (result.success) {
-        setPosLoginError(null);
-        
-        if (result.data.has_active_session) {
-          // Employee has an active session - resume it and persist
-          const activeSession = result.data.active_session;
-          await AsyncStorage.setItem('pos_session', JSON.stringify(activeSession));
-          setPosSession(activeSession);
-          setCashDrawerBalance(activeSession.cash_summary?.current_balance || activeSession.opening_float);
-          setShowPosLoginModal(false);
-        } else {
-          // No active session - prompt for opening float
-          setShowPosLoginModal(false);
-          setShowOpeningFloatModal(true);
-        }
-      } else {
-        setPosLoginError(result.error || 'Authentication failed');
-      }
-    } catch (error: any) {
-      setPosLoginError(error.message || 'Authentication failed');
     }
   };
 
   // Open new POS session
   const openPosSession = async () => {
+    // Validate employee is authenticated
+    if (!selectedPosEmployee) {
+      Alert.alert('Authentication Required', 'Please authenticate with your PIN first');
+      setShowOpeningFloatModal(false);
+      setShowPinLockScreen(true);
+      return;
+    }
+
     const floatAmount = parseFloat(openingFloat);
+    
     if (isNaN(floatAmount) || floatAmount < 0) {
       Alert.alert('Error', 'Please enter a valid opening float amount');
       return;
@@ -1120,7 +1174,11 @@ export default function POSScreen({ navigation }: any) {
 
     try {
       const token = await AsyncStorage.getItem('token');
-      if (!token || !API_URL) return;
+      
+      if (!token || !API_URL) {
+        Alert.alert('Error', 'System configuration error. Please restart the app.');
+        return;
+      }
 
       const response = await fetch(`${API_URL}/pos-sessions/open`, {
         method: 'POST',
@@ -1133,6 +1191,7 @@ export default function POSScreen({ navigation }: any) {
           opening_float: floatAmount,
         }),
       });
+      
       const result = await response.json();
 
       if (result.success) {
@@ -1142,7 +1201,12 @@ export default function POSScreen({ navigation }: any) {
         setCashDrawerBalance(floatAmount);
         setShowOpeningFloatModal(false);
         setOpeningFloat('');
-        Alert.alert('Success', `POS Session opened. Opening float: ${formatCurrency(floatAmount)}`);
+        // Session opened - employee is authenticated and POS is ready
+        Alert.alert(
+          'Session Started', 
+          `Cashier: ${selectedPosEmployee.name}\nOpening float: ${formatCurrency(floatAmount)}`, 
+          [{ text: 'Start Working' }]
+        );
       } else {
         Alert.alert('Error', result.error || 'Failed to open session');
       }
@@ -1185,16 +1249,21 @@ export default function POSScreen({ navigation }: any) {
           'Session Closed',
           `Expected: ${formatCurrency(result.data.expected_cash)}\n` +
           `Actual: ${formatCurrency(actualCount)}\n` +
-          `${varianceText}`
+          `${varianceText}`,
+          [{ text: 'OK', onPress: () => {
+            // After acknowledging, clear cart and show PIN screen for next employee
+            setCart([]);
+            setSelectedPosEmployee(null);
+            setNeedsInitialPinAuth(true);
+            setShowPinLockScreen(true);
+          }}]
         );
         
-        // Clear stored session when user explicitly signs out
+        // Clear stored session and cart after closing
         await AsyncStorage.removeItem('pos_session');
         setPosSession(null);
         setShowCloseSessionModal(false);
         setActualCashCount('');
-        setShowPosLoginModal(true);
-        loadPosEmployees();
       } else {
         Alert.alert('Error', result.error || 'Failed to close session');
       }
@@ -1232,7 +1301,16 @@ export default function POSScreen({ navigation }: any) {
       // First try to get from stored business data
       if (businessData) {
         const business = JSON.parse(businessData);
-        if (business.currency) setCurrency(business.currency);
+        if (business.currency) {
+          setCurrency(business.currency);
+        } else {
+          // Currency missing - block POS access
+          Alert.alert(
+            'Configuration Error',
+            'Business currency not set. Please contact your administrator.',
+            [{ text: 'OK' }]
+          );
+        }
         // Check if VAT is enabled
         if (business.vat_enabled !== undefined) {
           setVatEnabled(business.vat_enabled);
@@ -1248,7 +1326,16 @@ export default function POSScreen({ navigation }: any) {
           });
           const result = await response.json();
           if (result.success && result.data) {
-            if (result.data.currency) setCurrency(result.data.currency);
+            if (result.data.currency) {
+              setCurrency(result.data.currency);
+            } else {
+              // Currency missing - block POS access
+              Alert.alert(
+                'Configuration Error',
+                'Business currency not set. Please contact your administrator.',
+                [{ text: 'OK' }]
+              );
+            }
             // Apply VAT settings from store-setup
             const isVatEnabled = result.data.vat_enabled || false;
             setVatEnabled(isVatEnabled);
@@ -1789,6 +1876,12 @@ export default function POSScreen({ navigation }: any) {
 
   // Add a simple product (no variants) to cart
   const addSimpleProductToCart = (product: Product) => {
+    // Check if session is active
+    if (!posSession) {
+      Alert.alert('Session Required', 'Please start a POS session first by clicking the "Start Session" button');
+      return;
+    }
+    
     const cartItem: CartItem = {
       id: `${product.id}-${Date.now()}`,
       productId: product.id,
@@ -1850,6 +1943,13 @@ export default function POSScreen({ navigation }: any) {
   // Add customized product to cart
   const addCustomizedToCart = () => {
     if (!selectedProduct) return;
+
+    // Check if session is active
+    if (!posSession) {
+      Alert.alert('Session Required', 'Please start a POS session first by clicking the "Start Session" button');
+      setShowCustomizeModal(false);
+      return;
+    }
 
     // For non-bundle products, check all required variants are selected
     if (!selectedProduct.isBundle) {
@@ -2862,173 +2962,6 @@ export default function POSScreen({ navigation }: any) {
       fontWeight: '700',
       color: colors.primaryForeground,
     },
-    // Cart styles (used in modal)
-    cartHeader: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    cartTitle: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: colors.foreground,
-    },
-    cartCount: {
-      backgroundColor: colors.primary,
-      paddingHorizontal: 10,
-      paddingVertical: 4,
-      borderRadius: 12,
-    },
-    cartCountText: {
-      fontSize: 12,
-      fontWeight: '600',
-      color: colors.primaryForeground,
-    },
-    orderTypeRow: {
-      flexDirection: 'row',
-      padding: 12,
-      gap: 8,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    orderTypeBtn: {
-      flex: 1,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 12,
-      borderRadius: 10,
-      backgroundColor: colors.secondary,
-      gap: 8,
-    },
-    orderTypeBtnActive: {
-      backgroundColor: colors.primary,
-    },
-    orderTypeBtnText: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: colors.foreground,
-    },
-    orderTypeBtnTextActive: {
-      color: colors.primaryForeground,
-    },
-    cartList: {
-      flex: 1,
-      padding: 12,
-    },
-    cartItem: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 12,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-    },
-    cartItemInfo: {
-      flex: 1,
-    },
-    cartItemName: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: colors.foreground,
-      marginBottom: 4,
-    },
-    cartItemPrice: {
-      fontSize: 13,
-      color: colors.mutedForeground,
-    },
-    quantityControls: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-    },
-    qtyBtn: {
-      width: 32,
-      height: 32,
-      borderRadius: 8,
-      backgroundColor: colors.secondary,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    qtyText: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: colors.foreground,
-      minWidth: 24,
-      textAlign: 'center',
-    },
-    deleteBtn: {
-      marginLeft: 8,
-      padding: 6,
-    },
-    emptyCart: {
-      flex: 1,
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 32,
-    },
-    emptyCartText: {
-      fontSize: 14,
-      color: colors.mutedForeground,
-      marginTop: 12,
-    },
-    cartFooter: {
-      padding: 16,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-    },
-    totalsRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginBottom: 8,
-    },
-    totalsLabel: {
-      fontSize: 14,
-      color: colors.mutedForeground,
-    },
-    totalsValue: {
-      fontSize: 14,
-      fontWeight: '600',
-      color: colors.foreground,
-    },
-    totalRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      marginTop: 8,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-    },
-    totalLabel: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: colors.foreground,
-    },
-    totalValue: {
-      fontSize: 18,
-      fontWeight: '700',
-      color: colors.primary,
-    },
-    chargeBtn: {
-      marginTop: 16,
-      backgroundColor: colors.primary,
-      paddingVertical: 16,
-      borderRadius: 12,
-      alignItems: 'center',
-      flexDirection: 'row',
-      justifyContent: 'center',
-      gap: 10,
-    },
-    chargeBtnDisabled: {
-      opacity: 0.5,
-    },
-    chargeBtnText: {
-      fontSize: 16,
-      fontWeight: '700',
-      color: colors.primaryForeground,
-    },
     // Modal Styles
     modalOverlay: {
       flex: 1,
@@ -3115,7 +3048,20 @@ export default function POSScreen({ navigation }: any) {
       fontSize: 32,
       fontWeight: '700',
       color: colors.primary,
-      marginBottom: 32,
+      marginBottom: 16,
+    },
+    qrCodeContainer: {
+      alignItems: 'center',
+      padding: 16,
+      backgroundColor: '#ffffff',
+      borderRadius: 12,
+      marginBottom: 24,
+    },
+    qrCodeHint: {
+      fontSize: 11,
+      color: '#71717a',
+      marginTop: 8,
+      textAlign: 'center',
     },
     receiptActions: {
       width: '100%',
@@ -3142,6 +3088,18 @@ export default function POSScreen({ navigation }: any) {
       alignItems: 'center',
     },
     doneBtnText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: colors.primaryForeground,
+    },
+    checkoutBtn: {
+      padding: 16,
+      borderRadius: 12,
+      backgroundColor: colors.primary,
+      alignItems: 'center',
+      marginTop: 16,
+    },
+    checkoutText: {
       fontSize: 15,
       fontWeight: '600',
       color: colors.primaryForeground,
@@ -3304,8 +3262,9 @@ export default function POSScreen({ navigation }: any) {
         </View>
         
         <View style={styles.sidebarBottom}>
-          {/* Cash Drawer Balance (when session active) */}
-          {posSession && (
+          {/* Session Control Button */}
+          {posSession ? (
+            // Show cash drawer + end session button when session is active
             <TouchableOpacity 
               style={{ 
                 backgroundColor: colors.muted, 
@@ -3323,8 +3282,82 @@ export default function POSScreen({ navigation }: any) {
               <Text style={{ color: colors.foreground, fontWeight: '700', fontSize: 12 }}>
                 {formatCurrency(cashDrawerBalance)}
               </Text>
+              <Text style={{ color: colors.mutedForeground, fontSize: 9, marginTop: 4 }}>
+                Tap to End Session
+              </Text>
             </TouchableOpacity>
-          )}
+          ) : selectedPosEmployee ? (
+            // Show "Switch User" and "Start Session" buttons when employee authenticated but no active session
+            <View style={{ width: '100%', marginBottom: 8 }}>
+              {/* Current Employee Label */}
+              <View style={{ 
+                backgroundColor: colors.muted,
+                padding: 8,
+                borderRadius: 6,
+                marginBottom: 8,
+              }}>
+                <Text style={{ 
+                  color: colors.mutedForeground, 
+                  fontSize: 9, 
+                  textAlign: 'center',
+                  marginBottom: 2,
+                }}>
+                  CURRENT USER
+                </Text>
+                <Text style={{ 
+                  color: colors.foreground, 
+                  fontSize: 11, 
+                  fontWeight: '600',
+                  textAlign: 'center',
+                }}>
+                  {selectedPosEmployee.name}
+                </Text>
+              </View>
+
+              {/* Switch User Button */}
+              <TouchableOpacity 
+                style={{ 
+                  backgroundColor: colors.card,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  padding: 10, 
+                  borderRadius: 8, 
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 8,
+                  height: 44,
+                }}
+                onPress={() => {
+                  // Sign out from current employee (not from POS)
+                  setSelectedPosEmployee(null);
+                  setNeedsInitialPinAuth(true);
+                  setShowPinLockScreen(true);
+                }}
+              >
+                <User size={22} color={colors.foreground} />
+              </TouchableOpacity>
+
+              {/* Start Session Button */}
+              <TouchableOpacity 
+                style={{ 
+                  backgroundColor: colors.card,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  padding: 10, 
+                  borderRadius: 8, 
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  height: 44,
+                }}
+                onPress={() => {
+                  setOpeningFloat('');
+                  setShowOpeningFloatModal(true);
+                }}
+              >
+                <ClipboardList size={22} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
           
           <View style={styles.timeDisplay}>
             <Clock size={16} color={colors.mutedForeground} style={styles.timeIcon} />
@@ -4016,12 +4049,12 @@ export default function POSScreen({ navigation }: any) {
               ))}
 
               {/* Modifiers - Removable Items */}
-              {selectedProduct?.modifiers.filter(m => m.removable).length > 0 && (
+              {(selectedProduct?.modifiers?.filter(m => m.removable).length ?? 0) > 0 && (
                 <View style={styles.variantSection}>
                   <Text style={styles.sectionLabel}>Remove</Text>
                   <View style={styles.optionsRow}>
                     {selectedProduct?.modifiers
-                      .filter(m => m.removable)
+                      ?.filter(m => m.removable)
                       .map(mod => {
                         const isRemoved = removedModifiers.has(mod.id);
                         return (
@@ -4060,12 +4093,12 @@ export default function POSScreen({ navigation }: any) {
               )}
 
               {/* Modifiers - Addable Extras */}
-              {selectedProduct?.modifiers.filter(m => m.addable).length > 0 && (
+              {(selectedProduct?.modifiers?.filter(m => m.addable).length ?? 0) > 0 && (
                 <View style={styles.variantSection}>
                   <Text style={styles.sectionLabel}>Add Extra</Text>
                   <View style={styles.optionsRow}>
                     {selectedProduct?.modifiers
-                      .filter(m => m.addable)
+                      ?.filter(m => m.addable)
                       .map(mod => {
                         const modQty = addedModifiers.get(mod.id) || 0;
                         const isAdded = modQty > 0;
@@ -4335,7 +4368,7 @@ export default function POSScreen({ navigation }: any) {
                       borderColor: colors.border,
                     }}
                   >
-                    <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 16 }}>{amount} KD</Text>
+                    <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 16 }}>{formatCurrency(amount)}</Text>
                   </TouchableOpacity>
                 ))}
                 <TouchableOpacity
@@ -4531,6 +4564,21 @@ export default function POSScreen({ navigation }: any) {
                 Order #{lastOrderNumber}
               </Text>
               <Text style={styles.receiptTotal}>{formatCurrency(total)}</Text>
+
+              {/* QR Code for order completion scanning */}
+              {lastOrderNumber && QRCode && (
+                <View style={styles.qrCodeContainer}>
+                  <QRCode
+                    value={lastOrderNumber}
+                    size={120}
+                    backgroundColor="#ffffff"
+                    color="#000000"
+                  />
+                  <Text style={styles.qrCodeHint}>
+                    Scan to complete order
+                  </Text>
+                </View>
+              )}
 
               <View style={styles.receiptActions}>
                 <TouchableOpacity style={styles.printBtn}>
@@ -4900,130 +4948,29 @@ export default function POSScreen({ navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      {/* POS Employee Login Modal */}
-      <Modal
-        visible={showPosLoginModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => {}}
-      >
-        <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
-          <View style={[styles.modalContent, { width: isTablet ? 420 : width - 48 }]}>
-            <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
-              <Text style={[styles.modalTitle, { fontSize: 24 }]}>POS Login</Text>
-            </View>
-
-            <View style={{ padding: 20 }}>
-              <Text style={{ color: colors.mutedForeground, marginBottom: 16, textAlign: 'center' }}>
-                Select your name and enter your password to start your shift
-              </Text>
-
-              {/* Employee Selection */}
-              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Select Employee</Text>
-              <ScrollView style={{ maxHeight: 200, marginBottom: 16 }}>
-                {posEmployees.map(emp => (
-                  <TouchableOpacity
-                    key={emp.id}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      padding: 14,
-                      borderRadius: 10,
-                      marginBottom: 8,
-                      backgroundColor: selectedPosEmployee?.id === emp.id ? colors.primary + '20' : colors.muted,
-                      borderWidth: selectedPosEmployee?.id === emp.id ? 2 : 1,
-                      borderColor: selectedPosEmployee?.id === emp.id ? colors.primary : colors.border,
-                    }}
-                    onPress={() => {
-                      setSelectedPosEmployee(emp);
-                      setPosLoginError(null);
-                    }}
-                  >
-                    <View style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: colors.primary,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      marginRight: 12,
-                    }}>
-                      <Text style={{ color: '#fff', fontWeight: '700' }}>
-                        {emp.name.charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: colors.foreground, fontWeight: '600' }}>{emp.name}</Text>
-                      <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>{emp.role}</Text>
-                    </View>
-                    {selectedPosEmployee?.id === emp.id && (
-                      <Check size={20} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              {/* Password Input */}
-              <Text style={{ color: colors.mutedForeground, marginBottom: 8, fontSize: 14 }}>Password</Text>
-              <TextInput
-                style={{
-                  backgroundColor: colors.muted,
-                  borderRadius: 12,
-                  padding: 16,
-                  fontSize: 16,
-                  color: colors.foreground,
-                  marginBottom: 16,
-                }}
-                placeholder="Enter your password"
-                placeholderTextColor={colors.mutedForeground}
-                secureTextEntry
-                value={posPassword}
-                onChangeText={(text) => {
-                  setPosPassword(text);
-                  setPosLoginError(null);
-                }}
-              />
-
-              {posLoginError && (
-                <Text style={{ color: '#ef4444', marginBottom: 16, textAlign: 'center' }}>
-                  {posLoginError}
-                </Text>
-              )}
-
-              <TouchableOpacity
-                style={{
-                  backgroundColor: selectedPosEmployee && posPassword ? colors.primary : colors.muted,
-                  padding: 16,
-                  borderRadius: 12,
-                  alignItems: 'center',
-                }}
-                onPress={authenticatePosEmployee}
-                disabled={!selectedPosEmployee || !posPassword}
-              >
-                <Text style={{ 
-                  color: selectedPosEmployee && posPassword ? '#fff' : colors.mutedForeground, 
-                  fontWeight: '600',
-                  fontSize: 16,
-                }}>
-                  Sign In
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Opening Float Modal */}
+      {/* Opening Float Modal (Start Session) */}
       <Modal
         visible={showOpeningFloatModal}
         transparent
         animationType="fade"
-        onRequestClose={() => {}}
+        onRequestClose={() => {
+          setShowOpeningFloatModal(false);
+          setOpeningFloat('');
+        }}
       >
         <View style={[styles.modalOverlay, { justifyContent: 'center' }]}>
           <View style={[styles.modalContent, { width: isTablet ? 400 : width - 48 }]}>
             <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
               <Text style={[styles.modalTitle, { fontSize: 22 }]}>Start Your Shift</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowOpeningFloatModal(false);
+                  setOpeningFloat('');
+                }}
+                style={styles.closeBtn}
+              >
+                <X size={24} color={colors.foreground} />
+              </TouchableOpacity>
             </View>
 
             <View style={{ padding: 20 }}>
@@ -5066,29 +5013,54 @@ export default function POSScreen({ navigation }: any) {
                       borderColor: colors.border,
                     }}
                   >
-                    <Text style={{ color: colors.foreground, fontWeight: '600' }}>{amount} KD</Text>
+                    <Text style={{ color: colors.foreground, fontWeight: '600' }}>{formatCurrency(amount)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
-              <TouchableOpacity
-                style={{
-                  backgroundColor: openingFloat ? colors.primary : colors.muted,
-                  padding: 16,
-                  borderRadius: 12,
-                  alignItems: 'center',
-                }}
-                onPress={openPosSession}
-                disabled={!openingFloat}
-              >
-                <Text style={{
-                  color: openingFloat ? '#fff' : colors.mutedForeground,
-                  fontWeight: '600',
-                  fontSize: 16,
-                }}>
-                  Open Cash Drawer
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 12 }}>
+                <TouchableOpacity
+                  style={{
+                    flex: 1,
+                    backgroundColor: colors.muted,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={() => {
+                    setShowOpeningFloatModal(false);
+                    setOpeningFloat('');
+                  }}
+                >
+                  <Text style={{
+                    color: colors.foreground,
+                    fontWeight: '600',
+                    fontSize: 16,
+                  }}>
+                    Cancel
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={{
+                    flex: 2,
+                    backgroundColor: openingFloat ? '#10b981' : colors.muted,
+                    padding: 16,
+                    borderRadius: 12,
+                    alignItems: 'center',
+                  }}
+                  onPress={openPosSession}
+                  disabled={!openingFloat}
+                >
+                  <Text style={{
+                    color: openingFloat ? '#ffffff' : colors.mutedForeground,
+                    fontWeight: '600',
+                    fontSize: 16,
+                  }}>
+                    Open Cash Drawer
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>
@@ -5875,6 +5847,149 @@ export default function POSScreen({ navigation }: any) {
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
+      </Modal>
+
+      {/* PIN Lock Screen Modal */}
+      <Modal
+        visible={showPinLockScreen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.9)', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={[styles.modalContent, { width: Math.min(400, width - 40), padding: 32, alignItems: 'center' }]}>
+            {/* Lock Icon */}
+            <View style={{
+              width: 80,
+              height: 80,
+              borderRadius: 40,
+              backgroundColor: colors.primary + '20',
+              justifyContent: 'center',
+              alignItems: 'center',
+              marginBottom: 20,
+            }}>
+              <Lock size={40} color={colors.primary} />
+            </View>
+
+            {/* Title */}
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: colors.foreground, marginBottom: 8 }}>
+              {needsInitialPinAuth ? 'Select Employee' : 'Screen Locked'}
+            </Text>
+
+            {/* Subtitle with previous employee name */}
+            <Text style={{ fontSize: 14, color: colors.mutedForeground, marginBottom: 24, textAlign: 'center' }}>
+              {needsInitialPinAuth 
+                ? 'Enter your PIN to start your shift'
+                : selectedPosEmployee?.name 
+                  ? `Last: ${selectedPosEmployee.name}`
+                  : 'Enter your PIN to unlock'}
+            </Text>
+
+            {/* Error message */}
+            {pinError && (
+              <View style={{ backgroundColor: colors.destructive + '20', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8, marginBottom: 16 }}>
+                <Text style={{ color: colors.destructive, fontSize: 14, fontWeight: '500' }}>
+                  {pinError}
+                </Text>
+              </View>
+            )}
+
+            {/* PIN Dots */}
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 24 }}>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <View
+                  key={i}
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: i < pinInput.length ? colors.primary : 'transparent',
+                    borderWidth: 2,
+                    borderColor: i < pinInput.length ? colors.primary : colors.border,
+                  }}
+                />
+              ))}
+            </View>
+
+            {/* Loading indicator */}
+            {isAuthenticatingPin && (
+              <Command size={24} color={colors.primary} style={{ marginBottom: 16 }} />
+            )}
+
+            {/* Keypad */}
+            <View style={{ width: '100%', gap: 12 }}>
+              {[
+                ['1', '2', '3'],
+                ['4', '5', '6'],
+                ['7', '8', '9'],
+                ['C', '0', '⌫'],
+              ].map((row, rowIndex) => (
+                <View key={rowIndex} style={{ flexDirection: 'row', justifyContent: 'center', gap: 12 }}>
+                  {row.map((key) => (
+                    <TouchableOpacity
+                      key={key}
+                      style={{
+                        width: 72,
+                        height: 56,
+                        borderRadius: 12,
+                        backgroundColor: key === 'C' || key === '⌫' ? colors.muted : colors.card,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                      }}
+                      onPress={() => {
+                        if (key === '⌫') {
+                          setPinInput(prev => prev.slice(0, -1));
+                          setPinError(null);
+                        } else if (key === 'C') {
+                          setPinInput('');
+                          setPinError(null);
+                        } else if (pinInput.length < 6) {
+                          const newPin = pinInput + key;
+                          setPinInput(newPin);
+                          setPinError(null);
+                          // Auto-submit when PIN reaches 4-6 digits
+                          if (newPin.length >= 4) {
+                            setTimeout(() => {
+                              handlePinAuthentication(newPin);
+                            }, 200);
+                          }
+                        }
+                      }}
+                      disabled={isAuthenticatingPin}
+                    >
+                      {key === '⌫' ? (
+                        <Delete size={24} color={colors.foreground} />
+                      ) : (
+                        <Text style={{ fontSize: 24, fontWeight: '600', color: key === 'C' ? colors.mutedForeground : colors.foreground }}>
+                          {key}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ))}
+            </View>
+
+            {/* Hint */}
+            <View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: colors.muted,
+              paddingHorizontal: 16,
+              paddingVertical: 10,
+              borderRadius: 8,
+              marginTop: 24,
+            }}>
+              <User size={16} color={colors.mutedForeground} />
+              <Text style={{ color: colors.mutedForeground, fontSize: 12, flex: 1 }}>
+                Any employee with POS access can unlock
+              </Text>
+            </View>
+          </View>
+        </View>
       </Modal>
 
           </View>

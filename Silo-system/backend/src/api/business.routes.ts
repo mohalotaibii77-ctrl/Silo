@@ -273,6 +273,7 @@ router.put('/change-requests/:id/approve', async (req: Request, res: Response): 
     if (request.new_certificate_url) updateData.certificate_url = request.new_certificate_url;
     
     // Localization fields
+    if (request.new_country) updateData.country = request.new_country;
     if (request.new_currency) updateData.currency = request.new_currency;
     if (request.new_language) updateData.language = request.new_language;
     if (request.new_timezone) updateData.timezone = request.new_timezone;

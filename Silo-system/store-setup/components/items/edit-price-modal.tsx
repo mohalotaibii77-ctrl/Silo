@@ -6,6 +6,7 @@ import { X, DollarSign, Loader2, RotateCcw } from 'lucide-react';
 import { Item } from '@/types/items';
 import { setItemPrice, resetItemPrice } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { useConfig } from '@/lib/config-context';
 
 interface EditPriceModalProps {
   isOpen: boolean;
@@ -15,20 +16,17 @@ interface EditPriceModalProps {
   currency?: string;
 }
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
-  QAR: 'QAR', BHD: 'BHD', OMR: 'OMR', EGP: 'EGP', JOD: 'JD', INR: '₹', CNY: '¥', JPY: '¥',
-};
-
 export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency }: EditPriceModalProps) {
   const { isRTL, t, currency: contextCurrency } = useLanguage();
+  const { getCurrencySymbol } = useConfig();
   // Use passed currency or fall back to context currency (from business settings)
   const activeCurrency = currency || contextCurrency;
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [price, setPrice] = useState('');
 
-  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
+  // Get symbol from backend config (centralized source of truth)
+  const currencySymbol = getCurrencySymbol(activeCurrency);
 
   // Format price - handles small values like 0.0003
   const formatCost = (cost: number) => {
@@ -184,11 +182,16 @@ export function EditPriceModal({ isOpen, item, onClose, onSuccess, currency }: E
                   <div className="relative">
                     <span className={`absolute ${isRTL ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 text-zinc-400`}>{currencySymbol}</span>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      step="0.0001"
-                      min="0"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setPrice(val);
+                        }
+                      }}
+                      placeholder="0.000"
                       dir="ltr"
                       className={`w-full ${isRTL ? 'pr-12 pl-4' : 'pl-12 pr-4'} py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-lg font-medium`}
                       autoFocus

@@ -18,17 +18,12 @@ Orders can originate from multiple sources:
 | POS Terminal | `pos` | Direct orders from the point-of-sale terminal |
 | Walk-in | `walk_in` | Customers who walk in without prior order |
 | Phone | `phone` | Orders taken over the phone |
-| Jahez | `jahez` | Delivery partner - Jahez |
-| HungerStation | `hungerstation` | Delivery partner - HungerStation |
-| Talabat | `talabat` | Delivery partner - Talabat |
-| Carriage | `carriage` | Delivery partner - Carriage |
-| Mrsool | `mrsool` | Delivery partner - Mrsool |
-| ToYou | `toyou` | Delivery partner - ToYou |
-| Deliveroo | `deliveroo` | Delivery partner - Deliveroo |
-| Uber Eats | `uber_eats` | Delivery partner - Uber Eats |
+| External API | `api` | Orders from delivery partner APIs (Talabat, Jahez, etc.) |
 | Website | `website` | Online orders from business website |
 | Mobile App | `mobile_app` | Orders from business mobile app |
 | Other | `other` | Other sources |
+
+> **Note:** The specific delivery partner is identified via `delivery_partner_id`, which references the business's configured delivery partners in the `delivery_partners` table. This allows businesses to use any delivery partner (major platforms or local services) without code changes.
 
 ---
 
@@ -122,14 +117,22 @@ The system uses 6 statuses:
 
 ### Who Can Do What
 
-| Action | Allowed Roles | Location | Notes |
-|--------|--------------|----------|-------|
-| **Create Order** | `pos`, `cashier`, `owner` | POS Terminal | New orders from POS |
-| **Edit Order** | `pos`, `cashier`, `owner` | POS Terminal | Only POS orders, only `in_progress` status |
-| **Complete Order** | `kitchen_display` | Kitchen Display | Marks food as ready |
-| **Mark Picked Up** | `pos`, `cashier`, `owner` | POS Terminal | Only delivery orders in `completed` status |
-| **Cancel Order** | Any business user | POS/Management | Only `in_progress` orders |
+| Action | Who Has Access | Location | Notes |
+|--------|---------------|----------|-------|
+| **Create Order** | Users with `pos_access` permission | POS Terminal | New orders from POS |
+| **Edit Order** | Users with `pos_access` permission | POS Terminal | Only POS orders, `pending` or `in_progress` status |
+| **Complete Order** | Depends on kitchen mode (see below) | Kitchen Display or Orders tab | Marks food as ready |
+| **Mark Picked Up** | Users with `pos_access` permission | POS Terminal | Only delivery orders in `completed` status |
+| **Cancel Order** | Any business user | POS/Management | `pending` or `in_progress` orders |
 | **View Orders** | Users with `orders` permission | Business App | Managers have permission by default |
+
+#### Complete Order Access by Kitchen Mode
+| Kitchen Mode | Who Can Complete | How |
+|-------------|-----------------|-----|
+| `display` (default) | `kitchen_display` role | Tap "Ready" on Kitchen Display screen |
+| `receipt_scan` | Users with `orders` permission | Scan QR code in Orders tab |
+
+> **Note:** `pos_access` permission can be granted to any employee. Owners always have full access.
 
 ### Middleware Implementation
 
@@ -138,8 +141,8 @@ The system uses 6 statuses:
 │                    BACKEND MIDDLEWARE                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  requirePOSAccess          →  pos, cashier, owner, super_admin  │
-│  requireKitchenAccess      →  kitchen_display, super_admin      │
+│  requirePOSAccess          →  owner, pos role, OR pos_access    │
+│  requireKitchenAccess      →  kitchen_display only              │
 │  requireBusinessAccess     →  Any authenticated business user   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
@@ -150,7 +153,8 @@ The system uses 6 statuses:
 | Endpoint | Middleware | Access |
 |----------|------------|--------|
 | `PATCH /api/pos/orders/:id/edit` | `requirePOSAccess` | POS only |
-| `POST /api/pos/orders/:id/complete` | `requireKitchenAccess` | Kitchen only |
+| `POST /api/pos/orders/:id/complete` | `requireKitchenAccess` | Kitchen Display mode only |
+| `POST /api/pos/orders/scan-complete` | `requireBusinessAccess` | Receipt Scan mode - users with `orders` permission |
 | `POST /api/pos/orders/:id/pickup` | `requirePOSAccess` | POS only |
 | `POST /api/pos/orders/:id/cancel` | `requireBusinessAccess` | Any business user |
 | `GET /api/pos/orders` | `requireBusinessAccess` | Any business user |
@@ -160,8 +164,8 @@ The system uses 6 statuses:
 ## Order Editing Rules
 
 1. **Only POS orders can be edited** - API orders from delivery partners cannot be modified
-2. **Status restriction** - Only orders with status `in_progress` can be edited
-3. **Role restriction** - Only POS operators, cashiers, and owners can edit
+2. **Status restriction** - Orders with status `pending` or `in_progress` can be edited
+3. **Permission restriction** - Only users with `pos_access` permission can edit orders
 4. **What can be edited:**
    - Add items
    - Remove items
@@ -176,9 +180,30 @@ The system uses 6 statuses:
 
 ## Order Completion Rules
 
-1. **Kitchen Display is the only place to complete orders**
-2. **Only `in_progress` orders can be completed**
-3. **On completion:**
+### Kitchen Operation Modes
+
+The system supports two modes for completing orders, configured in **Settings → Operations → Kitchen Settings**:
+
+#### Mode 1: Kitchen Display (Default)
+- Dedicated screen/tablet in kitchen shows incoming orders
+- Kitchen staff taps "Ready" to mark order as completed
+- Requires `kitchen_display` role to access
+
+#### Mode 2: Receipt Scan
+- QR code is printed on each receipt
+- Receipt travels with the order through kitchen
+- When food is ready, employee opens **Orders** tab and taps **Scan** button
+- Scans QR code from receipt to complete order
+- Requires `orders` permission to use scanner
+
+> **Note:** Receipt Scan mode is ideal for small restaurants that don't use kitchen displays. The workflow mirrors traditional paper-based kitchen operations.
+
+### Completion Rules
+
+1. **Kitchen Display mode:** Only `kitchen_display` role can complete orders
+2. **Receipt Scan mode:** Users with `orders` permission can complete via scan
+3. **Only `in_progress` orders can be completed**
+4. **On completion:**
    - Inventory is consumed (deducted from stock)
    - Payment status is finalized
    - Timeline event is logged

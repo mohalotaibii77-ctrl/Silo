@@ -10,9 +10,10 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
 import api from '../api/client';
+import { safeGoBack } from '../utils/navigationHelpers';
 import {
   ArrowLeft,
   ArrowRight,
@@ -78,6 +79,8 @@ interface POActivity {
 }
 
 export default function PODetailScreen({ navigation, route }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const { t, isRTL, language, formatCurrency } = useLocalization();
   const { orderId } = route.params;
   
@@ -184,7 +187,7 @@ export default function PODetailScreen({ navigation, route }: any) {
               await api.put(`/inventory-stock/purchase-orders/${orderId}/status`, {
                 status: 'cancelled',
               });
-              navigation.goBack();
+              safeGoBack(navigation);
             } catch (error) {
               Alert.alert(t('Error', 'خطأ'), t('Failed to cancel order', 'فشل في إلغاء الطلب'));
             }
@@ -232,7 +235,7 @@ export default function PODetailScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, isRTL && styles.rtlRow]}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
             {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('Purchase Order', 'أمر الشراء')}</Text>
@@ -249,7 +252,7 @@ export default function PODetailScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, isRTL && styles.rtlRow]}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
             {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('Purchase Order', 'أمر الشراء')}</Text>
@@ -267,7 +270,7 @@ export default function PODetailScreen({ navigation, route }: any) {
     <View style={styles.container}>
       {/* Header */}
       <View style={[styles.header, isRTL && styles.rtlRow]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
           {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -486,7 +489,7 @@ export default function PODetailScreen({ navigation, route }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

@@ -834,12 +834,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                   {t('Price', 'السعر')} *
                 </label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={price}
-                  onChange={(e) => setPrice(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                      setPrice(val);
+                    }
+                  }}
                   placeholder="0.000"
-                  step="0.001"
-                  min="0"
                   className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                 />
               </div>
@@ -848,12 +852,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                   {t('Tax Rate %', 'نسبة الضريبة %')}
                 </label>
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   value={taxRate}
-                  onChange={(e) => setTaxRate(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                      setTaxRate(val);
+                    }
+                  }}
                   placeholder="0"
-                  step="0.1"
-                  min="0"
                   className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                 />
               </div>
@@ -1006,11 +1014,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                           className="w-28 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                         />
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={variant.price_adjustment || ''}
-                          onChange={(e) => updateVariant(variant.id, { price_adjustment: parseFloat(e.target.value) || 0 })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^-?\d*\.?\d*$/.test(val)) {
+                              updateVariant(variant.id, { price_adjustment: val === '' ? 0 : parseFloat(val) || 0 });
+                            }
+                          }}
                           placeholder={t('+/- Price', '+/- السعر')}
-                          step="0.001"
                           className="w-24 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                         />
                         <button
@@ -1070,9 +1083,15 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                           itemsList={foodItems}
                         />
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={ing.quantity ?? ''}
-                          onChange={(e) => updateIngredient(ing.id, { quantity: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateIngredient(ing.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                            }
+                          }}
                           placeholder={t('Qty', 'الكمية')}
                           step="0.001"
                           min="0"
@@ -1152,12 +1171,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                               itemsList={foodItems}
                             />
                             <input
-                              type="number"
+                              type="text"
+                              inputMode="decimal"
                               value={ing.quantity ?? ''}
-                              onChange={(e) => updateVariantIngredient(variant.id, ing.id, { quantity: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  updateVariantIngredient(variant.id, ing.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                                }
+                              }}
                               placeholder={t('Qty', 'الكمية')}
-                              step="0.001"
-                              min="0"
                               className="w-16 px-2 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                             />
                             {ing.item && (
@@ -1241,12 +1264,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                       />
                       <div className="flex items-center gap-1.5">
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={mod.quantity ?? ''}
-                          onChange={(e) => updateModifier(mod.id, { quantity: e.target.value === '' ? 1 : parseFloat(e.target.value) })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateModifier(mod.id, { quantity: val === '' ? 1 : parseFloat(val) });
+                            }
+                          }}
                           placeholder={t('Qty', 'الكمية')}
-                          step="0.001"
-                          min="0"
                           className="w-16 px-2 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                         />
                         {mod.item && (
@@ -1258,12 +1285,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                       <div className="flex items-center gap-1">
                         <span className="text-sm text-zinc-500">+</span>
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="decimal"
                           value={mod.extra_price ?? ''}
-                          onChange={(e) => updateModifier(mod.id, { extra_price: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateModifier(mod.id, { extra_price: val === '' ? 0 : parseFloat(val) });
+                            }
+                          }}
                           placeholder="0.000"
-                          step="0.001"
-                          min="0"
                           className="w-24 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                         />
                       </div>
@@ -1326,11 +1357,16 @@ export function AddProductModal({ isOpen, onClose, onSuccess, editProduct }: Add
                           placeholder={t('Select packaging/supply item', 'اختر مادة تعبئة/مستلزم')}
                         />
                         <input
-                          type="number"
+                          type="text"
+                          inputMode="numeric"
                           value={acc.quantity ?? ''}
-                          onChange={(e) => updateAccessory(acc.id, { quantity: e.target.value === '' ? 1 : parseFloat(e.target.value) })}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d+$/.test(val)) {
+                              updateAccessory(acc.id, { quantity: val === '' ? 1 : parseInt(val) });
+                            }
+                          }}
                           placeholder={t('Qty', 'الكمية')}
-                          step="1"
                           min="1"
                           className="w-20 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                         />

@@ -16,6 +16,7 @@ import { colors } from '../theme/colors';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { 
   ArrowLeft,
   ArrowRight,
@@ -179,7 +180,7 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
   );
 };
 
-const ItemSkeleton = () => (
+const ItemSkeleton = ({ styles }: { styles: any }) => (
   <View style={styles.listCard}>
     <View style={styles.listCardContent}>
       <Skeleton width={44} height={44} borderRadius={12} />
@@ -850,9 +851,9 @@ export default function InventoryScreen({ navigation }: any) {
     if (loading) {
       return (
         <>
-          <ItemSkeleton />
-          <ItemSkeleton />
-          <ItemSkeleton />
+          <ItemSkeleton styles={styles} />
+          <ItemSkeleton styles={styles} />
+          <ItemSkeleton styles={styles} />
         </>
       );
     }
@@ -1079,7 +1080,7 @@ export default function InventoryScreen({ navigation }: any) {
       {/* Header */}
       <View style={styles.header}>
         <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
             {isRTL ? (
               <ArrowRight size={24} color={colors.foreground} />
             ) : (

@@ -11,3 +11,4 @@ ON business_users (business_id, LOWER(username));
 COMMENT ON INDEX idx_business_users_unique_username IS 'Ensures usernames are unique within a business (case-insensitive)';
 
 
+

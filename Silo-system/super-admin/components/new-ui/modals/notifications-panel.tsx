@@ -30,17 +30,32 @@ interface ChangeRequest {
   id: number;
   request_type: string;
   status: string;
+  // Profile fields - old values
+  old_name?: string;
+  old_email?: string;
+  old_phone?: string;
+  old_address?: string;
+  old_logo_url?: string;
+  old_certificate_url?: string;
+  // Profile fields - new values
   new_name?: string;
   new_email?: string;
   new_phone?: string;
   new_address?: string;
   new_logo_url?: string;
   new_certificate_url?: string;
-  // Localization fields
+  // Localization fields - old values
+  old_currency?: string;
+  old_language?: string;
+  old_timezone?: string;
+  // Localization fields - new values
   new_currency?: string;
   new_language?: string;
   new_timezone?: string;
-  // Tax fields
+  // Tax fields - old values
+  old_vat_enabled?: boolean;
+  old_vat_rate?: number;
+  // Tax fields - new values
   new_vat_enabled?: boolean;
   new_vat_rate?: number;
   requester_notes?: string;
@@ -368,45 +383,61 @@ export function NotificationsPanel({ isOpen, onClose, onUpdate }: NotificationsP
                                 </div>
                               </div>
 
-                              {/* Requested Changes */}
+                              {/* Requested Changes - Shows Current → New */}
                               <div className="bg-white dark:bg-zinc-800 rounded-xl p-4 border border-zinc-200 dark:border-zinc-700">
                                 <h4 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider mb-3">
                                   Requested Changes
                                 </h4>
-                                <div className="space-y-2">
+                                <div className="space-y-3">
                                   {req.new_name && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Store className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Name: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_name}</span>
+                                      <Store className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Name</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_name || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_name}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_email && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Mail className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Email: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_email}</span>
+                                      <Mail className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Email</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_email || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_email}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_phone && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Phone className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Phone: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_phone}</span>
+                                      <Phone className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Phone</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_phone || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_phone}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_address && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <MapPin className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Address: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_address}</span>
+                                      <MapPin className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Address</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_address || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_address}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
@@ -414,14 +445,31 @@ export function NotificationsPanel({ isOpen, onClose, onUpdate }: NotificationsP
                                     <div className="space-y-2">
                                       <div className="flex items-center gap-2 text-sm">
                                         <ImageIcon className="w-4 h-4 text-zinc-400" />
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Logo:</span>
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Logo</span>
                                       </div>
-                                      <div className="ml-6 w-24 h-24 rounded-xl bg-zinc-100 dark:bg-zinc-700 overflow-hidden border-2 border-zinc-200 dark:border-zinc-600">
-                                        <img 
-                                          src={req.new_logo_url} 
-                                          alt="New logo" 
-                                          className="w-full h-full object-cover" 
-                                        />
+                                      <div className="ml-6 flex items-center gap-4">
+                                        {req.old_logo_url ? (
+                                          <div className="text-center">
+                                            <div className="w-16 h-16 rounded-lg bg-zinc-100 dark:bg-zinc-700 overflow-hidden border border-zinc-200 dark:border-zinc-600 opacity-50">
+                                              <img src={req.old_logo_url} alt="Current logo" className="w-full h-full object-cover" />
+                                            </div>
+                                            <span className="text-xs text-zinc-400 mt-1">Current</span>
+                                          </div>
+                                        ) : (
+                                          <div className="text-center">
+                                            <div className="w-16 h-16 rounded-lg bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 flex items-center justify-center opacity-50">
+                                              <span className="text-xs text-zinc-400">None</span>
+                                            </div>
+                                            <span className="text-xs text-zinc-400 mt-1">Current</span>
+                                          </div>
+                                        )}
+                                        <span className="text-zinc-400 text-lg">→</span>
+                                        <div className="text-center">
+                                          <div className="w-20 h-20 rounded-lg bg-zinc-100 dark:bg-zinc-700 overflow-hidden border-2 border-zinc-900 dark:border-white">
+                                            <img src={req.new_logo_url} alt="New logo" className="w-full h-full object-cover" />
+                                          </div>
+                                          <span className="text-xs text-zinc-600 dark:text-zinc-300 font-medium mt-1">Requested</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
@@ -429,69 +477,103 @@ export function NotificationsPanel({ isOpen, onClose, onUpdate }: NotificationsP
                                     <div className="space-y-2">
                                       <div className="flex items-center gap-2 text-sm">
                                         <FileText className="w-4 h-4 text-zinc-400" />
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Certificate:</span>
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Certificate</span>
                                       </div>
-                                      <a 
-                                        href={req.new_certificate_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="ml-6 inline-flex items-center gap-2 px-3 py-2 bg-zinc-100 dark:bg-zinc-700 rounded-lg text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-600 transition-colors"
-                                      >
-                                        <FileText className="w-4 h-4" />
-                                        View Certificate
-                                      </a>
+                                      <div className="ml-6 flex items-center gap-4">
+                                        {req.old_certificate_url ? (
+                                          <a href={req.old_certificate_url} target="_blank" rel="noopener noreferrer"
+                                            className="px-2 py-1 bg-zinc-100 dark:bg-zinc-700 rounded text-xs text-zinc-500 dark:text-zinc-400">
+                                            View Current
+                                          </a>
+                                        ) : (
+                                          <span className="text-xs text-zinc-400">(none)</span>
+                                        )}
+                                        <span className="text-zinc-400">→</span>
+                                        <a href={req.new_certificate_url} target="_blank" rel="noopener noreferrer"
+                                          className="px-3 py-1.5 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 rounded-lg text-sm font-medium">
+                                          View New Certificate
+                                        </a>
+                                      </div>
                                     </div>
                                   )}
                                   {/* Localization Changes */}
                                   {req.new_currency && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Currency: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_currency}</span>
+                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Currency</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_currency || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_currency}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_language && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Language: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_language === 'en' ? 'English' : req.new_language === 'ar' ? 'Arabic' : req.new_language}</span>
+                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Language</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">
+                                            {req.old_language === 'en' ? 'English' : req.old_language === 'ar' ? 'Arabic' : req.old_language || '(not set)'}
+                                          </span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">
+                                            {req.new_language === 'en' ? 'English' : req.new_language === 'ar' ? 'Arabic' : req.new_language}
+                                          </span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_timezone && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New Timezone: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_timezone}</span>
+                                      <Globe className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">Timezone</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">{req.old_timezone || '(not set)'}</span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_timezone}</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {/* Tax/VAT Changes */}
                                   {req.new_vat_enabled !== undefined && req.new_vat_enabled !== null && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Percent className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">VAT Enabled: </span>
-                                        <span className={`font-medium ${req.new_vat_enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                                          {req.new_vat_enabled ? 'Yes' : 'No'}
-                                        </span>
+                                      <Percent className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">VAT Enabled</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">
+                                            {req.old_vat_enabled !== undefined ? (req.old_vat_enabled ? 'Yes' : 'No') : '(not set)'}
+                                          </span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">
+                                            {req.new_vat_enabled ? 'Yes' : 'No'}
+                                          </span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
                                   {req.new_vat_rate !== undefined && (
                                     <div className="flex items-start gap-2 text-sm">
-                                      <Percent className="w-4 h-4 text-zinc-400 mt-0.5" />
-                                      <div>
-                                        <span className="text-zinc-600 dark:text-zinc-400">New VAT Rate: </span>
-                                        <span className="font-medium text-zinc-900 dark:text-white">{req.new_vat_rate}%</span>
+                                      <Percent className="w-4 h-4 text-zinc-400 mt-0.5 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <span className="text-zinc-500 dark:text-zinc-400 text-xs uppercase tracking-wider">VAT Rate</span>
+                                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                          <span className="text-zinc-500 dark:text-zinc-400 line-through">
+                                            {req.old_vat_rate !== undefined ? `${req.old_vat_rate}%` : '(not set)'}
+                                          </span>
+                                          <span className="text-zinc-400">→</span>
+                                          <span className="font-medium text-zinc-900 dark:text-white">{req.new_vat_rate}%</span>
+                                        </div>
                                       </div>
                                     </div>
                                   )}
-                                  {!req.new_name && !req.new_email && !req.new_phone && !req.new_address && !req.new_logo_url && !req.new_certificate_url && (
+                                  {!req.new_name && !req.new_email && !req.new_phone && !req.new_address && !req.new_logo_url && !req.new_certificate_url && !req.new_currency && !req.new_language && !req.new_timezone && req.new_vat_enabled === undefined && req.new_vat_rate === undefined && (
                                     <p className="text-sm text-zinc-500 italic">No specific changes detailed</p>
                                   )}
                                 </div>

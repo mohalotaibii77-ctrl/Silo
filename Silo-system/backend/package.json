@@ -8,7 +8,15 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
-    "test:inventory": "npx ts-node tests/inventory.test.ts"
+    "test:inventory": "npx ts-node tests/inventory.test.ts",
+    "test:products": "npx ts-node tests/products.test.ts",
+    "test:pos": "npx ts-node tests/pos.test.ts",
+    "test:users": "npx ts-node tests/users.test.ts",
+    "test:business": "npx ts-node tests/business.test.ts",
+    "test:delivery": "npx ts-node tests/delivery.test.ts",
+    "test:config": "npx ts-node tests/config.test.ts",
+    "test:superadmin": "npx ts-node tests/superadmin.test.ts",
+    "test:all": "npm run test:inventory && npm run test:products && npm run test:pos && npm run test:users && npm run test:business && npm run test:delivery && npm run test:config && npm run test:superadmin"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",

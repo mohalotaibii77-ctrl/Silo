@@ -526,11 +526,15 @@ export function BundleModal({ isOpen, onClose, onSuccess, editBundle }: BundleMo
                   </label>
                   <div className="relative">
                     <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                      type="text"
+                      inputMode="decimal"
                       value={price}
-                      onChange={(e) => setPrice(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setPrice(val);
+                        }
+                      }}
                       placeholder="0.00"
                       className="w-full px-4 py-2.5 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/30 focus:border-zinc-500 outline-none"
                     />

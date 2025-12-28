@@ -35,6 +35,13 @@ export function getBusinessCurrency(): string {
 // Format currency with proper symbol
 export function formatCurrency(amount: number, currencyOverride?: string): string {
   const currency = currencyOverride || getBusinessCurrency();
+  
+  // Validate currency exists - no fallback allowed
+  if (!currency) {
+    console.error('Currency not set. Cannot format amount.');
+    return `${amount.toFixed(2)}`; // Return plain number if currency missing
+  }
+  
   const symbol = getCurrencySymbol(currency);
   
   // Handle small amounts with more decimal places

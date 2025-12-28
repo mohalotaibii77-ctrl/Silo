@@ -227,12 +227,16 @@ export function AdjustmentModal({ isOpen, onClose, onSuccess, item, branchId }: 
                     {t('Quantity', 'الكمية')} ({storageUnit})
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    placeholder="0"
-                    step="0.01"
-                    min="0"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                        setQuantity(val);
+                      }
+                    }}
+                    placeholder="0.00"
                     className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all text-lg font-medium"
                     autoFocus
                   />

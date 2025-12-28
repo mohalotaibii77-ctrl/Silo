@@ -76,6 +76,9 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
               localStorage.setItem('setup_business', JSON.stringify(business));
             } catch {}
           }
+        } else {
+          // Currency missing - this should not happen
+          console.error('Business currency not set. Contact administrator.');
         }
       }
     } catch (error) {

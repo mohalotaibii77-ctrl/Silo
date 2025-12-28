@@ -50,3 +50,4 @@ COMMENT ON COLUMN business_deleted_items.business_id IS 'The business that delet
 COMMENT ON COLUMN business_deleted_items.item_id IS 'The default item that was deleted (must have business_id = NULL)';
 
 
+

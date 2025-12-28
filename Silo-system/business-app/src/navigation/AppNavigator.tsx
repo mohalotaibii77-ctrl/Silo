@@ -15,7 +15,6 @@ import StaffDashboardScreen from '../screens/StaffDashboardScreen';
 import POSScreen from '../screens/POSScreen';
 import KitchenDisplayScreen from '../screens/KitchenDisplayScreen';
 import EmployeePOSScreen from '../screens/EmployeePOSScreen';
-import StorefrontScreen from '../screens/StorefrontScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import RequestsScreen from '../screens/RequestsScreen';
 import ItemsScreen from '../screens/ItemsScreen';
@@ -174,7 +173,6 @@ export default function AppNavigator() {
           <Stack.Screen name="POSTerminal" component={POSScreen} />
           <Stack.Screen name="EmployeePOS" component={EmployeePOSScreen} />
           <Stack.Screen name="KitchenDisplay" component={KitchenDisplayScreen} />
-          <Stack.Screen name="Storefront" component={StorefrontScreen} />
           
           {/* Management screens */}
           <Stack.Screen name="Items" component={ItemsScreen} />

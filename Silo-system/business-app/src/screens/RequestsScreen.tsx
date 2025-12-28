@@ -8,9 +8,10 @@ import {
   Platform,
   RefreshControl
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
 import api from '../api/client';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { StatsSkeleton, ListSkeleton } from '../components/SkeletonLoader';
 import { 
   ArrowLeft,
@@ -61,6 +62,8 @@ interface ChangeRequest {
 }
 
 export default function RequestsScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const { t, isRTL } = useLocalization();
   const [requests, setRequests] = useState<ChangeRequest[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,7 +178,7 @@ export default function RequestsScreen({ navigation }: any) {
       <View style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
             <ChevronLeft size={24} color={colors.foreground} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('myRequests')}</Text>
@@ -195,7 +198,7 @@ export default function RequestsScreen({ navigation }: any) {
       {/* Header */}
       <View style={styles.header}>
         {/* Back button always on the left */}
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
           <ChevronLeft size={24} color={colors.foreground} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>{t('myRequests')}</Text>
@@ -514,7 +517,7 @@ export default function RequestsScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

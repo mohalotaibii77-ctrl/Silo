@@ -301,7 +301,7 @@ export class OwnerService {
     // Get owner details to create business_users record
     const { data: owner, error: ownerError } = await supabaseAdmin
       .from('owners')
-      .select('username, email, first_name, last_name, phone, password_hash')
+      .select('email, first_name, last_name, phone, password_hash')
       .eq('id', ownerId)
       .single();
 
@@ -325,11 +325,14 @@ export class OwnerService {
 
     // Also create a business_users record for the owner in this business
     // This allows the owner to appear in the Users list and manage the business
+    // Use email as username since owners don't have a separate username field
+    const ownerUsername = owner.email || `owner_${ownerId}`;
+    
     const { data: existingBusinessUser } = await supabaseAdmin
       .from('business_users')
       .select('id')
       .eq('business_id', businessId)
-      .eq('username', owner.username)
+      .eq('email', owner.email)
       .single();
 
     if (!existingBusinessUser) {
@@ -337,7 +340,7 @@ export class OwnerService {
         .from('business_users')
         .insert({
           business_id: businessId,
-          username: owner.username,
+          username: ownerUsername,
           email: owner.email,
           password_hash: owner.password_hash,
           role: 'owner',

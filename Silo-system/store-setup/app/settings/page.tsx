@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Store, Globe, CreditCard, Printer, Percent } from 'lucide-react';
+import { Store, Globe, CreditCard, Printer, Percent, Cog } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
@@ -14,6 +14,7 @@ export default function SettingsPage() {
     { title: t('Store Profile', 'ملف المتجر'), desc: t('Business name, logo, and contact info', 'اسم المتجر والشعار ومعلومات الاتصال'), icon: Store, href: '/settings/store-profile' },
     { title: t('Localization', 'التوطين'), desc: t('Language, currency, and timezone', 'اللغة والعملة والمنطقة الزمنية'), icon: Globe, href: '/settings/localization' },
     { title: t('Tax / VAT', 'الضريبة / ض.ق.م'), desc: t('Configure VAT rate and tax settings', 'إعداد نسبة ضريبة القيمة المضافة'), icon: Percent, href: '/settings/tax' },
+    { title: t('Operational Settings', 'إعدادات التشغيل'), desc: t('Order handling, business hours, and workflow', 'إدارة الطلبات وساعات العمل وسير العمل'), icon: Cog, href: '/settings/operational' },
     { title: t('Payment Methods', 'طرق الدفع'), desc: t('Configure accepted payment types', 'إعداد أنواع الدفع المقبولة'), icon: CreditCard, href: null, disabled: true },
     { title: t('Printers & Devices', 'الطابعات والأجهزة'), desc: t('Set up receipt and kitchen printers', 'إعداد طابعات الإيصالات والمطبخ'), icon: Printer, href: '/settings/printers-devices' },
   ];

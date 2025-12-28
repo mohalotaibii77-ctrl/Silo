@@ -135,3 +135,4 @@ COMMENT ON COLUMN orders.remaining_amount IS 'Amount still owed if edit increase
 COMMENT ON COLUMN order_items.waste_decision IS 'For removed/cancelled items: waste or return to inventory';
 
 
+

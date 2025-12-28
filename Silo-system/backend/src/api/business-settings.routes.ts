@@ -81,6 +81,14 @@ router.get('/', authenticateBusinessToken, async (req: AuthenticatedRequest, res
 
     if (error) throw error;
 
+    // Validate currency exists - no fallback allowed
+    if (!data.currency) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Business configuration incomplete: currency not set. Contact administrator.' 
+      });
+    }
+
     res.json({ success: true, data });
   } catch (error: any) {
     console.error('Error fetching business settings:', error);
@@ -137,6 +145,13 @@ router.get('/localization', authenticateBusinessToken, async (req: Authenticated
       .single();
 
     if (error) throw error;
+
+    // Validate currency exists - no fallback allowed
+    if (!data.currency) {
+      return res.status(500).json({ 
+        error: 'Business configuration incomplete: currency not set. Contact administrator.' 
+      });
+    }
 
     res.json({ data });
   } catch (error: any) {
@@ -208,6 +223,7 @@ router.post('/change-requests', authenticateBusinessToken, async (req: Authentic
       new_certificate_url, 
       requester_notes,
       // Localization fields
+      new_country,
       new_currency,
       new_language,
       new_timezone,
@@ -229,28 +245,88 @@ router.post('/change-requests', authenticateBusinessToken, async (req: Authentic
       return res.status(400).json({ error: 'You already have a pending request of this type' });
     }
 
+    // Fetch current business data to store old values
+    const { data: currentBusiness, error: fetchError } = await supabase
+      .from('businesses')
+      .select('name, email, phone, address, logo_url, certificate_url, country, currency, language, timezone, vat_enabled, tax_rate')
+      .eq('id', businessId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
+    // Validate currency exists - no fallback allowed
+    if (!currentBusiness.currency) {
+      return res.status(500).json({ 
+        error: 'Business configuration incomplete: currency not set. Contact administrator.' 
+      });
+    }
+
+    // Build the change request with both old and new values
+    const changeRequestData: any = {
+      business_id: businessId,
+      requested_by: userId,
+      request_type,
+      requester_notes,
+      status: 'pending',
+    };
+
+    // Profile fields - store old and new values
+    if (new_name !== undefined) {
+      changeRequestData.old_name = currentBusiness.name;
+      changeRequestData.new_name = new_name;
+    }
+    if (new_email !== undefined) {
+      changeRequestData.old_email = currentBusiness.email;
+      changeRequestData.new_email = new_email;
+    }
+    if (new_phone !== undefined) {
+      changeRequestData.old_phone = currentBusiness.phone;
+      changeRequestData.new_phone = new_phone;
+    }
+    if (new_address !== undefined) {
+      changeRequestData.old_address = currentBusiness.address;
+      changeRequestData.new_address = new_address;
+    }
+    if (new_logo_url !== undefined) {
+      changeRequestData.old_logo_url = currentBusiness.logo_url;
+      changeRequestData.new_logo_url = new_logo_url;
+    }
+    if (new_certificate_url !== undefined) {
+      changeRequestData.old_certificate_url = currentBusiness.certificate_url;
+      changeRequestData.new_certificate_url = new_certificate_url;
+    }
+
+    // Localization fields - store old and new values
+    if (new_country !== undefined) {
+      changeRequestData.old_country = currentBusiness.country;
+      changeRequestData.new_country = new_country;
+    }
+    if (new_currency !== undefined) {
+      changeRequestData.old_currency = currentBusiness.currency;
+      changeRequestData.new_currency = new_currency;
+    }
+    if (new_language !== undefined) {
+      changeRequestData.old_language = currentBusiness.language;
+      changeRequestData.new_language = new_language;
+    }
+    if (new_timezone !== undefined) {
+      changeRequestData.old_timezone = currentBusiness.timezone;
+      changeRequestData.new_timezone = new_timezone;
+    }
+
+    // Tax fields - store old and new values
+    if (new_vat_enabled !== undefined) {
+      changeRequestData.old_vat_enabled = currentBusiness.vat_enabled;
+      changeRequestData.new_vat_enabled = new_vat_enabled;
+    }
+    if (new_vat_rate !== undefined) {
+      changeRequestData.old_vat_rate = currentBusiness.tax_rate;
+      changeRequestData.new_vat_rate = new_vat_rate;
+    }
+
     const { data, error } = await supabase
       .from('business_change_requests')
-      .insert({
-        business_id: businessId,
-        requested_by: userId,
-        request_type,
-        new_name,
-        new_email,
-        new_phone,
-        new_address,
-        new_logo_url,
-        new_certificate_url,
-        requester_notes,
-        // Localization fields
-        new_currency,
-        new_language,
-        new_timezone,
-        // Tax fields
-        new_vat_enabled,
-        new_vat_rate,
-        status: 'pending',
-      })
+      .insert(changeRequestData)
       .select()
       .single();
 
@@ -518,6 +594,142 @@ router.post('/receipt/logo', authenticateBusinessToken, async (req: Authenticate
   }
 });
 
+// ============================================
+// OPERATIONAL SETTINGS ENDPOINTS
+// ============================================
+
+// Get operational settings for the business
+router.get('/operational', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    
+    const { data, error } = await supabase
+      .from('operational_settings')
+      .select('*')
+      .eq('business_id', businessId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      // PGRST116 = no rows returned, which is fine for new businesses
+      throw error;
+    }
+
+    // Return defaults if no settings exist
+    const defaultSettings = {
+      business_id: businessId,
+      order_number_prefix: 'ORD',
+      auto_accept_orders: false,
+      order_preparation_time: 15,
+      enable_order_notifications: true,
+      kitchen_display_auto_clear: 30,
+      kitchen_operation_mode: 'display',
+      require_customer_phone: false,
+      allow_order_notes: true,
+      opening_time: '09:00',
+      closing_time: '22:00',
+      // POS Operation settings
+      pos_opening_float_fixed: false,
+      pos_opening_float_amount: 0,
+      pos_session_allowed_user_ids: [],
+    };
+
+    res.json({ 
+      success: true, 
+      data: data || defaultSettings 
+    });
+  } catch (error: any) {
+    console.error('Error fetching operational settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update operational settings
+router.put('/operational', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+    const { 
+      order_number_prefix,
+      auto_accept_orders,
+      order_preparation_time,
+      enable_order_notifications,
+      kitchen_display_auto_clear,
+      kitchen_operation_mode,
+      require_customer_phone,
+      allow_order_notes,
+      opening_time,
+      closing_time,
+      // POS Operation settings
+      pos_opening_float_fixed,
+      pos_opening_float_amount,
+      pos_session_allowed_user_ids,
+    } = req.body;
+
+    // Check if settings exist
+    const { data: existing } = await supabase
+      .from('operational_settings')
+      .select('id')
+      .eq('business_id', businessId)
+      .single();
+
+    const settingsData: any = {
+      updated_at: new Date().toISOString(),
+    };
+
+    // Only update fields that are provided
+    if (order_number_prefix !== undefined) settingsData.order_number_prefix = order_number_prefix;
+    if (auto_accept_orders !== undefined) settingsData.auto_accept_orders = auto_accept_orders;
+    if (order_preparation_time !== undefined) settingsData.order_preparation_time = order_preparation_time;
+    if (enable_order_notifications !== undefined) settingsData.enable_order_notifications = enable_order_notifications;
+    if (kitchen_display_auto_clear !== undefined) settingsData.kitchen_display_auto_clear = kitchen_display_auto_clear;
+    if (kitchen_operation_mode !== undefined) settingsData.kitchen_operation_mode = kitchen_operation_mode;
+    if (require_customer_phone !== undefined) settingsData.require_customer_phone = require_customer_phone;
+    if (allow_order_notes !== undefined) settingsData.allow_order_notes = allow_order_notes;
+    if (opening_time !== undefined) settingsData.opening_time = opening_time;
+    if (closing_time !== undefined) settingsData.closing_time = closing_time;
+    // POS Operation settings
+    if (pos_opening_float_fixed !== undefined) settingsData.pos_opening_float_fixed = pos_opening_float_fixed;
+    if (pos_opening_float_amount !== undefined) settingsData.pos_opening_float_amount = pos_opening_float_amount;
+    if (pos_session_allowed_user_ids !== undefined) settingsData.pos_session_allowed_user_ids = pos_session_allowed_user_ids;
+
+    let result;
+    
+    if (existing) {
+      // Update existing settings
+      const { data, error } = await supabase
+        .from('operational_settings')
+        .update(settingsData)
+        .eq('business_id', businessId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    } else {
+      // Insert new settings
+      settingsData.business_id = businessId;
+      settingsData.created_at = new Date().toISOString();
+      
+      const { data, error } = await supabase
+        .from('operational_settings')
+        .insert(settingsData)
+        .select()
+        .single();
+
+      if (error) throw error;
+      result = data;
+    }
+
+    res.json({ 
+      success: true, 
+      data: result, 
+      message: 'Operational settings updated successfully' 
+    });
+  } catch (error: any) {
+    console.error('Error updating operational settings:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Upload file and create change request (using base64 for now)
 router.post('/upload-request', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -542,6 +754,15 @@ router.post('/upload-request', authenticateBusinessToken, async (req: Authentica
       return res.status(400).json({ error: 'You already have a pending request of this type' });
     }
 
+    // Fetch current business data to store old values
+    const { data: currentBusiness, error: fetchError } = await supabase
+      .from('businesses')
+      .select('logo_url, certificate_url')
+      .eq('id', businessId)
+      .single();
+
+    if (fetchError) throw fetchError;
+
     // For now, store base64 data directly (in production, upload to storage)
     const fileUrl = file_data;
 
@@ -553,9 +774,12 @@ router.post('/upload-request', authenticateBusinessToken, async (req: Authentica
       requester_notes,
     };
 
+    // Store both old and new values
     if (request_type === 'logo') {
+      requestData.old_logo_url = currentBusiness.logo_url;
       requestData.new_logo_url = fileUrl;
     } else if (request_type === 'certificate') {
+      requestData.old_certificate_url = currentBusiness.certificate_url;
       requestData.new_certificate_url = fileUrl;
     }
 

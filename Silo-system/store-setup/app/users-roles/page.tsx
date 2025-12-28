@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { UserCog, Plus, Edit2, Trash2, Crown, Shield, User, Key, X, AlertCircle, Monitor, ChefHat } from 'lucide-react';
+import { UserCog, Plus, Edit2, Trash2, Crown, Shield, User, Key, X, AlertCircle, Monitor, ChefHat, Hash, RefreshCw, Copy, Check, Eye, EyeOff } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
-import { getUsers, createUser, updateUser, deleteUser, resetUserPassword, type BusinessUser, type CreateUserData, type UserPermissions, DEFAULT_PERMISSIONS } from '@/lib/users-api';
+import { getUsers, createUser, updateUser, deleteUser, resetUserPassword, resetUserPIN, setUserPIN, type BusinessUser, type CreateUserData, type UserPermissions, DEFAULT_PERMISSIONS } from '@/lib/users-api';
 
 export default function UsersRolesPage() {
   const router = useRouter();
@@ -214,6 +214,28 @@ export default function UsersRolesPage() {
     }
   };
 
+  const handleResetPIN = async (user: BusinessUser) => {
+    if (!confirm(t('Generate a new POS PIN for this user?', 'إنشاء رمز PIN جديد لنقطة البيع لهذا المستخدم؟'))) {
+      return;
+    }
+
+    try {
+      const result = await resetUserPIN(user.id);
+      alert(t(`New POS PIN: ${result.pos_pin}`, `رمز PIN الجديد: ${result.pos_pin}`));
+      loadUsers(); // Refresh to show new PIN
+    } catch (err: any) {
+      alert(err.response?.data?.error || t('Failed to reset PIN', 'فشل في إعادة تعيين رمز PIN'));
+    }
+  };
+
+  // Check if user has POS access (needs a PIN)
+  const userHasPosAccess = (user: BusinessUser): boolean => {
+    return user.role === 'owner' || 
+           user.role === 'manager' || 
+           user.role === 'pos' ||
+           (user.permissions?.pos_access ?? false);
+  };
+
   const getRoleIcon = (userRole: string) => {
     switch (userRole) {
       case 'owner': return <Crown className="w-4 h-4 text-amber-500" />;
@@ -351,9 +373,28 @@ export default function UsersRolesPage() {
                         @{user.username}
                         {user.email && ` • ${user.email}`}
                       </p>
+                      {/* Show POS PIN if user has POS access */}
+                      {userHasPosAccess(user) && user.pos_pin && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 font-mono">
+                            <Hash className="w-3 h-3" />
+                            PIN: {user.pos_pin}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
+                    {/* Reset PIN - only for users with POS access */}
+                    {userHasPosAccess(user) && (
+                      <button
+                        onClick={() => handleResetPIN(user)}
+                        className="p-2 text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg transition-colors"
+                        title={t('Reset POS PIN', 'إعادة تعيين رمز PIN')}
+                      >
+                        <Hash className="w-4 h-4" />
+                      </button>
+                    )}
                     {/* Reset password - only for non-owners or self */}
                     {(user.role !== 'owner' || user.id === currentUserId) && (
                       <button

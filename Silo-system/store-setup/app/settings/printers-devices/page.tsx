@@ -717,6 +717,34 @@ export default function PrintersDevicesPage() {
                   )}
                 </div>
                 
+                <div className="border-t border-dashed border-gray-300 my-3"></div>
+                
+                {/* QR Code - Order Number for scanning */}
+                <div className="flex flex-col items-center gap-2 py-2">
+                  <svg 
+                    width="120" 
+                    height="120" 
+                    viewBox="0 0 29 29"
+                    className="border-2 border-gray-300 rounded p-1 bg-white"
+                  >
+                    {/* Simple QR code pattern representation */}
+                    <rect width="29" height="29" fill="white"/>
+                    <path d="M0,0 h7 v7 h-7z M0,22 h7 v7 h-7z M22,0 h7 v7 h-7z" fill="black"/>
+                    <path d="M2,2 h3 v3 h-3z M2,24 h3 v3 h-3z M24,2 h3 v3 h-3z" fill="white"/>
+                    <path d="M8,0 h2 v2 h-2z M12,0 h2 v2 h-2z M16,0 h2 v2 h-2z" fill="black"/>
+                    <path d="M8,4 h2 v2 h-2z M12,4 h2 v2 h-2z M16,4 h2 v2 h-2z" fill="black"/>
+                    <path d="M0,8 h2 v2 h-2z M4,8 h2 v2 h-2z M8,8 h14 v2 h-14z M27,8 h2 v2 h-2z" fill="black"/>
+                    <path d="M0,12 h2 v2 h-2z M8,12 h6 v2 h-6z M16,12 h6 v2 h-6z M27,12 h2 v2 h-2z" fill="black"/>
+                    <path d="M0,16 h2 v2 h-2z M4,16 h2 v2 h-2z M12,16 h2 v2 h-2z M16,16 h6 v2 h-6z M27,16 h2 v2 h-2z" fill="black"/>
+                    <path d="M8,20 h6 v2 h-6z M16,20 h2 v2 h-2z M22,20 h7 v2 h-7z" fill="black"/>
+                    <path d="M8,24 h2 v2 h-2z M12,24 h2 v2 h-2z M16,24 h2 v2 h-2z M22,24 h7 v2 h-7z" fill="black"/>
+                    <path d="M8,27 h2 v2 h-2z M12,27 h2 v2 h-2z M16,27 h6 v2 h-6z" fill="black"/>
+                  </svg>
+                  <span className="text-[10px] text-gray-400">
+                    {biText('Scan to complete order', 'امسح لإكمال الطلب')}
+                  </span>
+                </div>
+                
                 {/* Footer */}
                 {settings.receipt_footer && (
                   <>

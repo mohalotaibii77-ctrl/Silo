@@ -71,9 +71,10 @@ class BundlesService {
     stockMap: Map<number, { quantity: number; storage_unit: string }>,
     productQuantity: number = 1
   ): boolean {
-    // Products without ingredients cannot be verified for stock, treat as out of stock
+    // If product has no ingredients, consider it always in stock
+    // This matches the behavior of regular products
     if (!ingredients || ingredients.length === 0) {
-      return false;
+      return true;
     }
 
     for (const ingredient of ingredients) {

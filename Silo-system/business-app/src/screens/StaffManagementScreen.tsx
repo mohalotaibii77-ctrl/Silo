@@ -13,10 +13,12 @@ import {
   Alert,
   Switch
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
+import { colors as staticColors } from '../theme/colors';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { 
   ArrowLeft,
   ArrowRight,
@@ -101,12 +103,12 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const UserSkeleton = () => (
+const UserSkeleton = ({ styles }: { styles: any }) => (
   <View style={styles.userCard}>
     <View style={styles.userCardContent}>
       <Skeleton width={48} height={48} borderRadius={12} />
@@ -120,6 +122,9 @@ const UserSkeleton = () => (
 );
 
 export default function StaffManagementScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const modalStyles = createModalStyles(colors);
   const { t, isRTL, language } = useLocalization();
   
   const [users, setUsers] = useState<BusinessUser[]>([]);
@@ -533,7 +538,7 @@ export default function StaffManagementScreen({ navigation }: any) {
         {/* Header - scrolls with content */}
         <View style={styles.header}>
           <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
-            <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+            <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
               {isRTL ? (
                 <ArrowRight size={24} color={colors.foreground} />
               ) : (
@@ -593,9 +598,9 @@ export default function StaffManagementScreen({ navigation }: any) {
         <View style={styles.usersList}>
           {loading ? (
             <>
-              <UserSkeleton />
-              <UserSkeleton />
-              <UserSkeleton />
+              <UserSkeleton styles={styles} />
+              <UserSkeleton styles={styles} />
+              <UserSkeleton styles={styles} />
             </>
           ) : (filteredUsers || []).length === 0 ? (
             <View style={styles.emptyState}>
@@ -886,7 +891,7 @@ export default function StaffManagementScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1081,7 +1086,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const modalStyles = StyleSheet.create({
+const createModalStyles = (colors: any) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

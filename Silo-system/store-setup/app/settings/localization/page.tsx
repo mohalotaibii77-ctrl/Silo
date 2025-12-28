@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Check, Loader2, Command, LogOut, User } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Command, LogOut, User, AlertTriangle } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -75,6 +75,8 @@ export default function LocalizationPage() {
   const [language, setLanguageState] = useState('en');
   const [originalSettings, setOriginalSettings] = useState({ country: '', currency: '', language: 'en' });
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [showCurrencyWarning, setShowCurrencyWarning] = useState(false);
+  const [pendingCurrency, setPendingCurrency] = useState('');
 
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
@@ -96,6 +98,13 @@ export default function LocalizationPage() {
         const biz = JSON.parse(storedBusiness);
         setBusiness(biz);
         setCountry(biz.country || '');
+        // Validate currency exists - no fallback allowed
+        if (!biz.currency) {
+          setMessage({ 
+            type: 'error', 
+            text: 'Business currency not set. Please contact your administrator.' 
+          });
+        }
         setCurrency(biz.currency || '');
         setLanguageState(biz.language || 'en');
       }
@@ -114,6 +123,13 @@ export default function LocalizationPage() {
       if (response.data.data) {
         const data = response.data.data;
         setCountry(data.country || '');
+        // Validate currency exists - no fallback allowed
+        if (!data.currency) {
+          setMessage({ 
+            type: 'error', 
+            text: 'Business currency not set. Please contact your administrator.' 
+          });
+        }
         setCurrency(data.currency || '');
         setLanguageState(data.language || 'en');
         setOriginalSettings({
@@ -202,12 +218,10 @@ export default function LocalizationPage() {
     }
   };
 
+  // Only change country - DO NOT auto-change currency
+  // Currency is a critical business setting that should only be changed explicitly
   const handleCountryChange = (newCountry: string) => {
     setCountry(newCountry);
-    const countryData = COUNTRIES.find(c => c.name === newCountry);
-    if (countryData) {
-      setCurrency(countryData.currency);
-    }
   };
 
   if (loading) {
@@ -270,7 +284,7 @@ export default function LocalizationPage() {
               <SearchableSelect
                 label={t('Country', 'الدولة')}
                 value={country}
-                onChange={(val) => handleCountryChange(val ? String(val) : 'Saudi Arabia')}
+                onChange={(val) => val && handleCountryChange(String(val))}
                 options={COUNTRIES.map((c) => ({
                   id: c.name,
                   name: c.name,
@@ -282,7 +296,17 @@ export default function LocalizationPage() {
               <SearchableSelect
                 label={t('Currency', 'العملة')}
                 value={currency}
-                onChange={(val) => setCurrency(val ? String(val) : '')}
+                onChange={(val) => {
+                  if (!val) return;
+                  const newCurrency = String(val);
+                  // If changing to a different currency, show warning
+                  if (newCurrency !== originalSettings.currency && originalSettings.currency) {
+                    setPendingCurrency(newCurrency);
+                    setShowCurrencyWarning(true);
+                  } else {
+                    setCurrency(newCurrency);
+                  }
+                }}
                 options={CURRENCIES.map((c) => ({
                   id: c.code,
                   name: `${c.code} - ${c.name}`,
@@ -318,6 +342,68 @@ export default function LocalizationPage() {
           </motion.div>
         </div>
       </main>
+
+      {/* Currency Change Warning Modal */}
+      {showCurrencyWarning && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 p-6 max-w-md w-full shadow-2xl"
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">
+                  {t('Change Currency?', 'تغيير العملة؟')}
+                </h3>
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {t('This is a critical setting', 'هذا إعداد حساس')}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 mb-6">
+              <p className="text-sm text-amber-800 dark:text-amber-200">
+                {t(
+                  `You are about to change your business currency from ${originalSettings.currency} to ${pendingCurrency}. This will affect how all prices are displayed across your system.`,
+                  `أنت على وشك تغيير عملة عملك من ${originalSettings.currency} إلى ${pendingCurrency}. سيؤثر هذا على طريقة عرض جميع الأسعار في نظامك.`
+                )}
+              </p>
+              <p className="text-sm text-amber-800 dark:text-amber-200 mt-2 font-medium">
+                {t(
+                  'Currency changes require Super Admin approval.',
+                  'تغييرات العملة تتطلب موافقة المسؤول.'
+                )}
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowCurrencyWarning(false);
+                  setPendingCurrency('');
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors font-medium"
+              >
+                {t('Cancel', 'إلغاء')}
+              </button>
+              <button
+                onClick={() => {
+                  setCurrency(pendingCurrency);
+                  setShowCurrencyWarning(false);
+                  setPendingCurrency('');
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white transition-colors font-medium"
+              >
+                {t('Yes, Change Currency', 'نعم، غيّر العملة')}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

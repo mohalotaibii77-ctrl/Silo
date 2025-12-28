@@ -282,11 +282,14 @@ export async function getStockLevels(filters?: {
   branch_id?: number;
   item_id?: number;
   low_stock?: boolean;
+  limit?: number;
 }): Promise<InventoryStock[]> {
   const params = new URLSearchParams();
   if (filters?.branch_id) params.append('branch_id', String(filters.branch_id));
   if (filters?.item_id) params.append('item_id', String(filters.item_id));
   if (filters?.low_stock) params.append('low_stock', 'true');
+  // Default to 1000 to load all items for inventory management
+  params.append('limit', String(filters?.limit || 1000));
   
   const url = `/inventory-stock/stock${params.toString() ? `?${params}` : ''}`;
   const response = await api.get<{ success: boolean; data: InventoryStock[] }>(url);

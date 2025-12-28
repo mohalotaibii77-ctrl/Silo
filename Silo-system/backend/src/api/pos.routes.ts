@@ -9,6 +9,7 @@ import { asyncHandler } from '../middleware/error.middleware';
 import { authenticate, requireBusinessAccess, requirePOSAccess, requireKitchenAccess } from '../middleware/auth.middleware';
 import { OrderSource, OrderStatus, CreateOrderInput, CreateOrderItemInput } from '../types';
 import { extractPaginationParams, buildPaginatedResponse } from '../utils/pagination';
+import { supabaseAdmin } from '../config/database';
 
 const router = Router();
 
@@ -157,11 +158,12 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
 
 /**
  * POST /api/pos/orders/delivery-app
- * Create order from delivery app webhook (Talabat, Jahez, etc.)
+ * Create order from delivery app webhook (external API integration)
+ * The specific delivery partner is identified by delivery_partner_id (from delivery_partners table)
  */
 router.post('/orders/delivery-app', requireBusinessAccess, asyncHandler(async (req, res) => {
   const {
-    source,
+    delivery_partner_id,
     external_order_id,
     branch_id,
     customer_name,
@@ -180,28 +182,20 @@ router.post('/orders/delivery-app', requireBusinessAccess, asyncHandler(async (r
   } = req.body;
 
   // Validate required fields
-  if (!source || !external_order_id || !items || !items.length) {
+  if (!delivery_partner_id || !external_order_id || !items || !items.length) {
     return res.status(400).json({
       success: false,
-      error: 'source, external_order_id, and items are required',
-    });
-  }
-
-  // Validate source is a valid delivery app
-  const validSources: OrderSource[] = ['talabat', 'jahez', 'hungerstation', 'careem', 'toyou', 'mrsool', 'deliveroo', 'ubereats'];
-  if (!validSources.includes(source)) {
-    return res.status(400).json({
-      success: false,
-      error: `Invalid source. Must be one of: ${validSources.join(', ')}`,
+      error: 'delivery_partner_id, external_order_id, and items are required',
     });
   }
 
   const order = await posService.createDeliveryAppOrder(
-    source,
+    'api',  // All external API orders use 'api' as source
     external_order_id,
     parseInt(req.user!.businessId),
     branch_id ? parseInt(branch_id) : undefined,
     {
+      delivery_partner_id: parseInt(delivery_partner_id),
       customer_name,
       customer_phone,
       customer_email,
@@ -488,6 +482,90 @@ router.post('/orders/:orderId/complete', requireBusinessAccess, requireKitchenAc
     success: true,
     data: order,
     message: 'Order completed',
+  });
+}));
+
+/**
+ * POST /api/pos/orders/scan-complete
+ * Complete an order by scanning its QR code (alternative to kitchen display)
+ * Changes status: in_progress → completed
+ * 
+ * This endpoint is for businesses using "receipt_scan" kitchen mode:
+ * - Receipts have QR codes printed on them
+ * - Employees scan the QR code when food is ready
+ * - Available to users with 'orders' permission in their role
+ * 
+ * ACCESS: Business users with 'orders' permission
+ */
+router.post('/orders/scan-complete', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { order_number } = req.body;
+
+  if (!order_number) {
+    return res.status(400).json({
+      success: false,
+      error: 'order_number is required',
+    });
+  }
+
+  // Check if user has orders permission
+  const userHasOrdersPermission = 
+    req.user!.role === 'owner' ||
+    req.user!.role === 'manager' ||
+    (req.user!.permissions && req.user!.permissions.orders === true);
+
+  if (!userHasOrdersPermission) {
+    return res.status(403).json({
+      success: false,
+      error: 'Orders permission required to complete orders via scan',
+    });
+  }
+
+  // Check if kitchen_operation_mode is receipt_scan
+  const { data: opSettings } = await supabaseAdmin
+    .from('operational_settings')
+    .select('kitchen_operation_mode')
+    .eq('business_id', req.user!.businessId)
+    .single();
+
+  if (!opSettings || opSettings.kitchen_operation_mode !== 'receipt_scan') {
+    return res.status(400).json({
+      success: false,
+      error: 'Scan completion is only available when kitchen operation mode is set to receipt_scan',
+    });
+  }
+
+  // Find order by order_number
+  const { data: order, error: orderError } = await supabaseAdmin
+    .from('orders')
+    .select('id, order_status, business_id')
+    .eq('order_number', order_number)
+    .eq('business_id', req.user!.businessId)
+    .single();
+
+  if (orderError || !order) {
+    return res.status(404).json({
+      success: false,
+      error: 'Order not found',
+    });
+  }
+
+  if (order.order_status !== 'in_progress') {
+    return res.status(400).json({
+      success: false,
+      error: `Order cannot be completed. Current status: ${order.order_status}`,
+    });
+  }
+
+  // Complete the order
+  const completedOrder = await posService.completeOrder(
+    order.id,
+    parseInt(req.user!.userId)
+  );
+
+  res.json({
+    success: true,
+    data: completedOrder,
+    message: 'Order completed via scan',
   });
 }));
 

@@ -6,6 +6,7 @@ import { X, Package, Loader2, Plus, Trash2, Layers, Calculator, Search, ChevronD
 import { CreateCompositeItemData, Item, ItemCategory, ItemUnit, StorageUnit } from '@/types/items';
 import { createCompositeItem, getItems } from '@/lib/items-api';
 import { useLanguage } from '@/lib/language-context';
+import { useConfig } from '@/lib/config-context';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 
 interface AddCompositeItemModalProps {
@@ -23,10 +24,7 @@ interface ComponentEntry {
   quantity: number;
 }
 
-// Fallback constants - will migrate to config context
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
-};
+// Unit translations - TODO: migrate to config context if needed
 
 const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   grams: { en: 'Grams', ar: 'جرام' },
@@ -100,9 +98,11 @@ export function AddCompositeItemModal({
   currency 
 }: AddCompositeItemModalProps) {
   const { isRTL, t, currency: contextCurrency } = useLanguage();
+  const { getCurrencySymbol } = useConfig();
   // Use passed currency or fall back to context currency (from business settings)
   const activeCurrency = currency || contextCurrency;
-  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
+  // Get symbol from backend config (centralized source of truth)
+  const currencySymbol = getCurrencySymbol(activeCurrency);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [availableItems, setAvailableItems] = useState<Item[]>([]);
@@ -609,13 +609,17 @@ export function AddCompositeItemModal({
                         {t('Quantity', 'الكمية')}
                       </label>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         name="batch_quantity"
-                        value={formData.batch_quantity}
-                        onChange={handleChange}
+                        value={formData.batch_quantity || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                            handleChange({ target: { name: 'batch_quantity', value: val, type: 'number' } } as any);
+                          }
+                        }}
                         placeholder={t('e.g., 500', 'مثال: 500')}
-                        step="0.001"
-                        min="0.001"
                         dir="ltr"
                         className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
                       />
@@ -822,12 +826,16 @@ export function AddCompositeItemModal({
                             onSelect={(item) => selectItemForComponent(comp.id, item)}
                           />
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             value={comp.quantity || ''}
-                            onChange={(e) => updateComponent(comp.id, { quantity: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                updateComponent(comp.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                              }
+                            }}
                             placeholder={t('Qty', 'الكمية')}
-                            step="0.001"
-                            min="0"
                             dir="ltr"
                             className="w-20 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                           />

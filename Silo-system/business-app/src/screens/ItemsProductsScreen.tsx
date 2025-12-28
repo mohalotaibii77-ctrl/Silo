@@ -13,10 +13,12 @@ import {
   Animated,
   Dimensions
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
+import { colors as staticColors } from '../theme/colors';
 import api from '../api/client';
 import { useLocalization } from '../localization/LocalizationContext';
 import { useConfig } from '../context/ConfigContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { 
   Package,
   Layers,
@@ -110,12 +112,12 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const ItemSkeleton = () => (
+const ItemSkeleton = ({ styles }: { styles: any }) => (
   <View style={styles.itemCard}>
     <View style={styles.itemCardContent}>
       <Skeleton width={44} height={44} borderRadius={12} />
@@ -129,6 +131,8 @@ const ItemSkeleton = () => (
 );
 
 export default function ItemsProductsScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const { t, isRTL, language, formatCurrency, currency } = useLocalization();
   const { config, getCategoryLabel } = useConfig();
   
@@ -430,9 +434,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {itemsLoading ? (
               <>
-                <ItemSkeleton />
-                <ItemSkeleton />
-                <ItemSkeleton />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
               </>
             ) : filteredItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -449,9 +453,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {compositeLoading ? (
               <>
-                <ItemSkeleton />
-                <ItemSkeleton />
-                <ItemSkeleton />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
               </>
             ) : filteredCompositeItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -468,9 +472,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {productsLoading ? (
               <>
-                <ItemSkeleton />
-                <ItemSkeleton />
-                <ItemSkeleton />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} />
               </>
             ) : filteredProducts.length === 0 ? (
               <View style={styles.emptyState}>
@@ -516,7 +520,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
         <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
           <TouchableOpacity 
             style={styles.backButton} 
-            onPress={() => navigation.goBack()}
+            onPress={() => safeGoBack(navigation)}
           >
             {isRTL ? (
               <ArrowRight size={24} color={colors.foreground} />
@@ -1465,7 +1469,7 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1659,7 +1663,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const modalStyles = StyleSheet.create({
+const createModalStyles = (colors: any) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

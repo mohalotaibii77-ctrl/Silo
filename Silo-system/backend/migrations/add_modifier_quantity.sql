@@ -7,3 +7,4 @@ ADD COLUMN IF NOT EXISTS quantity DECIMAL(10, 3) DEFAULT 1;
 
 
 
+

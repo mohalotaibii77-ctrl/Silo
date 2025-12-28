@@ -36,3 +36,4 @@ COMMENT ON COLUMN purchase_order_items.variance_note IS 'Justification note requ
 COMMENT ON COLUMN purchase_orders.invoice_image_url IS 'URL to uploaded vendor invoice image';
 
 
+

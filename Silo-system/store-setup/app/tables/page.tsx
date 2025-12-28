@@ -437,22 +437,15 @@ export default function TablesPage() {
                     {t('Number of Seats', 'عدد المقاعد')} *
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     value={seats}
                     onChange={(e) => {
-                      // Only allow whole numbers
-                      const value = e.target.value.replace(/[^0-9]/g, '');
-                      setSeats(value);
-                    }}
-                    onKeyDown={(e) => {
-                      // Prevent decimal point and minus sign
-                      if (e.key === '.' || e.key === '-' || e.key === 'e') {
-                        e.preventDefault();
+                      const val = e.target.value;
+                      if (val === '' || /^\d+$/.test(val)) {
+                        setSeats(val);
                       }
                     }}
-                    min="1"
-                    max="50"
-                    step="1"
                     pattern="[0-9]*"
                     inputMode="numeric"
                     className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"

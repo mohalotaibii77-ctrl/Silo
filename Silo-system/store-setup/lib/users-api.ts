@@ -55,6 +55,7 @@ export interface BusinessUser {
   phone?: string;
   status: 'active' | 'inactive' | 'suspended';
   permissions?: UserPermissions | null;  // Only for manager/employee roles
+  pos_pin?: string | null;  // POS PIN for quick authentication
   last_login?: string;
   created_at: string;
 }
@@ -113,6 +114,18 @@ export async function deleteUser(id: number): Promise<void> {
 // Reset user password to default
 export async function resetUserPassword(id: number): Promise<{ default_password: string }> {
   const response = await api.post(`/business-users/${id}/reset-password`);
+  return response.data;
+}
+
+// Reset user POS PIN (generates new random PIN)
+export async function resetUserPIN(id: number): Promise<{ pos_pin: string }> {
+  const response = await api.post(`/business-users/${id}/reset-pin`);
+  return response.data;
+}
+
+// Set a specific POS PIN for a user
+export async function setUserPIN(id: number, pin: string): Promise<{ pos_pin: string }> {
+  const response = await api.put(`/business-users/${id}/set-pin`, { pin });
   return response.data;
 }
 

@@ -95,7 +95,9 @@ router.get('/me', authenticate, asyncHandler(async (req, res) => {
  * Refresh token
  */
 router.post('/refresh', authenticate, asyncHandler(async (req, res) => {
-  const newToken = authService.generateToken(req.user!);
+  // Create clean payload without exp/iat from decoded token
+  const { exp, iat, ...cleanPayload } = req.user as any;
+  const newToken = authService.generateToken(cleanPayload);
   
   res.json({
     success: true,

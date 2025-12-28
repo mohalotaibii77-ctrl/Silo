@@ -16,3 +16,4 @@ COMMENT ON COLUMN vendors.branch_id IS 'NULL = vendor available to all branches,
 
 
 
+

@@ -3,15 +3,21 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-// Screens that should NOT auto-logout
+// Screens that should NOT auto-logout (full logout)
 const EXEMPT_SCREENS = [
-  'POSTerminal',
   'KitchenDisplay',
   'Login',
   'SetPassword',
 ];
 
+// Screens that should LOCK instead of logout (show PIN pad)
+const LOCK_SCREENS = [
+  'POSTerminal',
+  'POS',
+];
+
 type NavigateFunction = (screen: string) => void;
+type LockScreenCallback = () => void;
 
 class IdleTimeoutService {
   private timeoutId: NodeJS.Timeout | null = null;
@@ -20,19 +26,45 @@ class IdleTimeoutService {
   private currentScreen: string = '';
   private navigateToLogin: NavigateFunction | null = null;
   private appStateSubscription: any = null;
+  private onLockScreen: LockScreenCallback | null = null;
+  private isLocked: boolean = false;
 
   // Start monitoring for idle timeout
-  start(currentScreen: string, navigateToLogin: NavigateFunction) {
+  start(currentScreen: string, navigateToLogin: NavigateFunction, onLockScreen?: LockScreenCallback) {
     this.currentScreen = currentScreen;
     this.navigateToLogin = navigateToLogin;
+    this.onLockScreen = onLockScreen || null;
     this.lastActivityTime = Date.now();
     this.isMonitoring = true;
+    this.isLocked = false;
 
     // Listen for app state changes (background/foreground)
     this.appStateSubscription = AppState.addEventListener('change', this.handleAppStateChange);
 
     // Start the idle timer
     this.resetTimer();
+  }
+
+  // Set the lock screen callback (can be set after start)
+  setLockScreenCallback(callback: LockScreenCallback | null) {
+    this.onLockScreen = callback;
+  }
+
+  // Check if screen should lock instead of logout
+  private shouldLockScreen(screenName: string): boolean {
+    return LOCK_SCREENS.some(screen => screenName.includes(screen));
+  }
+
+  // Called when user unlocks with PIN
+  unlock() {
+    this.isLocked = false;
+    this.lastActivityTime = Date.now();
+    this.resetTimer();
+  }
+
+  // Check if currently locked
+  getIsLocked(): boolean {
+    return this.isLocked;
   }
 
   // Stop monitoring
@@ -91,12 +123,13 @@ class IdleTimeoutService {
   // Handle app state changes
   private handleAppStateChange = (nextAppState: AppStateStatus) => {
     if (nextAppState === 'active') {
-      // App came to foreground - check if we should have logged out
+      // App came to foreground - check if we should have logged out or locked
       const timeSinceLastActivity = Date.now() - this.lastActivityTime;
       
       if (timeSinceLastActivity >= IDLE_TIMEOUT_MS && !this.isExemptScreen(this.currentScreen)) {
         this.handleIdleTimeout();
-      } else {
+      } else if (!this.isLocked) {
+        // Only reset timer if not locked
         this.resetTimer();
       }
     } else if (nextAppState === 'background') {
@@ -105,9 +138,21 @@ class IdleTimeoutService {
     }
   };
 
-  // Handle idle timeout - logout user
+  // Handle idle timeout - lock screen or logout user
   private async handleIdleTimeout() {
     if (this.isExemptScreen(this.currentScreen)) {
+      return;
+    }
+
+    // Check if this screen should lock instead of logout
+    if (this.shouldLockScreen(this.currentScreen)) {
+      console.log('[IdleTimeout] User idle for 5 minutes, locking POS screen...');
+      this.isLocked = true;
+      
+      // Call lock screen callback if set
+      if (this.onLockScreen) {
+        this.onLockScreen();
+      }
       return;
     }
 

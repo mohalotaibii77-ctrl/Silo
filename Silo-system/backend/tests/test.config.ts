@@ -27,6 +27,12 @@ export const testConfig = {
     password: process.env.TEST_PASSWORD || '',
   },
   
+  // SuperAdmin credentials (for SuperAdmin API tests)
+  superAdminCredentials: {
+    email: process.env.SUPERADMIN_EMAIL || '',
+    password: process.env.SUPERADMIN_PASSWORD || '',
+  },
+  
   // Optional: specific business/branch for testing
   businessId: process.env.TEST_BUSINESS_ID ? parseInt(process.env.TEST_BUSINESS_ID) : undefined,
   branchId: process.env.TEST_BRANCH_ID ? parseInt(process.env.TEST_BRANCH_ID) : undefined,

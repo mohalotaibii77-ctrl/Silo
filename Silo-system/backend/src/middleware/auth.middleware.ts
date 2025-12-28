@@ -69,9 +69,9 @@ export function requireRole(...roles: UserRole[]) {
 
 /**
  * Require POS terminal access (for order editing)
- * Only POS operators, cashiers, and owners can edit orders
+ * Access granted if: owner, pos role, OR user has pos_access permission
  */
-export function requirePOSAccess(req: Request, res: Response, next: NextFunction) {
+export async function requirePOSAccess(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({
       success: false,
@@ -79,16 +79,35 @@ export function requirePOSAccess(req: Request, res: Response, next: NextFunction
     });
   }
 
-  const allowedRoles: UserRole[] = ['pos', 'owner', 'manager', 'super_admin'];
-  
-  if (!allowedRoles.includes(req.user.role)) {
-    return res.status(403).json({
-      success: false,
-      error: 'POS access required. Only POS operators can edit orders.',
-    });
+  // Owner always has access
+  if (req.user.role === 'owner') {
+    return next();
   }
 
-  next();
+  // POS role has fixed access
+  if (req.user.role === 'pos') {
+    return next();
+  }
+
+  // For other roles (manager, employee), check pos_access permission from database
+  try {
+    const { data: user } = await supabaseAdmin
+      .from('business_users')
+      .select('permissions')
+      .eq('id', req.user.userId)
+      .single();
+
+    if (user?.permissions?.pos_access === true) {
+      return next();
+    }
+  } catch (err) {
+    console.error('Error checking POS access permission:', err);
+  }
+
+  return res.status(403).json({
+    success: false,
+    error: 'POS access required. You do not have permission to perform this action.',
+  });
 }
 
 /**
@@ -103,9 +122,7 @@ export function requireKitchenAccess(req: Request, res: Response, next: NextFunc
     });
   }
 
-  const allowedRoles: UserRole[] = ['kitchen_display', 'super_admin'];
-  
-  if (!allowedRoles.includes(req.user.role)) {
+  if (req.user.role !== 'kitchen_display') {
     return res.status(403).json({
       success: false,
       error: 'Kitchen Display access required. Only kitchen staff can complete orders.',

@@ -53,6 +53,10 @@ export interface Business {
   phone: string | null;
   address: string | null;
   business_type: string;
+  country: string;
+  currency: string;
+  timezone: string;
+  language: string;
   logo_url: string | null;
   certificate_url: string | null;
   subscription_tier: 'basic' | 'pro' | 'enterprise';
@@ -84,6 +88,10 @@ export interface CreateBusinessInput {
   phone?: string;
   address?: string;
   business_type?: string;
+  country: string; // Required - no default
+  currency: string; // Required - no default
+  timezone: string; // Required - no default
+  language?: string; // Optional, defaults to 'en'
   logo_url?: string;
   certificate_url?: string;
   subscription_tier?: 'basic' | 'pro' | 'enterprise';

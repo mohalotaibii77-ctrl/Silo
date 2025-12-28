@@ -54,6 +54,10 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
     phone: '',
     address: '',
     business_type: 'restaurant',
+    country: '', // Required - no default
+    currency: '', // Required - no default
+    timezone: '', // Required - no default
+    language: 'en',
     logo_url: '',
     certificate_url: '',
     subscription_tier: 'basic',
@@ -110,6 +114,29 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
 
   const handleSubmit = async () => {
     setError('');
+    
+    // Validate required fields
+    if (!formData.name) {
+      setError('Business name is required');
+      return;
+    }
+    if (!formData.country) {
+      setError('Country is required');
+      return;
+    }
+    if (!formData.currency) {
+      setError('Currency is required');
+      return;
+    }
+    if (!formData.timezone) {
+      setError('Timezone is required');
+      return;
+    }
+    if (!formData.users || formData.users.length === 0) {
+      setError('At least one owner account is required');
+      return;
+    }
+    
     setLoading(true);
 
     try {
@@ -156,7 +183,8 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
   const handleClose = () => {
     setFormData({
       name: '', slug: '', email: '', phone: '', address: '',
-      business_type: 'restaurant', logo_url: '', certificate_url: '',
+      business_type: 'restaurant', country: '', currency: '', timezone: '', language: 'en',
+      logo_url: '', certificate_url: '',
       subscription_tier: 'basic', max_users: 5, max_products: 100, branch_count: 1, users: [],
     });
     setLogoFile(null);
@@ -402,6 +430,86 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
                           </div>
                         </div>
 
+                        {/* Country & Currency - REQUIRED */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <SearchableSelect
+                            label="Country *"
+                            options={[
+                              { id: 'Kuwait', name: 'Kuwait' },
+                              { id: 'Saudi Arabia', name: 'Saudi Arabia' },
+                              { id: 'United Arab Emirates', name: 'United Arab Emirates' },
+                              { id: 'Qatar', name: 'Qatar' },
+                              { id: 'Bahrain', name: 'Bahrain' },
+                              { id: 'Oman', name: 'Oman' },
+                              { id: 'Egypt', name: 'Egypt' },
+                              { id: 'Jordan', name: 'Jordan' },
+                              { id: 'Lebanon', name: 'Lebanon' },
+                              { id: 'United States', name: 'United States' },
+                              { id: 'United Kingdom', name: 'United Kingdom' },
+                              { id: 'Canada', name: 'Canada' },
+                              { id: 'Australia', name: 'Australia' },
+                            ]}
+                            value={formData.country || ''}
+                            onChange={(value) => setFormData({...formData, country: value})}
+                            placeholder="Select country"
+                          />
+                          <SearchableSelect
+                            label="Currency *"
+                            options={[
+                              { id: 'KWD', name: 'KWD - Kuwaiti Dinar' },
+                              { id: 'SAR', name: 'SAR - Saudi Riyal' },
+                              { id: 'AED', name: 'AED - UAE Dirham' },
+                              { id: 'QAR', name: 'QAR - Qatari Riyal' },
+                              { id: 'BHD', name: 'BHD - Bahraini Dinar' },
+                              { id: 'OMR', name: 'OMR - Omani Rial' },
+                              { id: 'EGP', name: 'EGP - Egyptian Pound' },
+                              { id: 'JOD', name: 'JOD - Jordanian Dinar' },
+                              { id: 'LBP', name: 'LBP - Lebanese Pound' },
+                              { id: 'USD', name: 'USD - US Dollar' },
+                              { id: 'EUR', name: 'EUR - Euro' },
+                              { id: 'GBP', name: 'GBP - British Pound' },
+                            ]}
+                            value={formData.currency || ''}
+                            onChange={(value) => setFormData({...formData, currency: value})}
+                            placeholder="Select currency"
+                          />
+                        </div>
+
+                        {/* Timezone & Language */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <SearchableSelect
+                            label="Timezone *"
+                            options={[
+                              { id: 'Asia/Kuwait', name: 'Kuwait (GMT+3)' },
+                              { id: 'Asia/Riyadh', name: 'Saudi Arabia (GMT+3)' },
+                              { id: 'Asia/Dubai', name: 'UAE (GMT+4)' },
+                              { id: 'Asia/Qatar', name: 'Qatar (GMT+3)' },
+                              { id: 'Asia/Bahrain', name: 'Bahrain (GMT+3)' },
+                              { id: 'Asia/Muscat', name: 'Oman (GMT+4)' },
+                              { id: 'Africa/Cairo', name: 'Egypt (GMT+2)' },
+                              { id: 'Asia/Amman', name: 'Jordan (GMT+2)' },
+                              { id: 'Asia/Beirut', name: 'Lebanon (GMT+2)' },
+                              { id: 'America/New_York', name: 'New York (GMT-5)' },
+                              { id: 'America/Los_Angeles', name: 'Los Angeles (GMT-8)' },
+                              { id: 'Europe/London', name: 'London (GMT+0)' },
+                              { id: 'Australia/Sydney', name: 'Sydney (GMT+10)' },
+                            ]}
+                            value={formData.timezone || ''}
+                            onChange={(value) => setFormData({...formData, timezone: value})}
+                            placeholder="Select timezone"
+                          />
+                          <SearchableSelect
+                            label="Language"
+                            options={[
+                              { id: 'en', name: 'English' },
+                              { id: 'ar', name: 'العربية (Arabic)' },
+                            ]}
+                            value={formData.language || 'en'}
+                            onChange={(value) => setFormData({...formData, language: value})}
+                            placeholder="Select language"
+                          />
+                        </div>
+
                         {/* Logo Upload */}
                         <div className="space-y-2">
                           <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Business Logo (Optional)</label>
@@ -489,18 +597,32 @@ export function NewCreateBusinessModal({ isOpen, onClose, onSuccess }: NewCreate
                           <div className="space-y-2">
                              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Max Users</label>
                              <input 
-                               type="number"
-                               value={formData.max_users}
-                               onChange={(e) => setFormData({...formData, max_users: parseInt(e.target.value)})}
+                               type="text"
+                               inputMode="numeric"
+                               value={formData.max_users || ''}
+                               onChange={(e) => {
+                                 const val = e.target.value;
+                                 if (val === '' || /^\d+$/.test(val)) {
+                                   setFormData({...formData, max_users: val === '' ? 0 : parseInt(val)});
+                                 }
+                               }}
+                               placeholder="0"
                                className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
                              />
                           </div>
                           <div className="space-y-2">
                              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Max Products</label>
                              <input 
-                               type="number"
-                               value={formData.max_products}
-                               onChange={(e) => setFormData({...formData, max_products: parseInt(e.target.value)})}
+                               type="text"
+                               inputMode="numeric"
+                               value={formData.max_products || ''}
+                               onChange={(e) => {
+                                 const val = e.target.value;
+                                 if (val === '' || /^\d+$/.test(val)) {
+                                   setFormData({...formData, max_products: val === '' ? 0 : parseInt(val)});
+                                 }
+                               }}
+                               placeholder="0"
                                className="w-full px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded-xl focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-500 outline-none transition-all"
                              />
                           </div>

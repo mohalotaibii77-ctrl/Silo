@@ -168,16 +168,13 @@ export function ProduceModal({ isOpen, onClose, onSuccess, compositeItem, curren
                 
                 <div className="w-24">
                   <input
-                    type="number"
-                    min="0.1"
-                    step="0.1"
+                    type="text"
+                    inputMode="decimal"
                     value={batchCount || ''}
                     onChange={(e) => {
                       const val = e.target.value;
-                      if (val === '') {
-                        setBatchCount(0); // Allow empty temporarily
-                      } else {
-                        setBatchCount(parseFloat(val) || 0);
+                      if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                        setBatchCount(val === '' ? 0 : parseFloat(val) || 0);
                       }
                     }}
                     onBlur={() => {
@@ -186,6 +183,7 @@ export function ProduceModal({ isOpen, onClose, onSuccess, compositeItem, curren
                         setBatchCount(0.1);
                       }
                     }}
+                    placeholder="0.0"
                     className="w-full h-12 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white text-center text-xl font-bold focus:ring-2 focus:ring-zinc-500/20 outline-none"
                   />
                 </div>

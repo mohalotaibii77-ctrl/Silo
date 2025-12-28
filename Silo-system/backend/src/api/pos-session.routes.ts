@@ -108,6 +108,93 @@ router.post('/authenticate', requireBusinessAccess, asyncHandler(async (req, res
 }));
 
 /**
+ * POST /api/pos-sessions/pin-authenticate
+ * Authenticate POS employee using PIN (for screen unlock after idle)
+ * This is used when the screen locks after 5 minutes of inactivity
+ * 
+ * Flow:
+ * 1. Device is already logged in (has business context)
+ * 2. Screen locks after idle
+ * 3. Any employee with POS access can unlock with their PIN
+ * 4. Order is tagged to that employee
+ */
+router.post('/pin-authenticate', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { pin } = req.body;
+  const businessId = parseInt(req.user!.businessId);
+
+  if (!pin) {
+    return res.status(400).json({
+      success: false,
+      error: 'PIN is required',
+    });
+  }
+
+  // Validate PIN format (4-6 digits)
+  if (!/^\d{4,6}$/.test(pin)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid PIN format. Must be 4-6 digits.',
+    });
+  }
+
+  // Find employee by PIN within this business
+  // First try to find by plain PIN (for simpler lookup)
+  const { data: employee, error } = await supabaseAdmin
+    .from('business_users')
+    .select('id, username, first_name, last_name, role, status, permissions, pos_pin')
+    .eq('business_id', businessId)
+    .eq('pos_pin', pin)
+    .single();
+
+  if (error || !employee) {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid PIN',
+    });
+  }
+
+  // Check employee is active
+  if (employee.status !== 'active') {
+    return res.status(401).json({
+      success: false,
+      error: 'Employee account is not active',
+    });
+  }
+
+  // Check employee has POS access
+  const hasPosAccess = 
+    employee.role === 'owner' || 
+    employee.role === 'manager' || 
+    employee.role === 'pos' ||
+    (employee.permissions && employee.permissions.pos_access);
+
+  if (!hasPosAccess) {
+    return res.status(403).json({
+      success: false,
+      error: 'Employee does not have POS access',
+    });
+  }
+
+  // Return employee info for the POS to use
+  res.json({
+    success: true,
+    data: {
+      employee: {
+        id: employee.id,
+        username: employee.username,
+        first_name: employee.first_name,
+        last_name: employee.last_name,
+        display_name: employee.first_name && employee.last_name 
+          ? `${employee.first_name} ${employee.last_name}` 
+          : employee.username,
+        role: employee.role,
+      },
+    },
+    message: 'PIN verified successfully',
+  });
+}));
+
+/**
  * GET /api/pos-sessions/active
  * Get active session for current cashier
  */
@@ -144,21 +231,48 @@ router.get('/business-active', requireBusinessAccess, asyncHandler(async (req, r
  */
 router.post('/open', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { opening_float, branch_id, notes, cashier_id } = req.body;
-
-  if (opening_float === undefined) {
-    return res.status(400).json({
-      success: false,
-      error: 'opening_float is required',
-    });
-  }
-
+  const businessId = parseInt(req.user!.businessId);
+  
   // Use provided cashier_id or fall back to current user
   const targetCashierId = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
 
+  // Get operational settings to check session restrictions and opening float
+  const { data: opSettings } = await supabaseAdmin
+    .from('operational_settings')
+    .select('pos_opening_float_fixed, pos_opening_float_amount, pos_session_allowed_user_ids')
+    .eq('business_id', businessId)
+    .single();
+
+  // Check if user is allowed to open sessions
+  if (opSettings?.pos_session_allowed_user_ids && opSettings.pos_session_allowed_user_ids.length > 0) {
+    if (!opSettings.pos_session_allowed_user_ids.includes(targetCashierId)) {
+      return res.status(403).json({
+        success: false,
+        error: 'You do not have permission to open POS sessions',
+      });
+    }
+  }
+
+  // Determine opening float amount
+  let finalOpeningFloat = opening_float;
+  
+  if (opSettings?.pos_opening_float_fixed) {
+    // Use fixed amount from settings
+    finalOpeningFloat = opSettings.pos_opening_float_amount || 0;
+  } else {
+    // Employee must provide opening float
+    if (opening_float === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'opening_float is required',
+      });
+    }
+  }
+
   const session = await posSessionService.openSession(
-    parseInt(req.user!.businessId),
+    businessId,
     targetCashierId,
-    opening_float,
+    finalOpeningFloat,
     branch_id ? parseInt(branch_id) : undefined,
     notes
   );

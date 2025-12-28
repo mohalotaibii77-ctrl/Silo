@@ -13,10 +13,12 @@ import {
   ActivityIndicator,
   Dimensions
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
+import { colors as staticColors } from '../theme/colors';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import ProgressiveImage from '../components/ProgressiveImage';
 import { usePaginatedProducts } from '../hooks';
 import { 
@@ -77,12 +79,12 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const ProductSkeleton = () => (
+const ProductSkeleton = ({ styles }: { styles: any }) => (
   <View style={styles.productCard}>
     <Skeleton width="100%" height={120} borderRadius={12} />
     <View style={{ padding: 12 }}>
@@ -94,6 +96,9 @@ const ProductSkeleton = () => (
 );
 
 export default function ProductsScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const modalStyles = createModalStyles(colors);
   const { t, isRTL, language, formatCurrency, currency } = useLocalization();
   
   // Use paginated products hook for efficient data loading
@@ -312,7 +317,7 @@ export default function ProductsScreen({ navigation }: any) {
       <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
         <TouchableOpacity 
           style={styles.backButton} 
-          onPress={() => navigation.goBack()}
+          onPress={() => safeGoBack(navigation)}
         >
           {isRTL ? (
             <ArrowRight size={24} color={colors.foreground} />
@@ -361,10 +366,10 @@ export default function ProductsScreen({ navigation }: any) {
         <View style={styles.loadingContainer}>
           {renderHeader()}
           <View style={styles.productsGrid}>
-            <ProductSkeleton />
-            <ProductSkeleton />
-            <ProductSkeleton />
-            <ProductSkeleton />
+            <ProductSkeleton styles={styles} />
+            <ProductSkeleton styles={styles} />
+            <ProductSkeleton styles={styles} />
+            <ProductSkeleton styles={styles} />
           </View>
         </View>
       ) : (
@@ -414,6 +419,9 @@ export default function ProductsScreen({ navigation }: any) {
         isRTL={isRTL}
         language={language}
         t={t}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
 
       {/* Product Details Modal */}
@@ -438,13 +446,16 @@ export default function ProductsScreen({ navigation }: any) {
         language={language}
         t={t}
         formatCurrency={formatCurrency}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
     </View>
   );
 }
 
 // Add/Edit Product Modal
-function AddProductModal({ visible, onClose, onSave, editingProduct, categories, isRTL, language, t }: {
+function AddProductModal({ visible, onClose, onSave, editingProduct, categories, isRTL, language, t, colors, styles, modalStyles }: {
   visible: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -453,6 +464,9 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   isRTL: boolean;
   language: string;
   t: (key: string) => string;
+  colors: any;
+  styles: any;
+  modalStyles: any;
 }) {
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -653,7 +667,7 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
 }
 
 // Product Details Modal
-function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRTL, language, t, formatCurrency }: {
+function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRTL, language, t, formatCurrency, colors, styles, modalStyles }: {
   visible: boolean;
   product: Product | null;
   onClose: () => void;
@@ -663,6 +677,9 @@ function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRT
   language: string;
   t: (key: string) => string;
   formatCurrency: (amount: number) => string;
+  colors: any;
+  styles: any;
+  modalStyles: any;
 }) {
   if (!visible || !product) return null;
 
@@ -747,7 +764,7 @@ function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRT
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -943,7 +960,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const modalStyles = StyleSheet.create({
+const createModalStyles = (colors: any) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',

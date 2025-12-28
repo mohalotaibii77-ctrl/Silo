@@ -497,18 +497,32 @@ export function NewEditBusinessModal({ business, isOpen, onClose, onSuccess }: N
                            <div className="space-y-1">
                              <label className="text-xs font-medium text-zinc-500">Max Users</label>
                              <input 
-                               type="number"
-                               value={formData.max_users}
-                               onChange={(e) => setFormData({...formData, max_users: parseInt(e.target.value)})}
+                               type="text"
+                               inputMode="numeric"
+                               value={formData.max_users || ''}
+                               onChange={(e) => {
+                                 const val = e.target.value;
+                                 if (val === '' || /^\d+$/.test(val)) {
+                                   setFormData({...formData, max_users: val === '' ? 0 : parseInt(val)});
+                                 }
+                               }}
+                               placeholder="0"
                                className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg outline-none"
                              />
                            </div>
                            <div className="space-y-1">
                              <label className="text-xs font-medium text-zinc-500">Max Products</label>
                              <input 
-                               type="number"
-                               value={formData.max_products}
-                               onChange={(e) => setFormData({...formData, max_products: parseInt(e.target.value)})}
+                               type="text"
+                               inputMode="numeric"
+                               value={formData.max_products || ''}
+                               onChange={(e) => {
+                                 const val = e.target.value;
+                                 if (val === '' || /^\d+$/.test(val)) {
+                                   setFormData({...formData, max_products: val === '' ? 0 : parseInt(val)});
+                                 }
+                               }}
+                               placeholder="0"
                                className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg outline-none"
                              />
                            </div>

@@ -631,13 +631,16 @@ export default function DeliveryPage() {
                       {t('Commission Value', 'قيمة العمولة')} *
                     </label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={commissionValue}
-                      onChange={(e) => setCommissionValue(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setCommissionValue(val);
+                        }
+                      }}
                       placeholder={commissionType === 'percentage' ? '15' : '2.000'}
-                      step={commissionType === 'percentage' ? '0.1' : '0.001'}
-                      min="0"
-                      max={commissionType === 'percentage' ? '100' : undefined}
                       className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                     />
                   </div>

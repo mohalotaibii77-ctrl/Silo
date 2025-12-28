@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   Text, 
@@ -11,14 +11,14 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
-  I18nManager,
-  Animated
+  I18nManager
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../theme/colors';
 import api from '../api/client';
 import { CACHE_KEYS } from '../services/DataPreloader';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { 
   ArrowLeft,
   Store,
@@ -30,55 +30,10 @@ import {
   Phone,
   Mail,
   MapPin,
-  Save
+  Save,
+  Settings,
+  Clock
 } from 'lucide-react-native';
-
-// Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
-  const pulseAnim = useRef(new Animated.Value(0.3)).current;
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 0.3, duration: 800, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, [pulseAnim]);
-
-  return (
-    <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
-    />
-  );
-};
-
-const SettingsSkeleton = ({ isRTL }: { isRTL: boolean }) => (
-  <View style={{ padding: 16 }}>
-    {/* Section Title */}
-    <Skeleton width={150} height={18} style={{ marginBottom: 16 }} />
-    
-    {/* Input Fields */}
-    {[1, 2, 3, 4].map((_, i) => (
-      <View key={i} style={{ marginBottom: 20 }}>
-        <Skeleton width={100} height={14} style={{ marginBottom: 8 }} />
-        <Skeleton width="100%" height={48} borderRadius={12} />
-      </View>
-    ))}
-    
-    {/* Second Section */}
-    <Skeleton width={180} height={18} style={{ marginTop: 24, marginBottom: 16 }} />
-    
-    {[1, 2].map((_, i) => (
-      <View key={i} style={{ marginBottom: 20 }}>
-        <Skeleton width={80} height={14} style={{ marginBottom: 8 }} />
-        <Skeleton width="100%" height={48} borderRadius={12} />
-      </View>
-    ))}
-  </View>
-);
 
 interface Business {
   id: number;
@@ -96,7 +51,7 @@ interface Business {
   tax_rate: number;
 }
 
-type SettingsTab = 'profile' | 'localization' | 'tax';
+type SettingsTab = 'profile' | 'localization' | 'tax' | 'operational';
 
 const CURRENCIES = [
   { code: 'KWD', name: 'Kuwaiti Dinar', symbol: 'KD' },
@@ -138,11 +93,26 @@ export default function SettingsScreen({ navigation }: any) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
-  const [currency, setCurrency] = useState(''); // Loaded from business settings
+  const [currency, setCurrency] = useState('');
   const [language, setLanguage] = useState('en');
   const [timezone, setTimezone] = useState('Asia/Kuwait');
   const [vatEnabled, setVatEnabled] = useState(false);
   const [vatRate, setVatRate] = useState('0');
+
+  // Operational settings state
+  const [orderNumberPrefix, setOrderNumberPrefix] = useState('ORD');
+  const [autoAcceptOrders, setAutoAcceptOrders] = useState(false);
+  const [orderPrepTime, setOrderPrepTime] = useState('15');
+  const [enableOrderNotifications, setEnableOrderNotifications] = useState(true);
+  const [kitchenDisplayAutoClear, setKitchenDisplayAutoClear] = useState('30');
+  const [kitchenOperationMode, setKitchenOperationMode] = useState<'display' | 'receipt_scan'>('display');
+  const [requireCustomerPhone, setRequireCustomerPhone] = useState(false);
+  const [allowOrderNotes, setAllowOrderNotes] = useState(true);
+  const [openingTime, setOpeningTime] = useState('09:00');
+  const [closingTime, setClosingTime] = useState('22:00');
+  const [posOpeningFloatFixed, setPosOpeningFloatFixed] = useState(false);
+  const [posOpeningFloatAmount, setPosOpeningFloatAmount] = useState('0');
+  const [showKitchenModePicker, setShowKitchenModePicker] = useState(false);
 
   // Dropdown states
   const [showCurrencyPicker, setShowCurrencyPicker] = useState(false);
@@ -205,12 +175,52 @@ export default function SettingsScreen({ navigation }: any) {
     setPhone(b.phone || '');
     setEmail(b.email || '');
     setAddress(b.address || '');
+    
+    // Validate currency exists - no fallback allowed
+    if (!b.currency) {
+      Alert.alert(
+        'Configuration Error',
+        'Business currency not set. Please contact your administrator.',
+        [{ text: 'OK' }]
+      );
+    }
     setCurrency(b.currency || '');
+    
     setLanguage(b.language || 'en');
     setTimezone(b.timezone || 'Asia/Kuwait');
     setVatEnabled(b.vat_enabled || false);
     setVatRate(String(b.tax_rate || 0));
   };
+
+  const loadOperationalSettings = async () => {
+    try {
+      const response = await api.get('/business-settings/operational');
+      if (response.data.success) {
+        const settings = response.data.data;
+        setOrderNumberPrefix(settings.order_number_prefix || 'ORD');
+        setAutoAcceptOrders(settings.auto_accept_orders || false);
+        setOrderPrepTime(String(settings.order_preparation_time || 15));
+        setEnableOrderNotifications(settings.enable_order_notifications !== false);
+        setKitchenDisplayAutoClear(String(settings.kitchen_display_auto_clear || 30));
+        setKitchenOperationMode(settings.kitchen_operation_mode || 'display');
+        setRequireCustomerPhone(settings.require_customer_phone || false);
+        setAllowOrderNotes(settings.allow_order_notes !== false);
+        setOpeningTime(settings.opening_time || '09:00');
+        setClosingTime(settings.closing_time || '22:00');
+        setPosOpeningFloatFixed(settings.pos_opening_float_fixed || false);
+        setPosOpeningFloatAmount(String(settings.pos_opening_float_amount || 0));
+      }
+    } catch (error) {
+      console.error('Failed to load operational settings:', error);
+    }
+  };
+
+  // Load operational settings when tab changes to operational
+  useEffect(() => {
+    if (activeTab === 'operational') {
+      loadOperationalSettings();
+    }
+  }, [activeTab]);
 
   const handleSave = async () => {
     if (!business) return;
@@ -253,49 +263,54 @@ export default function SettingsScreen({ navigation }: any) {
           }
         }
       } else if (activeTab === 'localization') {
-        const currencyChanged = currency !== (business.currency || '');
+        const currencyChanged = currency !== business.currency;
         const languageChanged = language !== (business.language || 'en');
         const timezoneChanged = timezone !== (business.timezone || 'Asia/Kuwait');
         
         if (!currencyChanged && !languageChanged && !timezoneChanged) {
-          Alert.alert(t('noChanges'), t('noChangesDetected'));
+          Alert.alert('No Changes', 'No localization changes detected');
           setSaving(false);
           return;
         }
 
-        // Language is a USER preference (saved to user settings, not business-wide)
-        if (languageChanged) {
-          // setGlobalLanguage saves to user settings via API and updates local storage
-          await setGlobalLanguage(language as 'en' | 'ar');
+        // Language and timezone can be updated directly (user preferences)
+        if (languageChanged || timezoneChanged) {
+          const userSettings: any = {};
+          if (languageChanged) userSettings.language = language;
+          if (timezoneChanged) userSettings.timezone = timezone;
           
-          // Handle RTL for Arabic language
-          const isArabic = language === 'ar';
-          const currentRTL = I18nManager.isRTL;
-          
-          if (isArabic !== currentRTL) {
-            I18nManager.allowRTL(isArabic);
-            I18nManager.forceRTL(isArabic);
-            
-            // Need to reload the app for RTL changes to take effect
-            Alert.alert(
-              t('languageChanged'),
-              t('restartAppMessage'),
-              [{ text: t('ok') }]
-            );
-          }
-        }
-        
-        // Timezone is a business setting (saved directly)
-        if (timezoneChanged) {
-          await api.put('/business-settings', { timezone });
+          await api.put('/business-settings', userSettings);
           
           // Update local storage
-          const updatedBusiness = { ...business, timezone };
+          const updatedBusiness = { ...business, ...userSettings };
           await AsyncStorage.setItem('business', JSON.stringify(updatedBusiness));
           setBusiness(updatedBusiness);
+          
+          // Update global language state for immediate UI update
+          if (languageChanged) {
+            await setGlobalLanguage(language as 'en' | 'ar');
+          }
+          
+          // Handle RTL for Arabic language
+          if (languageChanged) {
+            const isArabic = language === 'ar';
+            const currentRTL = I18nManager.isRTL;
+            
+            if (isArabic !== currentRTL) {
+              I18nManager.allowRTL(isArabic);
+              I18nManager.forceRTL(isArabic);
+              
+              // Need to reload the app for RTL changes to take effect
+              Alert.alert(
+                isArabic ? 'تم تغيير اللغة' : 'Language Changed',
+                isArabic ? 'يرجى إغلاق التطبيق وإعادة فتحه لتطبيق التغييرات' : 'Please close and reopen the app to apply the layout changes.',
+                [{ text: isArabic ? 'حسناً' : 'OK' }]
+              );
+            }
+          }
         }
 
-        // Currency requires admin approval
+        // Only currency requires admin approval
         if (currencyChanged) {
           try {
             await api.post('/business-settings/change-requests', {
@@ -303,26 +318,19 @@ export default function SettingsScreen({ navigation }: any) {
               new_currency: currency,
             });
             Alert.alert(
-              t('success'), 
-              languageChanged || timezoneChanged 
-                ? 'Settings saved. Currency change has been submitted for admin approval.'
-                : 'Currency change has been submitted for admin approval.',
-              [{ text: t('ok') }]
+              'Settings Updated', 
+              'Language and timezone saved. Currency change has been submitted for admin approval.',
+              [{ text: 'OK' }]
             );
           } catch (error: any) {
             if (error.response?.data?.error?.includes('pending request')) {
-              Alert.alert(
-                t('success'), 
-                languageChanged || timezoneChanged
-                  ? 'Settings saved. You already have a pending currency change request.'
-                  : 'You already have a pending currency change request.'
-              );
+              Alert.alert('Partial Success', 'Language and timezone saved. You already have a pending currency change request.');
             } else {
               throw error;
             }
           }
-        } else if (languageChanged || timezoneChanged) {
-          Alert.alert(t('success'), t('localizationSaved'));
+        } else {
+          Alert.alert('Success', 'Localization settings saved successfully');
         }
       } else if (activeTab === 'tax') {
         // Tax/VAT changes require admin approval
@@ -358,6 +366,25 @@ export default function SettingsScreen({ navigation }: any) {
             throw error;
           }
         }
+      } else if (activeTab === 'operational') {
+        // Operational settings can be updated directly
+        const settingsData = {
+          order_number_prefix: orderNumberPrefix,
+          auto_accept_orders: autoAcceptOrders,
+          order_preparation_time: parseInt(orderPrepTime) || 15,
+          enable_order_notifications: enableOrderNotifications,
+          kitchen_display_auto_clear: parseInt(kitchenDisplayAutoClear) || 30,
+          kitchen_operation_mode: kitchenOperationMode,
+          require_customer_phone: requireCustomerPhone,
+          allow_order_notes: allowOrderNotes,
+          opening_time: openingTime,
+          closing_time: closingTime,
+          pos_opening_float_fixed: posOpeningFloatFixed,
+          pos_opening_float_amount: parseFloat(posOpeningFloatAmount) || 0,
+        };
+        
+        await api.put('/business-settings/operational', settingsData);
+        Alert.alert('Success', 'Operational settings saved successfully');
       }
     } catch (error) {
       console.error('Error saving settings:', error);
@@ -403,29 +430,8 @@ export default function SettingsScreen({ navigation }: any) {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <ArrowLeft size={24} color={colors.foreground} style={isRTL ? { transform: [{ rotate: '180deg' }] } : undefined} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, isRTL && { textAlign: 'right' }]}>{t('settings')}</Text>
-          <View style={{ width: 80 }} />
-        </View>
-        
-        {/* Tab Bar Skeleton */}
-        <View style={[styles.tabBar, isRTL && { flexDirection: 'row-reverse' }]}>
-          {[1, 2, 3].map((_, i) => (
-            <View key={i} style={[styles.tab, i === 0 && styles.tabActive]}>
-              <Skeleton width={20} height={20} borderRadius={4} />
-              <Skeleton width={60} height={12} style={{ marginTop: 4 }} />
-            </View>
-          ))}
-        </View>
-        
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          <SettingsSkeleton isRTL={isRTL} />
-        </ScrollView>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.foreground} />
       </View>
     );
   }
@@ -437,7 +443,7 @@ export default function SettingsScreen({ navigation }: any) {
     >
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
           <ArrowLeft size={24} color={colors.foreground} style={isRTL ? { transform: [{ rotate: '180deg' }] } : undefined} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, isRTL && { textAlign: 'right' }]}>{t('settings')}</Text>
@@ -460,11 +466,17 @@ export default function SettingsScreen({ navigation }: any) {
       </View>
 
       {/* Tab Bar */}
-      <View style={[styles.tabBar, isRTL && { flexDirection: 'row-reverse' }]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabBar}
+        contentContainerStyle={[styles.tabBarContent, isRTL && { flexDirection: 'row-reverse' }]}
+      >
         <TabButton tab="profile" title={t('storeProfile')} icon={Store} />
         <TabButton tab="localization" title={t('localization')} icon={Globe} />
         <TabButton tab="tax" title={t('taxVat')} icon={Percent} />
-      </View>
+        <TabButton tab="operational" title={language === 'ar' ? 'العمليات' : 'Operations'} icon={Settings} />
+      </ScrollView>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Store Profile Tab */}
@@ -573,20 +585,18 @@ export default function SettingsScreen({ navigation }: any) {
               </TouchableOpacity>
               {showCurrencyPicker && (
                 <View style={styles.pickerList}>
-                  <ScrollView nestedScrollEnabled style={{ maxHeight: 200 }} showsVerticalScrollIndicator>
-                    {CURRENCIES.map((c) => (
-                      <PickerOption
-                        key={c.code}
-                        value={c.code}
-                        label={`${c.name} (${c.symbol})`}
-                        selected={currency === c.code}
-                        onSelect={() => {
-                          setCurrency(c.code);
-                          setShowCurrencyPicker(false);
-                        }}
-                      />
-                    ))}
-                  </ScrollView>
+                  {CURRENCIES.map((c) => (
+                    <PickerOption
+                      key={c.code}
+                      value={c.code}
+                      label={`${c.name} (${c.symbol})`}
+                      selected={currency === c.code}
+                      onSelect={() => {
+                        setCurrency(c.code);
+                        setShowCurrencyPicker(false);
+                      }}
+                    />
+                  ))}
                 </View>
               )}
             </View>
@@ -633,20 +643,18 @@ export default function SettingsScreen({ navigation }: any) {
               </TouchableOpacity>
               {showTimezonePicker && (
                 <View style={styles.pickerList}>
-                  <ScrollView nestedScrollEnabled style={{ maxHeight: 200 }} showsVerticalScrollIndicator>
-                    {TIMEZONES.map((tz) => (
-                      <PickerOption
-                        key={tz.code}
-                        value={tz.code}
-                        label={tz.name}
-                        selected={timezone === tz.code}
-                        onSelect={() => {
-                          setTimezone(tz.code);
-                          setShowTimezonePicker(false);
-                        }}
-                      />
-                    ))}
-                  </ScrollView>
+                  {TIMEZONES.map((tz) => (
+                    <PickerOption
+                      key={tz.code}
+                      value={tz.code}
+                      label={tz.name}
+                      selected={timezone === tz.code}
+                      onSelect={() => {
+                        setTimezone(tz.code);
+                        setShowTimezonePicker(false);
+                      }}
+                    />
+                  ))}
                 </View>
               )}
             </View>
@@ -708,6 +716,260 @@ export default function SettingsScreen({ navigation }: any) {
             </View>
           </View>
         )}
+
+        {/* Operational Settings Tab */}
+        {activeTab === 'operational' && (
+          <View style={styles.formSection}>
+            <Text style={[styles.formSectionTitle, isRTL && { textAlign: 'right' }]}>
+              {language === 'ar' ? 'إعدادات الطلبات' : 'Order Settings'}
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'بادئة رقم الطلب' : 'Order Number Prefix'}
+              </Text>
+              <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  value={orderNumberPrefix}
+                  onChangeText={setOrderNumberPrefix}
+                  placeholder="ORD"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+            </View>
+
+            <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+              <View style={[styles.switchInfo, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'قبول الطلبات تلقائيًا' : 'Auto Accept Orders'}
+                </Text>
+                <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'قبول الطلبات الواردة تلقائيًا' : 'Automatically accept incoming orders'}
+                </Text>
+              </View>
+              <Switch
+                value={autoAcceptOrders}
+                onValueChange={setAutoAcceptOrders}
+                trackColor={{ false: colors.muted, true: colors.foreground }}
+                thumbColor={colors.background}
+              />
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'وقت تحضير الطلب (دقائق)' : 'Order Preparation Time (minutes)'}
+              </Text>
+              <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                <Clock size={18} color={colors.mutedForeground} />
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  value={orderPrepTime}
+                  onChangeText={setOrderPrepTime}
+                  placeholder="15"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+              <View style={[styles.switchInfo, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'إشعارات الطلبات' : 'Order Notifications'}
+                </Text>
+                <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'تلقي إشعارات الطلبات الجديدة' : 'Receive new order notifications'}
+                </Text>
+              </View>
+              <Switch
+                value={enableOrderNotifications}
+                onValueChange={setEnableOrderNotifications}
+                trackColor={{ false: colors.muted, true: colors.foreground }}
+                thumbColor={colors.background}
+              />
+            </View>
+
+            <Text style={[styles.formSectionTitle, { marginTop: 24 }, isRTL && { textAlign: 'right' }]}>
+              {language === 'ar' ? 'إعدادات المطبخ' : 'Kitchen Settings'}
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'وضع تشغيل المطبخ' : 'Kitchen Operation Mode'}
+              </Text>
+              <TouchableOpacity 
+                style={[styles.selector, isRTL && { flexDirection: 'row-reverse' }]}
+                onPress={() => setShowKitchenModePicker(!showKitchenModePicker)}
+              >
+                <Text style={[styles.selectorText, isRTL && { textAlign: 'right' }]}>
+                  {kitchenOperationMode === 'display' 
+                    ? (language === 'ar' ? 'شاشة العرض' : 'Display Screen')
+                    : (language === 'ar' ? 'مسح الإيصال' : 'Receipt Scan')}
+                </Text>
+                <ChevronRight size={18} color={colors.mutedForeground} style={{ transform: [{ rotate: showKitchenModePicker ? '90deg' : (isRTL ? '180deg' : '0deg') }] }} />
+              </TouchableOpacity>
+              {showKitchenModePicker && (
+                <View style={styles.pickerList}>
+                  <TouchableOpacity
+                    style={[styles.pickerOption, kitchenOperationMode === 'display' && styles.pickerOptionActive]}
+                    onPress={() => {
+                      setKitchenOperationMode('display');
+                      setShowKitchenModePicker(false);
+                    }}
+                  >
+                    <Text style={[styles.pickerOptionText, kitchenOperationMode === 'display' && styles.pickerOptionTextActive]}>
+                      {language === 'ar' ? 'شاشة العرض' : 'Display Screen'}
+                    </Text>
+                    {kitchenOperationMode === 'display' && <Check size={18} color={colors.foreground} />}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.pickerOption, kitchenOperationMode === 'receipt_scan' && styles.pickerOptionActive]}
+                    onPress={() => {
+                      setKitchenOperationMode('receipt_scan');
+                      setShowKitchenModePicker(false);
+                    }}
+                  >
+                    <Text style={[styles.pickerOptionText, kitchenOperationMode === 'receipt_scan' && styles.pickerOptionTextActive]}>
+                      {language === 'ar' ? 'مسح الإيصال' : 'Receipt Scan'}
+                    </Text>
+                    {kitchenOperationMode === 'receipt_scan' && <Check size={18} color={colors.foreground} />}
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'مسح تلقائي لشاشة المطبخ (دقائق)' : 'Kitchen Display Auto Clear (minutes)'}
+              </Text>
+              <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                <Clock size={18} color={colors.mutedForeground} />
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  value={kitchenDisplayAutoClear}
+                  onChangeText={setKitchenDisplayAutoClear}
+                  placeholder="30"
+                  placeholderTextColor={colors.mutedForeground}
+                  keyboardType="number-pad"
+                />
+              </View>
+            </View>
+
+            <Text style={[styles.formSectionTitle, { marginTop: 24 }, isRTL && { textAlign: 'right' }]}>
+              {language === 'ar' ? 'إعدادات العملاء' : 'Customer Settings'}
+            </Text>
+
+            <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+              <View style={[styles.switchInfo, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'طلب رقم هاتف العميل' : 'Require Customer Phone'}
+                </Text>
+                <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'إلزامي إدخال رقم هاتف العميل' : 'Make customer phone number mandatory'}
+                </Text>
+              </View>
+              <Switch
+                value={requireCustomerPhone}
+                onValueChange={setRequireCustomerPhone}
+                trackColor={{ false: colors.muted, true: colors.foreground }}
+                thumbColor={colors.background}
+              />
+            </View>
+
+            <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+              <View style={[styles.switchInfo, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'السماح بملاحظات الطلب' : 'Allow Order Notes'}
+                </Text>
+                <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'السماح للعملاء بإضافة ملاحظات' : 'Allow customers to add notes to orders'}
+                </Text>
+              </View>
+              <Switch
+                value={allowOrderNotes}
+                onValueChange={setAllowOrderNotes}
+                trackColor={{ false: colors.muted, true: colors.foreground }}
+                thumbColor={colors.background}
+              />
+            </View>
+
+            <Text style={[styles.formSectionTitle, { marginTop: 24 }, isRTL && { textAlign: 'right' }]}>
+              {language === 'ar' ? 'ساعات العمل' : 'Operating Hours'}
+            </Text>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'وقت الافتتاح' : 'Opening Time'}
+              </Text>
+              <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                <Clock size={18} color={colors.mutedForeground} />
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  value={openingTime}
+                  onChangeText={setOpeningTime}
+                  placeholder="09:00"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+            </View>
+
+            <View style={styles.inputGroup}>
+              <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                {language === 'ar' ? 'وقت الإغلاق' : 'Closing Time'}
+              </Text>
+              <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                <Clock size={18} color={colors.mutedForeground} />
+                <TextInput
+                  style={[styles.input, isRTL && { textAlign: 'right' }]}
+                  value={closingTime}
+                  onChangeText={setClosingTime}
+                  placeholder="22:00"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </View>
+            </View>
+
+            <Text style={[styles.formSectionTitle, { marginTop: 24 }, isRTL && { textAlign: 'right' }]}>
+              {language === 'ar' ? 'إعدادات نقاط البيع' : 'POS Settings'}
+            </Text>
+
+            <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+              <View style={[styles.switchInfo, isRTL && { alignItems: 'flex-end' }]}>
+                <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'رصيد افتتاحي ثابت' : 'Fixed Opening Float'}
+                </Text>
+                <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'استخدام رصيد افتتاحي ثابت لكل جلسة' : 'Use fixed opening float for each session'}
+                </Text>
+              </View>
+              <Switch
+                value={posOpeningFloatFixed}
+                onValueChange={setPosOpeningFloatFixed}
+                trackColor={{ false: colors.muted, true: colors.foreground }}
+                thumbColor={colors.background}
+              />
+            </View>
+
+            {posOpeningFloatFixed && (
+              <View style={styles.inputGroup}>
+                <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                  {language === 'ar' ? 'مبلغ الرصيد الافتتاحي' : 'Opening Float Amount'}
+                </Text>
+                <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                  <TextInput
+                    style={[styles.input, isRTL && { textAlign: 'right' }]}
+                    value={posOpeningFloatAmount}
+                    onChangeText={setPosOpeningFloatAmount}
+                    placeholder="0"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -766,31 +1028,32 @@ const styles = StyleSheet.create({
     color: colors.background,
   },
   tabBar: {
-    flexDirection: 'row',
     backgroundColor: colors.card,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    gap: 6,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  tabBarContent: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+  },
   tabButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    backgroundColor: colors.muted,
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: colors.secondary,
   },
   tabButtonActive: {
     backgroundColor: colors.foreground,
   },
   tabButtonText: {
-    fontSize: 11,
-    fontWeight: '500',
+    fontSize: 12,
+    fontWeight: '600',
     color: colors.mutedForeground,
   },
   tabButtonTextActive: {

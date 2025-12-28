@@ -53,3 +53,4 @@ COMMENT ON COLUMN branches.business_id IS 'Parent business that owns this branch
 
 
 
+

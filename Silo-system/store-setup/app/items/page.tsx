@@ -355,7 +355,14 @@ export default function ItemsPage() {
 
   // Format price with business currency - handles small values like 0.0003
   const formatPrice = (price: number) => {
-    const currencyCode = business?.currency || '';
+    const currencyCode = business?.currency;
+    
+    // Validate currency exists - no fallback allowed
+    if (!currencyCode) {
+      console.error('Business currency not set');
+      return price.toFixed(2); // Return plain number if currency missing
+    }
+    
     const symbol = getCurrencySymbol(currencyCode);
     // For very small amounts (< 0.001), show more decimal places to avoid rounding to 0
     if (price > 0 && price < 0.001) {

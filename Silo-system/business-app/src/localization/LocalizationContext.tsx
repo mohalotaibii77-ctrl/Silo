@@ -2,19 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { I18nManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, TranslationKey, Language } from './translations';
-
-// Currency symbols mapping
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  KWD: 'KD',
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  SAR: 'SR',
-  AED: 'AED',
-  QAR: 'QR',
-  BHD: 'BD',
-  OMR: 'OMR',
-};
+import { useConfig } from '../context/ConfigContext';
 
 interface LocalizationContextType {
   language: Language;
@@ -31,6 +19,7 @@ interface LocalizationContextType {
 const LocalizationContext = createContext<LocalizationContextType | undefined>(undefined);
 
 export function LocalizationProvider({ children }: { children: ReactNode }) {
+  const { getCurrencySymbol } = useConfig();
   const [language, setLanguageState] = useState<Language>('en');
   const [currency, setCurrency] = useState<string>(''); // Loaded from business settings
   const [isReady, setIsReady] = useState(false);
@@ -82,6 +71,9 @@ export function LocalizationProvider({ children }: { children: ReactNode }) {
         const business = JSON.parse(businessStr);
         if (business.currency) {
           setCurrency(business.currency);
+        } else {
+          // Currency is missing - this should not happen
+          console.error('Business currency not set. Contact administrator.');
         }
       }
     } catch (error) {
@@ -95,9 +87,10 @@ export function LocalizationProvider({ children }: { children: ReactNode }) {
 
   const formatCurrency = useCallback((amount: number, currencyOverride?: string): string => {
     const currencyCode = currencyOverride || currency;
-    const symbol = CURRENCY_SYMBOLS[currencyCode] || currencyCode;
+    // Get symbol from backend config (centralized source of truth)
+    const symbol = getCurrencySymbol(currencyCode);
     return `${symbol} ${amount.toFixed(2)}`;
-  }, [currency]);
+  }, [currency, getCurrencySymbol]);
 
   // Refresh language from storage (call after login or when settings change)
   const refreshLanguage = useCallback(async () => {

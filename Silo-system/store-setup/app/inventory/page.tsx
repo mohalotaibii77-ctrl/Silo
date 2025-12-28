@@ -72,13 +72,14 @@ function getDefaultCountry(): string {
       const storedBusiness = localStorage.getItem('setup_business');
       if (storedBusiness) {
         const business = JSON.parse(storedBusiness);
-        return business.country || 'Saudi Arabia';
+        // Return business country or empty string - never hardcode a fallback country
+        return business.country || '';
       }
     } catch {
       // ignore
     }
   }
-  return 'Saudi Arabia';
+  return ''; // No fallback - user must select
 }
 
 // Import shared currency utility
@@ -592,10 +593,15 @@ function InventoryStockTab() {
                     {t('Minimum Stock Level', 'الحد الأدنى للمخزون')}
                   </label>
                   <input
-                    type="number"
-                    min="0"
-                    value={editMin}
-                    onChange={(e) => setEditMin(parseInt(e.target.value) || 0)}
+                    type="text"
+                    inputMode="numeric"
+                    value={editMin || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || /^\d+$/.test(val)) {
+                        setEditMin(val === '' ? 0 : parseInt(val));
+                      }
+                    }}
                     className={`w-full px-4 py-3 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all ${isRTL ? 'text-right' : ''}`}
                     placeholder="0"
                   />
@@ -610,10 +616,15 @@ function InventoryStockTab() {
                     {t('Maximum Stock Level', 'الحد الأقصى للمخزون')}
                   </label>
                   <input
-                    type="number"
-                    min="0"
+                    type="text"
+                    inputMode="numeric"
                     value={editMax ?? ''}
-                    onChange={(e) => setEditMax(e.target.value ? parseInt(e.target.value) : null)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || /^\d+$/.test(val)) {
+                        setEditMax(val === '' ? null : parseInt(val));
+                      }
+                    }}
                     className={`w-full px-4 py-3 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none transition-all ${isRTL ? 'text-right' : ''}`}
                     placeholder={t('No limit', 'بدون حد')}
                   />
@@ -1436,7 +1447,7 @@ function VendorModal({ isOpen, onClose, onSave, vendor, isSaving }: {
               <SearchableSelect
                 label={t('Country', 'الدولة')}
                 value={formData.country}
-                onChange={(val) => setFormData({ ...formData, country: val ? String(val) : 'Saudi Arabia' })}
+                onChange={(val) => val && setFormData({ ...formData, country: String(val) })}
                 options={COUNTRIES.map((c) => ({
                   id: c.name,
                   name: c.name,
@@ -1463,11 +1474,17 @@ function VendorModal({ isOpen, onClose, onSave, vendor, isSaving }: {
                 {t('Payment Terms (days)', 'شروط الدفع (أيام)')}
               </label>
               <input
-                type="number"
-                value={formData.payment_terms}
-                onChange={(e) => setFormData({ ...formData, payment_terms: parseInt(e.target.value) || 30 })}
+                type="text"
+                inputMode="numeric"
+                value={formData.payment_terms || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '' || /^\d+$/.test(val)) {
+                    setFormData({ ...formData, payment_terms: val === '' ? 30 : parseInt(val) });
+                  }
+                }}
+                placeholder="30"
                 className="w-full px-3 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm focus:ring-2 focus:ring-zinc-500/20 outline-none text-zinc-900 dark:text-white"
-                min="0"
               />
             </div>
           </div>
@@ -2186,11 +2203,16 @@ function PurchaseOrderModal({ isOpen, onClose, onSave, isSaving }: {
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-center gap-1">
                               <input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                value={item.quantity}
-                                onChange={(e) => updateLineItem(index, 'quantity', Math.max(0.01, parseFloat(e.target.value) || 0.01))}
+                                type="text"
+                                inputMode="decimal"
+                                value={item.quantity || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                    updateLineItem(index, 'quantity', val === '' ? 0.01 : Math.max(0.01, parseFloat(val) || 0.01));
+                                  }
+                                }}
+                                placeholder="0.00"
                                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm text-center focus:ring-2 focus:ring-zinc-500/20 outline-none text-zinc-900 dark:text-white"
                               />
                               <span className="text-xs text-zinc-500">{item.storage_unit || 'unit'}</span>
@@ -2552,11 +2574,16 @@ function TemplateEditModal({ isOpen, onClose, onSave, template, isSaving }: {
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-center gap-1">
                               <input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                value={item.quantity}
-                                onChange={(e) => updateLineItem(index, Math.max(0.01, parseFloat(e.target.value) || 0.01))}
+                                type="text"
+                                inputMode="decimal"
+                                value={item.quantity || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                    updateLineItem(index, val === '' ? 0.01 : Math.max(0.01, parseFloat(val) || 0.01));
+                                  }
+                                }}
+                                placeholder="0.00"
                                 className="w-20 px-2 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm text-center focus:ring-2 focus:ring-zinc-500/20 outline-none text-zinc-900 dark:text-white"
                               />
                               <span className="text-xs text-zinc-500">{item.storage_unit || 'unit'}</span>
@@ -2939,10 +2966,16 @@ function PODetailModal({ isOpen, onClose, order, onUpdate, getStatusColor, getSt
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <input
-                                  type="number"
-                                  min="1"
-                                  value={item.quantity}
-                                  onChange={(e) => updateEditItem(index, 'quantity', parseFloat(e.target.value) || 0)}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={item.quantity || ''}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                      updateEditItem(index, 'quantity', val === '' ? 0 : parseFloat(val) || 0);
+                                    }
+                                  }}
+                                  placeholder="0"
                                   className="w-20 px-2 py-1 text-sm text-center rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white"
                                 />
                               </td>
@@ -3547,11 +3580,16 @@ function ReceivePOModal({ isOpen, onClose, order, onReceived }: {
                       </td>
                       <td className="px-4 py-3">
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={item.received_quantity}
-                          onChange={(e) => updateReceiveItem(index, 'received_quantity', parseFloat(e.target.value) || 0)}
+                          type="text"
+                          inputMode="decimal"
+                          value={item.received_quantity || ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateReceiveItem(index, 'received_quantity', val === '' ? 0 : parseFloat(val) || 0);
+                            }
+                          }}
+                          placeholder="0.00"
                           className={`w-24 px-2 py-1.5 rounded-lg border text-sm text-center focus:ring-2 focus:ring-zinc-500/20 outline-none text-zinc-900 dark:text-white ${
                             isShort || isOver 
                               ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-700' 
@@ -3561,11 +3599,15 @@ function ReceivePOModal({ isOpen, onClose, order, onReceived }: {
                       </td>
                       <td className="px-4 py-3">
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
+                          type="text"
+                          inputMode="decimal"
                           value={item.total_cost || ''}
-                          onChange={(e) => updateReceiveItem(index, 'total_cost', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateReceiveItem(index, 'total_cost', val === '' ? 0 : parseFloat(val) || 0);
+                            }
+                          }}
                           placeholder={t('From invoice', 'من الفاتورة')}
                           className="w-32 px-2 py-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-sm text-center focus:ring-2 focus:ring-zinc-500/20 outline-none text-zinc-900 dark:text-white"
                         />
@@ -4245,11 +4287,16 @@ function TransfersTab() {
                               </div>
                             </div>
                             <input
-                              type="number"
-                              min="1"
-                              max={item.available || stockData?.quantity || undefined}
-                              value={item.quantity}
-                              onChange={(e) => updateItemQuantity(item.item_id, parseInt(e.target.value) || 1)}
+                              type="text"
+                              inputMode="numeric"
+                              value={item.quantity || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === '' || /^\d+$/.test(val)) {
+                                  updateItemQuantity(item.item_id, val === '' ? 1 : parseInt(val) || 1);
+                                }
+                              }}
+                              placeholder="1"
                               className={`w-24 px-3 py-1.5 rounded-lg border ${isOverLimit ? 'border-red-300 dark:border-red-700' : 'border-zinc-200 dark:border-zinc-700'} bg-white dark:bg-zinc-900 text-center`}
                             />
                             <button

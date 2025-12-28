@@ -139,3 +139,4 @@ COMMENT ON FUNCTION auto_expire_cancelled_items() IS
 'Automatically marks cancelled order items as waste if kitchen has not made a decision within 24 hours. 
 Runs every hour via pg_cron scheduled job.';
 
+

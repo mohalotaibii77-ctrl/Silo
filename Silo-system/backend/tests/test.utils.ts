@@ -104,15 +104,28 @@ export async function apiRequest(
 }
 
 /**
- * Assert response is successful (2xx and success: true)
+ * Assert response is successful (2xx status)
+ * Handles both patterns:
+ * - { success: true, data: ... } - explicit success flag
+ * - { data: ... } or { items: ... } - direct data return (status 2xx implies success)
  */
 export function assertSuccess(response: { status: number; data: any }, testName: string): boolean {
-  if (response.status >= 200 && response.status < 300 && response.data.success) {
+  // Check for 2xx status code
+  const isSuccessStatus = response.status >= 200 && response.status < 300;
+  
+  // Check for explicit success: true flag (if present)
+  // Also accept responses without success flag but with 2xx status
+  const hasExplicitSuccess = response.data?.success === true;
+  const hasNoExplicitFailure = response.data?.success !== false && !response.data?.error;
+  
+  const isSuccess = isSuccessStatus && (hasExplicitSuccess || hasNoExplicitFailure);
+  
+  if (isSuccess) {
     console.log(`  ✅ ${testName}`);
     return true;
   } else {
     console.log(`  ❌ ${testName}`);
-    console.log(`     Status: ${response.status}, Error: ${response.data.error || 'Unknown error'}`);
+    console.log(`     Status: ${response.status}, Error: ${response.data?.error || 'Unknown error'}`);
     return false;
   }
 }

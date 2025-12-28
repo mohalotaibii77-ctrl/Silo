@@ -31,7 +31,10 @@ import {
   ImageIcon,
   MessageSquare,
   StickyNote,
-  Loader2
+  Loader2,
+  Globe,
+  Languages,
+  Percent
 } from "lucide-react";
 import { useBusinessData } from "@/hooks/use-business-data";
 import { ModeToggle } from "@/components/mode-toggle";
@@ -52,12 +55,35 @@ interface ChangeRequest {
   id: number;
   request_type: string;
   status: string;
+  // Profile fields - old values
+  old_name?: string;
+  old_email?: string;
+  old_phone?: string;
+  old_address?: string;
+  old_logo_url?: string;
+  old_certificate_url?: string;
+  // Profile fields - new values
   new_name?: string;
   new_email?: string;
   new_phone?: string;
   new_address?: string;
   new_logo_url?: string;
   new_certificate_url?: string;
+  // Localization fields - old values
+  old_currency?: string;
+  old_language?: string;
+  old_timezone?: string;
+  // Localization fields - new values
+  new_currency?: string;
+  new_language?: string;
+  new_timezone?: string;
+  // Tax/VAT fields - old values
+  old_vat_enabled?: boolean;
+  old_vat_rate?: number;
+  // Tax/VAT fields - new values
+  new_vat_enabled?: boolean;
+  new_vat_rate?: number;
+  // Notes
   requester_notes?: string;
   admin_notes?: string;
   created_at: string;
@@ -1082,7 +1108,58 @@ export function NewDashboard() {
                                       </div>
                                     </div>
                                   )}
-                                  {!req.new_name && !req.new_email && !req.new_phone && !req.new_address && !req.new_logo_url && !req.new_certificate_url && (
+                                  {/* Localization Changes */}
+                                  {req.new_currency && (
+                                    <div className="flex items-start gap-3">
+                                      <Wallet className="w-5 h-5 text-amber-500 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Currency</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_currency}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_language && (
+                                    <div className="flex items-start gap-3">
+                                      <Languages className="w-5 h-5 text-blue-500 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Language</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">
+                                          {req.new_language === 'en' ? 'English' : req.new_language === 'ar' ? 'العربية (Arabic)' : req.new_language}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_timezone && (
+                                    <div className="flex items-start gap-3">
+                                      <Globe className="w-5 h-5 text-green-500 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New Timezone</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_timezone}</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {/* Tax/VAT Changes */}
+                                  {req.new_vat_enabled !== undefined && req.new_vat_enabled !== null && (
+                                    <div className="flex items-start gap-3">
+                                      <Percent className="w-5 h-5 text-purple-500 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">VAT Status</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">
+                                          {req.new_vat_enabled ? 'Enabled' : 'Disabled'}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {req.new_vat_rate !== undefined && req.new_vat_rate !== null && (
+                                    <div className="flex items-start gap-3">
+                                      <Percent className="w-5 h-5 text-purple-500 mt-0.5" />
+                                      <div>
+                                        <span className="text-sm text-zinc-500">New VAT Rate</span>
+                                        <p className="font-medium text-zinc-900 dark:text-white">{req.new_vat_rate}%</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {!req.new_name && !req.new_email && !req.new_phone && !req.new_address && !req.new_logo_url && !req.new_certificate_url && !req.new_currency && !req.new_language && !req.new_timezone && req.new_vat_enabled === undefined && req.new_vat_rate === undefined && (
                                     <p className="text-sm text-zinc-500 italic">No specific changes detailed</p>
                                   )}
                                 </div>

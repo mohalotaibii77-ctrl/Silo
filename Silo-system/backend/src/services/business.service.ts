@@ -8,6 +8,13 @@ import { supabaseAdmin } from '../config/database';
 import { storageService } from './storage.service';
 import { inventoryService } from './inventory.service';
 
+// Valid currency codes - must match /config/currencies
+const VALID_CURRENCIES = [
+  'KWD', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'QAR', 'BHD', 'OMR',
+  'EGP', 'JOD', 'LBP', 'INR', 'PKR', 'CNY', 'JPY', 'KRW', 'THB',
+  'MYR', 'SGD', 'AUD', 'CAD', 'CHF', 'TRY', 'RUB', 'BRL', 'MXN', 'ZAR'
+];
+
 // Types matching the database schema
 export interface DBBusiness {
   id: number;
@@ -80,6 +87,10 @@ export interface CreateBusinessInput {
   phone?: string;
   address?: string;
   business_type?: string;
+  country: string; // Required - no default
+  currency: string; // Required - no default
+  timezone: string; // Required - no default
+  language?: string; // Optional, defaults to 'en'
   logo_url?: string;
   certificate_url?: string;
   subscription_tier?: 'basic' | 'pro' | 'enterprise';
@@ -186,6 +197,20 @@ export class BusinessService {
       throw new Error('Business with this slug already exists');
     }
 
+    // Validate required localization fields - NO DEFAULTS
+    if (!input.country) {
+      throw new Error('Country is required');
+    }
+    if (!input.currency) {
+      throw new Error('Currency is required');
+    }
+    if (!VALID_CURRENCIES.includes(input.currency)) {
+      throw new Error(`Invalid currency code: ${input.currency}. Must be one of: ${VALID_CURRENCIES.join(', ')}`);
+    }
+    if (!input.timezone) {
+      throw new Error('Timezone is required');
+    }
+
     // Determine branch count (minimum 1)
     const branchCount = Math.max(1, input.branch_count || 1);
 
@@ -207,11 +232,11 @@ export class BusinessService {
         max_products: input.max_products || 100,
         user_count: input.users?.length || 0,
         branch_count: branchCount,
-        // Default localization settings
-        country: 'Kuwait',
-        currency: 'KWD',
-        timezone: 'Asia/Kuwait',
-        language: 'en',
+        // Localization settings - REQUIRED, no defaults
+        country: input.country,
+        currency: input.currency,
+        timezone: input.timezone,
+        language: input.language || 'en',
       })
       .select()
       .single();
@@ -269,6 +294,9 @@ export class BusinessService {
       for (let i = 0; i < input.branches.length; i++) {
         const branchInput = input.branches[i];
         const branchSlug = branchInput.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        // Generate unique branch code (max 20 chars)
+        const shortTs = (Date.now() % 100000000).toString(36).toUpperCase();
+        const branchCode = `B${business.id}-${shortTs}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
         
         const { data: branch, error: branchError } = await supabaseAdmin
           .from('branches')
@@ -276,6 +304,7 @@ export class BusinessService {
             business_id: business.id,
             name: branchInput.name,
             slug: branchSlug,
+            branch_code: branchCode,
             address: branchInput.address || null,
             phone: branchInput.phone || null,
             email: branchInput.email || null,
@@ -296,6 +325,9 @@ export class BusinessService {
       for (let i = 0; i < branchCount; i++) {
         const branchName = branchCount === 1 ? 'Main Branch' : `Branch ${i + 1}`;
         const branchSlug = branchCount === 1 ? 'main' : `branch-${i + 1}`;
+        // Generate unique branch code (max 20 chars)
+        const shortTs = (Date.now() % 100000000).toString(36).toUpperCase();
+        const branchCode = `B${business.id}-${shortTs}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
         
         const { data: branch, error: branchError } = await supabaseAdmin
           .from('branches')
@@ -303,6 +335,7 @@ export class BusinessService {
             business_id: business.id,
             name: branchName,
             slug: branchSlug,
+            branch_code: branchCode,
             address: i === 0 ? input.address : null, // Main branch inherits business address
             phone: i === 0 ? input.phone : null,
             email: i === 0 ? input.email : null,
@@ -690,6 +723,9 @@ export class BusinessService {
    */
   async createBranch(businessId: number, input: BranchInput): Promise<DBBranch> {
     const branchSlug = input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    // Generate unique branch code (max 20 chars): B{businessId}-{short timestamp}-{random}
+    const shortTimestamp = (Date.now() % 100000000).toString(36).toUpperCase();
+    const branchCode = `B${businessId}-${shortTimestamp}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
 
     const { data: branch, error } = await supabaseAdmin
       .from('branches')
@@ -697,6 +733,7 @@ export class BusinessService {
         business_id: businessId,
         name: input.name,
         slug: branchSlug,
+        branch_code: branchCode,
         address: input.address || null,
         phone: input.phone || null,
         email: input.email || null,

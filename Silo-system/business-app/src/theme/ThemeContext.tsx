@@ -1,114 +1,74 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
-import { useColorScheme } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { ThemeColors, lightColors, darkColors, ColorScheme } from './colors';
+import React, { createContext, useContext, ReactNode } from 'react';
+
+// Light theme colors
+const lightColors = {
+  background: '#F8F9FA',
+  foreground: '#1A1D21',
+  primary: '#0F172A',
+  primaryForeground: '#FFFFFF',
+  secondary: '#E2E8F0',
+  secondaryForeground: '#1E293B',
+  muted: '#F1F5F9',
+  mutedForeground: '#64748B',
+  card: '#FFFFFF',
+  cardForeground: '#1A1D21',
+  border: '#E2E8F0',
+  input: '#E2E8F0',
+  destructive: '#EF4444',
+  destructiveForeground: '#FFFFFF',
+  success: '#22C55E',
+  successForeground: '#FFFFFF',
+  surface: '#FFFFFF',
+};
+
+// Dark theme colors
+const darkColors = {
+  background: '#09090b',
+  foreground: '#fafafa',
+  primary: '#fafafa',
+  primaryForeground: '#18181b',
+  secondary: '#27272a',
+  secondaryForeground: '#fafafa',
+  muted: '#27272a',
+  mutedForeground: '#a1a1aa',
+  card: '#18181b',
+  cardForeground: '#fafafa',
+  border: '#27272a',
+  input: '#27272a',
+  destructive: '#dc2626',
+  destructiveForeground: '#fafafa',
+  success: '#22c55e',
+  successForeground: '#fafafa',
+  surface: '#18181b',
+};
+
+export type ThemeColors = typeof lightColors;
 
 interface ThemeContextType {
   colors: ThemeColors;
-  colorScheme: ColorScheme;
-  toggleTheme: () => void;
-  setColorScheme: (scheme: ColorScheme) => void;
   isDark: boolean;
-  saveThemePreference: (theme: 'light' | 'dark' | 'system') => void;
+  toggleTheme: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+const THEME_STORAGE_KEY = '@app_theme';
 
 interface ThemeProviderProps {
   children: ReactNode;
 }
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
-  const systemColorScheme = useColorScheme();
-  const [colorScheme, setColorScheme] = useState<ColorScheme>(
-    systemColorScheme === 'dark' ? 'dark' : 'light'
-  );
-  const [userPreference, setUserPreference] = useState<'light' | 'dark' | 'system'>('system');
-
-  // Load saved theme preference on mount
-  useEffect(() => {
-    const loadThemePreference = async () => {
-      try {
-        const userSettings = await AsyncStorage.getItem('userSettings');
-        if (userSettings) {
-          const settings = JSON.parse(userSettings);
-          const savedTheme = settings.preferred_theme || 'system';
-          setUserPreference(savedTheme);
-          
-          if (savedTheme === 'system') {
-            setColorScheme(systemColorScheme === 'dark' ? 'dark' : 'light');
-          } else {
-            setColorScheme(savedTheme as ColorScheme);
-          }
-        }
-      } catch (error) {
-        console.log('Error loading theme preference:', error);
-      }
-    };
-    
-    loadThemePreference();
-  }, [systemColorScheme]);
-
-  // Update when system theme changes (only if preference is 'system')
-  useEffect(() => {
-    if (userPreference === 'system' && systemColorScheme) {
-      setColorScheme(systemColorScheme === 'dark' ? 'dark' : 'light');
-    }
-  }, [systemColorScheme, userPreference]);
-
-  const colors = colorScheme === 'dark' ? darkColors : lightColors;
-
-  // Save theme preference to AsyncStorage and sync to backend
-  const saveThemePreference = useCallback(async (theme: 'light' | 'dark' | 'system') => {
-    setUserPreference(theme);
-    
-    if (theme === 'system') {
-      setColorScheme(systemColorScheme === 'dark' ? 'dark' : 'light');
-    } else {
-      setColorScheme(theme as ColorScheme);
-    }
-    
-    try {
-      // Update local storage
-      const userSettings = await AsyncStorage.getItem('userSettings');
-      let settings = userSettings ? JSON.parse(userSettings) : {};
-      settings.preferred_theme = theme;
-      await AsyncStorage.setItem('userSettings', JSON.stringify(settings));
-      
-      // Sync to backend (fire and forget)
-      const token = await AsyncStorage.getItem('token');
-      if (token) {
-        const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:9000/api';
-        fetch(`${API_URL}/business-settings/user-settings`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({ preferred_theme: theme }),
-        }).catch(() => {}); // Ignore errors for background sync
-      }
-    } catch (error) {
-      console.log('Error saving theme preference:', error);
-    }
-  }, [systemColorScheme]);
-
+  // Single-theme mode: keep legacy `useTheme()` API but lock to light palette.
+  // Business logic and theme selection should not block app rendering.
+  const isDark = false;
+  const colors = lightColors;
   const toggleTheme = () => {
-    const newTheme = colorScheme === 'dark' ? 'light' : 'dark';
-    saveThemePreference(newTheme);
-  };
-
-  const value: ThemeContextType = {
-    colors,
-    colorScheme,
-    toggleTheme,
-    setColorScheme,
-    isDark: colorScheme === 'dark',
-    saveThemePreference,
+    // no-op (single theme)
   };
 
   return (
-    <ThemeContext.Provider value={value}>
+    <ThemeContext.Provider value={{ colors, isDark, toggleTheme }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -122,5 +82,4 @@ export function useTheme(): ThemeContextType {
   return context;
 }
 
-export default ThemeContext;
-
+export { lightColors, darkColors };

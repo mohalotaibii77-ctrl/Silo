@@ -460,13 +460,16 @@ export default function DiscountsPage() {
                       {t('Discount Value', 'قيمة الخصم')} *
                     </label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={discountValue}
-                      onChange={(e) => setDiscountValue(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setDiscountValue(val);
+                        }
+                      }}
                       placeholder={discountType === 'percentage' ? '20' : '5.000'}
-                      step={discountType === 'percentage' ? '1' : '0.001'}
-                      min="0"
-                      max={discountType === 'percentage' ? '100' : undefined}
                       className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                     />
                   </div>
@@ -479,12 +482,16 @@ export default function DiscountsPage() {
                       {t('Min Order Amount', 'الحد الأدنى للطلب')}
                     </label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={minOrderAmount}
-                      onChange={(e) => setMinOrderAmount(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setMinOrderAmount(val);
+                        }
+                      }}
                       placeholder="0.000"
-                      step="0.001"
-                      min="0"
                       className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                     />
                   </div>
@@ -493,12 +500,16 @@ export default function DiscountsPage() {
                       {t('Max Discount', 'الحد الأقصى للخصم')}
                     </label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       value={maxDiscountAmount}
-                      onChange={(e) => setMaxDiscountAmount(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          setMaxDiscountAmount(val);
+                        }
+                      }}
                       placeholder={t('No limit', 'بلا حد')}
-                      step="0.001"
-                      min="0"
                       className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                     />
                   </div>
@@ -510,11 +521,16 @@ export default function DiscountsPage() {
                     {t('Usage Limit', 'حد الاستخدام')}
                   </label>
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     value={usageLimit}
-                    onChange={(e) => setUsageLimit(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || /^\d+$/.test(val)) {
+                        setUsageLimit(val);
+                      }
+                    }}
                     placeholder={t('Unlimited', 'غير محدود')}
-                    min="1"
                     className="w-full px-4 py-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-zinc-500"
                   />
                   <p className="text-xs text-zinc-500 mt-1">

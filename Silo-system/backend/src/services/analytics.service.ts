@@ -66,14 +66,18 @@ export class AnalyticsService {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     
-    // Get business currency
+    // Get business currency - NO FALLBACK
     const { data: business } = await supabaseAdmin
       .from('businesses')
       .select('currency')
       .eq('id', businessId)
       .single();
     
-    const currency = business?.currency || 'USD';
+    if (!business || !business.currency) {
+      throw new Error('Business currency not configured');
+    }
+    
+    const currency = business.currency;
 
     // Orders created in period
     const { count: ordersInPeriod } = await supabaseAdmin
@@ -146,26 +150,23 @@ export class AnalyticsService {
    */
   async getCombinedDashboardStats(businessIds: number[], period: TimePeriod = 'today'): Promise<DashboardStats> {
     if (businessIds.length === 0) {
-      return {
-        ordersToday: 0,
-        activeOrders: 0,
-        completedToday: 0,
-        totalRevenue: 0,
-        lowStockItems: 0,
-        currency: 'USD',
-      };
+      throw new Error('No businesses provided for combined stats');
     }
 
     const { start, end } = this.getDateRange(period);
 
-    // Get first business currency as default
+    // Get first business currency - NO FALLBACK
     const { data: business } = await supabaseAdmin
       .from('businesses')
       .select('currency')
       .eq('id', businessIds[0])
       .single();
     
-    const currency = business?.currency || 'USD';
+    if (!business || !business.currency) {
+      throw new Error('Business currency not configured');
+    }
+    
+    const currency = business.currency;
 
     // Orders in period across all businesses
     const { count: ordersInPeriod } = await supabaseAdmin

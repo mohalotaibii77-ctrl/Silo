@@ -77,3 +77,4 @@ WHERE business_id IS NOT NULL AND status = 'active';
 COMMENT ON INDEX idx_items_unique_system_name IS 'Ensures unique item names among system items (case-insensitive)';
 COMMENT ON INDEX idx_items_unique_business_name IS 'Ensures unique item names within each business (case-insensitive)';
 
+

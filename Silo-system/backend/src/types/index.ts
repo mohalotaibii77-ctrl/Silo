@@ -116,16 +116,10 @@ export interface Category extends BaseEntity {
 // =====================================================
 
 // Order sources - where the order originated
+// Note: Specific delivery partner is identified via delivery_partner_id (from delivery_partners table)
 export type OrderSource = 
   | 'pos'           // Direct POS terminal order
-  | 'talabat'       // Talabat delivery app
-  | 'jahez'         // Jahez delivery app
-  | 'hungerstation' // HungerStation
-  | 'careem'        // Careem Now
-  | 'toyou'         // ToYou
-  | 'mrsool'        // Mrsool
-  | 'deliveroo'     // Deliveroo
-  | 'ubereats'      // Uber Eats
+  | 'api'           // External API (delivery partners like Talabat, Jahez, etc.)
   | 'phone'         // Phone order
   | 'website'       // Restaurant website
   | 'mobile_app'    // Restaurant's own mobile app

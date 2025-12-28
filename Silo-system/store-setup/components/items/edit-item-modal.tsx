@@ -34,10 +34,7 @@ interface ComponentEntry {
   quantity: number;
 }
 
-// Fallback constants for edit modal - will migrate to config context
-const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: '$', KWD: 'KD', EUR: '€', GBP: '£', AED: 'AED', SAR: 'SAR',
-};
+// Unit translations - TODO: migrate to config context if needed
 
 const UNIT_TRANSLATIONS: Record<ItemUnit, { en: string; ar: string }> = {
   grams: { en: 'Grams', ar: 'جرام' },
@@ -114,7 +111,8 @@ export function EditItemModal({
   const { isRTL, t, currency: contextCurrency } = useLanguage();
   // Use passed currency or fall back to context currency (from business settings)
   const activeCurrency = currency || contextCurrency;
-  const currencySymbol = CURRENCY_SYMBOLS[activeCurrency] || activeCurrency;
+  // Get symbol from backend config (centralized source of truth)
+  const currencySymbol = getCurrencySymbol(activeCurrency);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [availableItems, setAvailableItems] = useState<Item[]>([]);
@@ -670,12 +668,17 @@ export function EditItemModal({
                         {t('Cost per Serving Unit', 'التكلفة لكل وحدة تقديم')} ({currencySymbol} / {formatUnitLabel(formData.unit)})
                       </label>
                       <input
-                        type="number"
+                        type="text"
+                        inputMode="decimal"
                         name="cost_per_unit"
-                        value={formData.cost_per_unit}
-                        onChange={handleChange}
-                        step="0.0001"
-                        min="0"
+                        value={formData.cost_per_unit || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                            handleChange({ target: { name: 'cost_per_unit', value: val, type: 'number' } } as any);
+                          }
+                        }}
+                        placeholder="0.000"
                         dir="ltr"
                         className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
                       />
@@ -703,12 +706,17 @@ export function EditItemModal({
                             {t('Quantity', 'الكمية')}
                           </label>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             name="batch_quantity"
-                            value={formData.batch_quantity}
-                            onChange={handleChange}
-                            step="0.001"
-                            min="0.001"
+                            value={formData.batch_quantity || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                handleChange({ target: { name: 'batch_quantity', value: val, type: 'number' } } as any);
+                              }
+                            }}
+                            placeholder="0.000"
                             dir="ltr"
                             className="w-full px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white placeholder:text-zinc-400 focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all"
                           />
@@ -778,12 +786,16 @@ export function EditItemModal({
                                 onSelect={(selectedItem) => selectItemForComponent(comp.id, selectedItem)}
                               />
                               <input
-                                type="number"
+                                type="text"
+                                inputMode="decimal"
                                 value={comp.quantity || ''}
-                                onChange={(e) => updateComponent(comp.id, { quantity: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                    updateComponent(comp.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                                  }
+                                }}
                                 placeholder={t('Qty', 'الكمية')}
-                                step="0.001"
-                                min="0"
                                 dir="ltr"
                                 className="w-20 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-500"
                               />

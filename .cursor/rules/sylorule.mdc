@@ -66,24 +66,54 @@ The backend is a **Modular Monolith** containing all microservices:
 ## API Testing Requirement
 
 ### Core Principle
-**Every API endpoint MUST have a corresponding test.** When implementing or modifying any backend API endpoint, the test script must be updated in the same commit/session.
+**Every API endpoint MUST have a corresponding test.** When implementing or modifying any backend API endpoint, the test script must be updated in the same session.
 
 ### Test Structure
 Tests are organized by module in `backend/tests/`:
-- `inventory.test.ts` - Inventory items, stock, vendors, PO, transfers, production
-- `products.test.ts` - Products, categories, bundles, discounts, recipes
-- `pos.test.ts` - Orders, payments, kitchen display, tables, sessions
-- `users.test.ts` - Business users, owners, permissions
-- `business.test.ts` - Business settings, branches, analytics
-- `delivery.test.ts` - Delivery partners, drivers, customers
-- `config.test.ts` - System configuration, images
+
+| Test File | Routes Covered | Description |
+|-----------|----------------|-------------|
+| `inventory.test.ts` | `inventory.routes.ts`, `inventory-stock.routes.ts`, `inventory-production.routes.ts`, `inventory-transaction.routes.ts` | Items, composite items, stock, vendors, PO, transfers, counts, movements, production, barcodes, timeline |
+| `products.test.ts` | `store-products.routes.ts`, `categories.routes.ts`, `bundles.routes.ts`, `discounts.routes.ts` | Products CRUD, categories, bundles, discount codes |
+| `pos.test.ts` | `pos.routes.ts`, `pos-session.routes.ts` | Orders, kitchen display, sessions, payments, delivery app orders |
+| `users.test.ts` | `business-users.routes.ts` | Business users CRUD, permissions, password reset (owner-only) |
+| `business.test.ts` | `business-settings.routes.ts`, `analytics.routes.ts`, `images.routes.ts` | Settings, localization, receipt, change requests, analytics, images |
+| `delivery.test.ts` | `delivery.routes.ts`, `drivers.routes.ts`, `customers.routes.ts`, `tables.routes.ts` | Delivery partners, drivers, customers, restaurant tables |
+| `config.test.ts` | `config.routes.ts`, `index.ts` | System config, units, currencies, roles (no auth required) |
+
+### Route-to-Test Mapping
+When creating/editing a route file, update the corresponding test:
+
+```
+src/api/inventory.routes.ts        → tests/inventory.test.ts
+src/api/inventory-stock.routes.ts  → tests/inventory.test.ts
+src/api/inventory-production.routes.ts → tests/inventory.test.ts
+src/api/inventory-transaction.routes.ts → tests/inventory.test.ts
+src/api/store-products.routes.ts   → tests/products.test.ts
+src/api/categories.routes.ts       → tests/products.test.ts
+src/api/bundles.routes.ts          → tests/products.test.ts
+src/api/discounts.routes.ts        → tests/products.test.ts
+src/api/pos.routes.ts              → tests/pos.test.ts
+src/api/pos-session.routes.ts      → tests/pos.test.ts
+src/api/business-users.routes.ts   → tests/users.test.ts
+src/api/business-settings.routes.ts → tests/business.test.ts
+src/api/analytics.routes.ts        → tests/business.test.ts
+src/api/images.routes.ts           → tests/business.test.ts
+src/api/delivery.routes.ts         → tests/delivery.test.ts
+src/api/drivers.routes.ts          → tests/delivery.test.ts
+src/api/customers.routes.ts        → tests/delivery.test.ts
+src/api/tables.routes.ts           → tests/delivery.test.ts
+src/api/config.routes.ts           → tests/config.test.ts
+```
 
 ### When Adding/Modifying API Endpoints
-1. **Implement** the endpoint in the appropriate routes file
-2. **Add test** to the corresponding test file immediately
-3. **Run test** to verify: `npm run test:<module>`
+1. **Identify** which test file covers the route (see mapping above)
+2. **Implement** the endpoint in `src/api/*.routes.ts`
+3. **Add test** to the corresponding test file immediately
+4. **Run test** to verify: `npm run test:<module>`
 
 ### Test Pattern Template
+```typescript
 // For each endpoint, test:
 // 1. Success case (happy path)
 // 2. Validation errors (400)
@@ -92,7 +122,15 @@ Tests are organized by module in `backend/tests/`:
 
 // Example for a new endpoint:
 const result = await apiRequest(ctx, 'METHOD', '/api/path', body);
-track(assertSuccess(result, 'METHOD /api/path - Description'));### Package.json Scripts
+track(assertSuccess(result, 'METHOD /api/path - Description'));
+
+// Example for validation test:
+const invalid = await apiRequest(ctx, 'POST', '/api/path', { /* invalid data */ });
+track(assertStatus(invalid, 400, 'POST /api/path - Validation (missing field)'));
+```
+
+### Package.json Scripts
+```json
 {
   "test:inventory": "npx ts-node tests/inventory.test.ts",
   "test:products": "npx ts-node tests/products.test.ts",
@@ -102,10 +140,14 @@ track(assertSuccess(result, 'METHOD /api/path - Description'));### Package.json 
   "test:delivery": "npx ts-node tests/delivery.test.ts",
   "test:config": "npx ts-node tests/config.test.ts",
   "test:all": "npm run test:inventory && npm run test:products && npm run test:pos && npm run test:users && npm run test:business && npm run test:delivery && npm run test:config"
-}### Checklist Before Completing Any API Work
+}
+```
+
+### Checklist Before Completing Any API Work
 - [ ] Endpoint implemented in `src/api/*.routes.ts`
-- [ ] Test added to `tests/*.test.ts`
-- [ ] Test passes locally
+- [ ] Test added to correct `tests/*.test.ts` file (see mapping)
+- [ ] Test includes: success case, validation (400), not found (404) if applicable
+- [ ] Test passes locally: `npm run test:<module>`
 - [ ] Related endpoints also tested if affected
 
 ### Never
@@ -113,3 +155,4 @@ track(assertSuccess(result, 'METHOD /api/path - Description'));### Package.json 
 - ❌ Modify an endpoint without updating its test
 - ❌ Delete an endpoint without removing its test
 - ❌ Mark API work as complete until tests pass
+- ❌ Add test to wrong test file (always check the mapping)

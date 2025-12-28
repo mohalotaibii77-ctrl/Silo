@@ -9,12 +9,16 @@ import {
   RefreshControl,
   Animated,
   Modal,
-  TextInput
+  TextInput,
+  Alert,
+  ActivityIndicator
 } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { colors } from '../theme/colors';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
+import { safeGoBack } from '../utils/navigationHelpers';
 import { 
   ArrowLeft,
   ArrowRight,
@@ -32,7 +36,8 @@ import {
   User,
   Phone,
   MapPin,
-  CreditCard
+  CreditCard,
+  ScanBarcode
 } from 'lucide-react-native';
 
 // Types
@@ -92,7 +97,7 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
   );
 };
 
-const OrderSkeleton = () => (
+const OrderSkeleton = ({ styles }: { styles: any }) => (
   <View style={styles.orderCard}>
     <View style={styles.orderCardHeader}>
       <Skeleton width={80} height={20} borderRadius={6} />
@@ -130,6 +135,12 @@ export default function OrdersScreen({ navigation }: any) {
   // Detail modal
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+
+  // Scanner state
+  const [scannerVisible, setScannerVisible] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scanned, setScanned] = useState(false);
+  const [processing, setProcessing] = useState(false);
 
   const orderStatuses = [
     { id: 'pending', label: t('pending'), labelAr: 'قيد الانتظار' },
@@ -205,6 +216,51 @@ export default function OrdersScreen({ navigation }: any) {
     setRefreshing(true);
     loadOrders(true); // Force refresh on pull-to-refresh
   }, [statusFilter, dateFilter]);
+
+  const openScanner = async () => {
+    if (!permission?.granted) {
+      const result = await requestPermission();
+      if (!result.granted) {
+        Alert.alert(
+          language === 'ar' ? 'إذن مطلوب' : 'Permission Required',
+          language === 'ar' ? 'إذن الكاميرا مطلوب لمسح الطلبات' : 'Camera permission is required to scan orders'
+        );
+        return;
+      }
+    }
+    setScanned(false);
+    setScannerVisible(true);
+  };
+
+  const handleBarCodeScanned = async ({ data }: { data: string }) => {
+    if (scanned || processing) return;
+    setScanned(true);
+    setProcessing(true);
+    
+    try {
+      const response = await api.post('/pos/orders/scan-complete', {
+        order_number: data
+      });
+      
+      if (response.data.success) {
+        Alert.alert(
+          language === 'ar' ? 'نجاح' : 'Success',
+          language === 'ar' ? 'تم وضع علامة على الطلب كمكتمل' : 'Order marked as completed'
+        );
+        setScannerVisible(false);
+        loadOrders(true); // Refresh orders list
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || (language === 'ar' ? 'فشل في إكمال الطلب' : 'Failed to complete order');
+      Alert.alert(
+        language === 'ar' ? 'خطأ' : 'Error',
+        errorMsg
+      );
+      setScanned(false);
+    } finally {
+      setProcessing(false);
+    }
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -388,7 +444,7 @@ export default function OrdersScreen({ navigation }: any) {
       {/* Header */}
       <View style={styles.header}>
         <View style={[styles.headerTop, isRTL && styles.rtlRow]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.backButton} onPress={() => safeGoBack(navigation)}>
             {isRTL ? (
               <ArrowRight size={24} color={colors.foreground} />
             ) : (
@@ -398,7 +454,9 @@ export default function OrdersScreen({ navigation }: any) {
           <Text style={[styles.headerTitle, isRTL && styles.rtlText]}>
             {t('orders')}
           </Text>
-          <View style={{ width: 40 }} />
+          <TouchableOpacity style={styles.scanButton} onPress={openScanner}>
+            <ScanBarcode size={22} color={colors.foreground} />
+          </TouchableOpacity>
         </View>
         
         {/* Search */}
@@ -501,9 +559,9 @@ export default function OrdersScreen({ navigation }: any) {
         <View style={styles.ordersList}>
           {loading ? (
             <>
-              <OrderSkeleton />
-              <OrderSkeleton />
-              <OrderSkeleton />
+              <OrderSkeleton styles={styles} />
+              <OrderSkeleton styles={styles} />
+              <OrderSkeleton styles={styles} />
             </>
           ) : (filteredOrders || []).length === 0 ? (
             <View style={styles.emptyState}>
@@ -678,6 +736,68 @@ export default function OrdersScreen({ navigation }: any) {
                 </View>
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Scanner Modal */}
+      <Modal
+        visible={scannerVisible}
+        animationType="slide"
+        onRequestClose={() => setScannerVisible(false)}
+      >
+        <View style={styles.scannerContainer}>
+          <View style={styles.scannerHeader}>
+            <Text style={styles.scannerTitle}>
+              {language === 'ar' ? 'مسح رمز QR للطلب' : 'Scan Order QR Code'}
+            </Text>
+            <TouchableOpacity onPress={() => setScannerVisible(false)}>
+              <X size={24} color={colors.foreground} />
+            </TouchableOpacity>
+          </View>
+          
+          {permission?.granted ? (
+            <>
+              <CameraView
+                style={styles.camera}
+                onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr', 'ean13', 'ean8', 'code128'],
+                }}
+              />
+              {processing && (
+                <View style={styles.scannerProcessing}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.scannerProcessingText}>
+                    {language === 'ar' ? 'جاري المعالجة...' : 'Processing...'}
+                  </Text>
+                </View>
+              )}
+            </>
+          ) : (
+            <View style={styles.permissionContainer}>
+              <AlertCircle size={48} color={colors.mutedForeground} />
+              <Text style={styles.permissionText}>
+                {language === 'ar' ? 'إذن الكاميرا مطلوب' : 'Camera permission required'}
+              </Text>
+              <TouchableOpacity 
+                style={styles.grantButton}
+                onPress={requestPermission}
+              >
+                <Text style={styles.grantButtonText}>
+                  {language === 'ar' ? 'منح الإذن' : 'Grant Permission'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          
+          <View style={styles.scannerFooter}>
+            <View style={styles.scannerFrame} />
+            <Text style={styles.scannerInstructions}>
+              {language === 'ar' 
+                ? 'ضع رمز QR داخل الإطار' 
+                : 'Position the QR code within the frame'}
+            </Text>
           </View>
         </View>
       </Modal>
@@ -910,6 +1030,95 @@ const styles = StyleSheet.create({
   },
   rtlText: {
     textAlign: 'right',
+  },
+  scanButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: colors.muted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerContainer: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  scannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingBottom: 16,
+    backgroundColor: colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  scannerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  camera: {
+    flex: 1,
+  },
+  scannerProcessing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerProcessingText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+  },
+  permissionContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  permissionText: {
+    fontSize: 16,
+    color: colors.foreground,
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  grantButton: {
+    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: colors.primary,
+    borderRadius: 12,
+  },
+  grantButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.primaryForeground,
+  },
+  scannerFooter: {
+    padding: 20,
+    backgroundColor: colors.card,
+    alignItems: 'center',
+  },
+  scannerFrame: {
+    width: 200,
+    height: 200,
+    borderWidth: 2,
+    borderColor: colors.primary,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  scannerInstructions: {
+    fontSize: 14,
+    color: colors.mutedForeground,
+    textAlign: 'center',
   },
 });
 

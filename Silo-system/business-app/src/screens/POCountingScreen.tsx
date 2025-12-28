@@ -12,9 +12,10 @@ import {
   Modal,
 } from 'react-native';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
 import api from '../api/client';
+import { safeGoBack } from '../utils/navigationHelpers';
 import {
   ArrowLeft,
   ArrowRight,
@@ -66,6 +67,8 @@ interface CountItemState {
 }
 
 export default function POCountingScreen({ navigation, route }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const { t, isRTL, language } = useLocalization();
   const { orderId } = route.params;
   
@@ -119,7 +122,7 @@ export default function POCountingScreen({ navigation, route }: any) {
         t('Error', 'خطأ'),
         t('Failed to load purchase order', 'فشل في تحميل أمر الشراء')
       );
-      navigation.goBack();
+      safeGoBack(navigation);
     } finally {
       setLoading(false);
     }
@@ -335,7 +338,7 @@ export default function POCountingScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, isRTL && styles.rtlRow]}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
             {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('Count Order', 'عد الطلب')}</Text>
@@ -352,7 +355,7 @@ export default function POCountingScreen({ navigation, route }: any) {
     return (
       <View style={styles.container}>
         <View style={[styles.header, isRTL && styles.rtlRow]}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
             {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
           </TouchableOpacity>
           <Text style={styles.headerTitle}>{t('Count Order', 'عد الطلب')}</Text>
@@ -370,7 +373,7 @@ export default function POCountingScreen({ navigation, route }: any) {
     <View style={styles.container}>
       {/* Header */}
       <View style={[styles.header, isRTL && styles.rtlRow]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => safeGoBack(navigation)} style={styles.backButton}>
           {isRTL ? <ArrowRight size={24} color={colors.foreground} /> : <ArrowLeft size={24} color={colors.foreground} />}
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -629,7 +632,7 @@ export default function POCountingScreen({ navigation, route }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,

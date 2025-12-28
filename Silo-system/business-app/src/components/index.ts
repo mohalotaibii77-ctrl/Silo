@@ -8,3 +8,6 @@
 export { default as ProgressiveImage, generateThumbnailUrl } from './ProgressiveImage';
 export { default as SkeletonLoader } from './SkeletonLoader';
 
+// POS components
+export { default as POSLockScreen } from './POSLockScreen';
+

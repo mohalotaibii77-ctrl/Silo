@@ -374,3 +374,4 @@ POST /api/pos/orders/:orderId/payment
 4. **Mark COD orders paid when driver returns** - Don't mark paid at order creation
 5. **Process payments before completing orders** - Except for pay later scenarios
 
+

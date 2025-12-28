@@ -299,12 +299,17 @@ export function AddItemModal({ isOpen, onClose, onSuccess, currency, itemType }:
                   <div className="relative">
                     <span className={`absolute ${isRTL ? 'right-4' : 'left-4'} top-1/2 -translate-y-1/2 text-zinc-400`}>{currencySymbol}</span>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       name="cost_per_unit"
-                      value={formData.cost_per_unit}
-                      onChange={handleChange}
-                      step="0.001"
-                      min="0"
+                      value={formData.cost_per_unit || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                          handleChange({ target: { name: 'cost_per_unit', value: val, type: 'number' } } as any);
+                        }
+                      }}
+                      placeholder="0.000"
                       dir="ltr"
                       className={`w-full ${isRTL ? 'pr-12 pl-4' : 'pl-12 pr-4'} py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 focus:border-zinc-400 outline-none transition-all`}
                     />

@@ -10,7 +10,7 @@ import { dataPreloader } from '../services/DataPreloader';
 const { width } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }: any) {
-  const { colors, toggleTheme, isDark } = useTheme();
+  const { colors, isDark } = useTheme();
   const { applyLanguageFromSettings, refreshCurrency } = useLocalization();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -292,13 +292,7 @@ export default function LoginScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.themeToggle} onPress={toggleTheme}>
-        {isDark ? (
-          <Sun size={24} color={colors.foreground} />
-        ) : (
-          <Moon size={24} color={colors.foreground} />
-        )}
-      </TouchableOpacity>
+      {/* Theme switching disabled (single theme) */}
 
       <Animated.View 
         style={[

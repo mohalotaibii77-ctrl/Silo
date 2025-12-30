@@ -273,8 +273,24 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
       : `  ✗ Verify added product with modifiers - ${itemWithMods ? 'Found but modifiers missing' : 'Item not found'}`);
   }
   
-  // TEST 2: Modify product quantity (products_to_modify)
+  // TEST 2: Verify order total increased after adding products
+  const orderAfterAdd = await apiRequest(ctx, 'GET', `/pos/orders/${orderId}`);
+  if (orderAfterAdd.data?.data) {
+    const orderData = orderAfterAdd.data.data;
+    const expectedMinTotal = (testProduct1.price || 25) + (testProduct2.price || 20) + (testProduct1.price || 25) + 1.50; // original + added + added with mods + extra
+    const actualTotal = parseFloat(orderData.total_amount || orderData.total || 0);
+    const totalIncreased = actualTotal >= expectedMinTotal;
+    track(totalIncreased);
+    console.log(totalIncreased 
+      ? `  ✓ Order total increased - Expected min: ${expectedMinTotal.toFixed(2)}, Actual: ${actualTotal.toFixed(2)}`
+      : `  ✗ Order total not increased - Expected min: ${expectedMinTotal.toFixed(2)}, Actual: ${actualTotal.toFixed(2)}`);
+  }
+
+  // TEST 3: Modify product quantity (products_to_modify)
   if (originalOrderItemId) {
+    const orderBeforeQty = await apiRequest(ctx, 'GET', `/pos/orders/${orderId}`);
+    const totalBefore = parseFloat(orderBeforeQty.data?.data?.total_amount || orderBeforeQty.data?.data?.total || 0);
+    
     const editQuantity = await apiRequest(ctx, 'PATCH', `/pos/orders/${orderId}/edit`, {
       products_to_modify: [{
         order_item_id: originalOrderItemId,
@@ -282,10 +298,22 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
       }]
     });
     track(assertSuccess(editQuantity, 'PATCH /pos/orders/:id/edit - Modify quantity'));
+    
+    // Verify total changed after quantity increase
+    const orderAfterQty = await apiRequest(ctx, 'GET', `/pos/orders/${orderId}`);
+    const totalAfter = parseFloat(orderAfterQty.data?.data?.total_amount || orderAfterQty.data?.data?.total || 0);
+    const qtyTotalChanged = totalAfter > totalBefore;
+    track(qtyTotalChanged);
+    console.log(qtyTotalChanged 
+      ? `  ✓ Quantity change updated total - Before: ${totalBefore.toFixed(2)}, After: ${totalAfter.toFixed(2)}`
+      : `  ✗ Quantity change did NOT update total - Before: ${totalBefore.toFixed(2)}, After: ${totalAfter.toFixed(2)}`);
   }
   
-  // TEST 3: Modify product with modifiers (add/remove items/ingredients)
+  // TEST 4: Modify product with modifiers (add/remove items/ingredients)
   if (originalOrderItemId) {
+    const orderBeforeMods = await apiRequest(ctx, 'GET', `/pos/orders/${orderId}`);
+    const totalBeforeMods = parseFloat(orderBeforeMods.data?.data?.total_amount || orderBeforeMods.data?.data?.total || 0);
+    
     const editModifiers = await apiRequest(ctx, 'PATCH', `/pos/orders/${orderId}/edit`, {
       products_to_modify: [{
         order_item_id: originalOrderItemId,
@@ -306,9 +334,18 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
       }]
     });
     track(assertSuccess(editModifiers, 'PATCH /pos/orders/:id/edit - Modify modifiers (add/remove items)'));
+    
+    // Verify total changed after adding extra modifier
+    const orderAfterMods = await apiRequest(ctx, 'GET', `/pos/orders/${orderId}`);
+    const totalAfterMods = parseFloat(orderAfterMods.data?.data?.total_amount || orderAfterMods.data?.data?.total || 0);
+    const modsTotalChanged = totalAfterMods >= totalBeforeMods + 2.00; // Extra Cheese added $2
+    track(modsTotalChanged);
+    console.log(modsTotalChanged 
+      ? `  ✓ Modifier change updated total - Before: ${totalBeforeMods.toFixed(2)}, After: ${totalAfterMods.toFixed(2)} (+2.00 extra)`
+      : `  ✗ Modifier change did NOT update total correctly - Before: ${totalBeforeMods.toFixed(2)}, After: ${totalAfterMods.toFixed(2)} (expected +2.00)`);
   }
   
-  // TEST 4: Change product variant (if product has variants)
+  // TEST 5: Change product variant and verify price adjustment (if product has variants)
   const productsWithVariants = productsWithStock.filter((p: any) => p.has_variants);
   console.log(`  🔍 Products with variants found: ${productsWithVariants.length}`);
   if (productsWithVariants.length > 0) {
@@ -317,9 +354,12 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
     
     // Variants are already in the product object from getProducts list
     const variantsList = productWithVariant.variants || [];
-    console.log(`  🔍 Variants found: ${variantsList.length}${variantsList.length > 0 ? ' - ' + variantsList.map((v: any) => v.name).join(', ') : ''}`);
+    console.log(`  🔍 Variants found: ${variantsList.length}${variantsList.length > 0 ? ' - ' + variantsList.map((v: any) => `${v.name} (adj: ${v.price_adjustment || 0})`).join(', ') : ''}`);
     
     if (variantsList.length >= 2) {
+      const variant1 = variantsList[0];
+      const variant2 = variantsList[1];
+      
       // Create order with first variant
       const orderWithVariant = await apiRequest(ctx, 'POST', '/pos/orders', {
         order_type: 'dine_in',
@@ -327,10 +367,10 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
         table_number: 'T-VARIANT-TEST',
         items: [{
           product_id: productWithVariant.id,
-          variant_id: variantsList[0].id,
+          variant_id: variant1.id,
           product_name: productWithVariant.name,
           quantity: 1,
-          unit_price: productWithVariant.price || 25.00,
+          unit_price: (productWithVariant.price || 25.00) + (variant1.price_adjustment || 0),
         }],
       });
       
@@ -338,15 +378,48 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
         const variantOrderId = orderWithVariant.data.data.id;
         const variantOrderItemId = orderWithVariant.data.data.items?.[0]?.id;
         
+        // Get order total before variant change
+        const orderBeforeVariant = await apiRequest(ctx, 'GET', `/pos/orders/${variantOrderId}`);
+        const totalBeforeVariant = parseFloat(orderBeforeVariant.data?.data?.total_amount || orderBeforeVariant.data?.data?.total || 0);
+        const itemBeforeVariant = orderBeforeVariant.data?.data?.order_items?.[0];
+        const itemPriceBefore = parseFloat(itemBeforeVariant?.unit_price || 0);
+        
+        console.log(`  🔍 Before variant change: Total=${totalBeforeVariant.toFixed(2)}, Item price=${itemPriceBefore.toFixed(2)}, Variant=${itemBeforeVariant?.variant_name || variant1.name}`);
+        
         if (variantOrderItemId) {
           // Change to second variant
           const editVariant = await apiRequest(ctx, 'PATCH', `/pos/orders/${variantOrderId}/edit`, {
             products_to_modify: [{
               order_item_id: variantOrderItemId,
-              variant_id: variantsList[1].id
+              variant_id: variant2.id
             }]
           });
           track(assertSuccess(editVariant, 'PATCH /pos/orders/:id/edit - Change variant'));
+          
+          // Verify price changed after variant switch
+          const orderAfterVariant = await apiRequest(ctx, 'GET', `/pos/orders/${variantOrderId}`);
+          const totalAfterVariant = parseFloat(orderAfterVariant.data?.data?.total_amount || orderAfterVariant.data?.data?.total || 0);
+          const itemAfterVariant = orderAfterVariant.data?.data?.order_items?.[0];
+          const itemPriceAfter = parseFloat(itemAfterVariant?.unit_price || 0);
+          
+          console.log(`  🔍 After variant change: Total=${totalAfterVariant.toFixed(2)}, Item price=${itemPriceAfter.toFixed(2)}, Variant=${itemAfterVariant?.variant_name || variant2.name}`);
+          
+          // Expected price change = difference between variant adjustments
+          const expectedPriceDiff = (variant2.price_adjustment || 0) - (variant1.price_adjustment || 0);
+          const actualPriceDiff = itemPriceAfter - itemPriceBefore;
+          const priceChangeCorrect = Math.abs(actualPriceDiff - expectedPriceDiff) < 0.01;
+          
+          track(priceChangeCorrect);
+          console.log(priceChangeCorrect
+            ? `  ✓ Variant price adjustment applied - Expected diff: ${expectedPriceDiff.toFixed(2)}, Actual diff: ${actualPriceDiff.toFixed(2)}`
+            : `  ✗ Variant price adjustment NOT applied - Expected diff: ${expectedPriceDiff.toFixed(2)}, Actual diff: ${actualPriceDiff.toFixed(2)}`);
+          
+          // Also verify variant_name was updated
+          const variantNameUpdated = itemAfterVariant?.variant_name === variant2.name || itemAfterVariant?.variant_id === variant2.id;
+          track(variantNameUpdated);
+          console.log(variantNameUpdated
+            ? `  ✓ Variant name updated to: ${itemAfterVariant?.variant_name || 'N/A'}`
+            : `  ✗ Variant name NOT updated - Still showing: ${itemAfterVariant?.variant_name || 'N/A'}`);
         }
       } else {
         console.log(`  ⚠️  Could not create variant test order - ${orderWithVariant.data?.error || 'Unknown error'}`);

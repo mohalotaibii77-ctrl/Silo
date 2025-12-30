@@ -298,6 +298,7 @@ export default function POSScreen({ navigation }: any) {
     new_variant_id?: number;
     new_variant_name?: string;
     new_quantity?: number;
+    new_unit_price?: number; // Updated price when variant changes
     new_modifiers?: Array<{
       modifier_name: string;
       modifier_type: 'extra' | 'removal';
@@ -665,20 +666,36 @@ export default function POSScreen({ navigation }: any) {
     effectiveItems = effectiveItems.map((item: any) => {
       const modification = pendingProductModifications.find(m => m.order_item_id === item.id);
       if (modification) {
+        const newUnitPrice = modification.new_unit_price ?? parseFloat(item.unit_price) ?? 0;
+        const newQuantity = modification.new_quantity ?? item.quantity ?? 1;
+        const newModifiers = modification.new_modifiers 
+          ? modification.new_modifiers.map(m => ({
+              modifier_name: m.modifier_name,
+              modifier_type: m.modifier_type,
+              unit_price: m.unit_price,
+              quantity: m.quantity,
+            }))
+          : item.order_item_modifiers || [];
+        
+        // Calculate new modifiers total (only extras add to price)
+        const newModifiersTotal = newModifiers
+          .filter((m: any) => m.modifier_type === 'extra')
+          .reduce((sum: number, m: any) => sum + (parseFloat(m.unit_price) || 0) * (m.quantity || 1), 0);
+        
+        // Calculate new totals
+        const newSubtotal = newUnitPrice * newQuantity;
+        const newTotal = newSubtotal + newModifiersTotal;
+        
         return {
           ...item,
           variant_id: modification.new_variant_id ?? item.variant_id,
           variant_name: modification.new_variant_name ?? item.variant_name,
-          quantity: modification.new_quantity ?? item.quantity,
-          // If modifiers are modified, use new modifiers
-          order_item_modifiers: modification.new_modifiers 
-            ? modification.new_modifiers.map(m => ({
-                modifier_name: m.modifier_name,
-                modifier_type: m.modifier_type,
-                unit_price: m.unit_price,
-                quantity: m.quantity,
-              }))
-            : item.order_item_modifiers,
+          quantity: newQuantity,
+          unit_price: newUnitPrice,
+          subtotal: newSubtotal,
+          total: newTotal,
+          modifiers_total: newModifiersTotal,
+          order_item_modifiers: newModifiers,
           _isModified: true,
         };
       }
@@ -888,8 +905,27 @@ export default function POSScreen({ navigation }: any) {
     // Check if variant changed
     if (editItemVariantId !== item.variant_id) {
       modification.new_variant_id = editItemVariantId || undefined;
-      const variant = editingItemVariants.find(v => v.id === editItemVariantId);
-      modification.new_variant_name = variant?.name;
+      const newVariant = editingItemVariants.find(v => v.id === editItemVariantId);
+      modification.new_variant_name = newVariant?.name;
+      
+      // Calculate new unit price with variant adjustment
+      // Get base price from product (or use original unit_price minus old variant adjustment)
+      const basePrice = product?.base_price || 0;
+      const oldVariant = editingItemVariants.find(v => v.id === item.variant_id);
+      const oldVariantAdjustment = oldVariant?.price_adjustment || 0;
+      const newVariantAdjustment = newVariant?.price_adjustment || 0;
+      
+      // If we have the product's base price, use it + new variant adjustment
+      // Otherwise, calculate based on current price difference
+      if (product?.base_price) {
+        modification.new_unit_price = basePrice + newVariantAdjustment;
+      } else {
+        // Fallback: adjust from current unit_price
+        const currentUnitPrice = parseFloat(item.unit_price) || 0;
+        modification.new_unit_price = currentUnitPrice - oldVariantAdjustment + newVariantAdjustment;
+      }
+      
+      console.log(`[Variant Change] Old: ${item.variant_name} (adj: ${oldVariantAdjustment}), New: ${newVariant?.name} (adj: ${newVariantAdjustment}), Price: ${modification.new_unit_price}`);
     }
     
     // Build new modifiers array
@@ -1071,6 +1107,7 @@ export default function POSScreen({ navigation }: any) {
         payload.products_to_modify = pendingProductModifications.map(m => ({
           order_item_id: m.order_item_id,
           variant_id: m.new_variant_id,
+          unit_price: m.new_unit_price, // Include new unit price for variant changes
           modifiers: m.new_modifiers?.map(mod => ({
             modifier_name: mod.modifier_name,
             modifier_type: mod.modifier_type,
@@ -2896,6 +2933,7 @@ export default function POSScreen({ navigation }: any) {
             payload.products_to_modify = pendingProductModifications.map(m => ({
               order_item_id: m.order_item_id,
               variant_id: m.new_variant_id,
+              unit_price: m.new_unit_price, // Include new unit price for variant changes
               modifiers: m.new_modifiers?.map(mod => ({
                 modifier_name: mod.modifier_name,
                 modifier_type: mod.modifier_type,

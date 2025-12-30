@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '../config/database';
+import { posService } from './pos.service';
 
 export interface POSSession {
   id: number;
@@ -232,6 +233,7 @@ class POSSessionService {
 
   /**
    * Close a POS session
+   * Also auto-expires any pending cancelled items from this session as waste
    */
   async closeSession(
     sessionId: number,
@@ -262,6 +264,18 @@ class POSSessionService {
       .single();
 
     if (error) throw new Error(`Failed to close session: ${error.message}`);
+
+    // Auto-expire any pending cancelled items from this session as waste
+    // This ensures inventory decisions are finalized when shift ends
+    try {
+      const expireResult = await posService.autoExpireCancelledItems(sessionId);
+      if (expireResult.expired > 0) {
+        console.log(`[POS Session Close] Auto-expired ${expireResult.expired} cancelled items for session ${sessionId}`);
+      }
+    } catch (expireError) {
+      console.error(`[POS Session Close] Failed to auto-expire items for session ${sessionId}:`, expireError);
+      // Don't fail session close if auto-expire fails
+    }
 
     return data as POSSession;
   }

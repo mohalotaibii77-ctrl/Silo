@@ -157,25 +157,17 @@ export class InventoryService {
     page?: number;
     limit?: number;
     fields?: string[];
-    includeSystemItems?: boolean;  // For backward compatibility, defaults to false
   }): Promise<Item[] | { data: Item[]; total: number }> {
-    const { page, limit, fields, includeSystemItems = false } = filters || {};
+    const { page, limit, fields } = filters || {};
     
-    // Build base query - ONLY business items by default
-    // Each business owns their items, no shared system items
+    // ENFORCEMENT: ONLY return items owned by this business
+    // System items (business_id IS NULL) are NEVER returned
+    // Each business must have their own items
     let query = supabaseAdmin
       .from('items')
       .select('*', { count: page && limit ? 'exact' : undefined })
-      .eq('status', 'active');
-
-    // Filter by business - only show items owned by this business
-    if (includeSystemItems) {
-      // Backward compatibility: include both business and system items
-      query = query.or(`business_id.eq.${businessId},business_id.is.null`);
-    } else {
-      // New default: only business-owned items
-      query = query.eq('business_id', businessId);
-    }
+      .eq('status', 'active')
+      .eq('business_id', businessId);  // Strict business ownership enforcement
 
     // Filter by item_type if specified
     if (filters?.item_type) {
@@ -231,11 +223,18 @@ export class InventoryService {
    * Get single item with business-specific price
    */
   async getItem(itemId: number, businessId?: number): Promise<Item | null> {
-    const { data, error } = await supabaseAdmin
+    // Build query - if businessId is provided, enforce ownership
+    let query = supabaseAdmin
       .from('items')
       .select('*')
-      .eq('id', itemId)
-      .single();
+      .eq('id', itemId);
+
+    // ENFORCEMENT: If businessId is provided, only return item if it belongs to this business
+    if (businessId) {
+      query = query.eq('business_id', businessId);
+    }
+
+    const { data, error } = await query.single();
 
     if (error) return null;
 
@@ -2417,10 +2416,10 @@ export class InventoryService {
             });
         }
 
-        // Zero out the old stock
+        // DELETE the old stock record (not just zero it out)
         await supabaseAdmin
           .from('inventory_stock')
-          .update({ quantity: 0, reserved_quantity: 0, held_quantity: 0 })
+          .delete()
           .eq('id', stock.id);
 
         stockTransferred++;
@@ -2443,6 +2442,49 @@ export class InventoryService {
 
     console.log(`[migrateBusinessToOwnItems] Completed for business ${businessId}: items=${itemsCopied}, refs=${referencesUpdated}, stock=${stockTransferred}`);
     return { itemsCopied, referencesUpdated, stockTransferred };
+  }
+
+  /**
+   * Cleanup orphaned stock records that reference system items
+   * This removes any stock records where the item belongs to a different business or is a system item
+   * Should be run after business migration to clean up any duplicate records
+   */
+  async cleanupOrphanedStockRecords(businessId: number): Promise<{ deleted: number }> {
+    console.log(`[cleanupOrphanedStockRecords] Starting cleanup for business ${businessId}`);
+
+    // Find all stock records for this business that reference non-business items
+    const { data: orphanedStock, error: fetchError } = await supabaseAdmin
+      .from('inventory_stock')
+      .select('id, item_id, items!inner(id, business_id)')
+      .eq('business_id', businessId)
+      .neq('items.business_id', businessId);
+
+    if (fetchError) {
+      console.error('Failed to find orphaned stock:', fetchError);
+      throw new Error('Failed to find orphaned stock records');
+    }
+
+    if (!orphanedStock || orphanedStock.length === 0) {
+      console.log(`[cleanupOrphanedStockRecords] No orphaned stock found for business ${businessId}`);
+      return { deleted: 0 };
+    }
+
+    const orphanedIds = orphanedStock.map(s => s.id);
+    console.log(`[cleanupOrphanedStockRecords] Found ${orphanedIds.length} orphaned stock records`);
+
+    // Delete all orphaned stock records
+    const { error: deleteError } = await supabaseAdmin
+      .from('inventory_stock')
+      .delete()
+      .in('id', orphanedIds);
+
+    if (deleteError) {
+      console.error('Failed to delete orphaned stock:', deleteError);
+      throw new Error('Failed to delete orphaned stock records');
+    }
+
+    console.log(`[cleanupOrphanedStockRecords] Deleted ${orphanedIds.length} orphaned stock records for business ${businessId}`);
+    return { deleted: orphanedIds.length };
   }
 }
 

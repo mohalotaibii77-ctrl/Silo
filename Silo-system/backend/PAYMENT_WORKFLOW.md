@@ -38,17 +38,17 @@ The system supports **two** payment methods:
 
 ### Summary Table
 
-| Order Type | Order Source | Payment Method | Payment Timing | Initial `payment_status` |
-|------------|--------------|----------------|----------------|--------------------------|
-| Takeaway | POS | Cash | Upfront | `paid` |
-| Takeaway | POS | Card | Upfront (transaction # required) | `paid` |
-| Drive Thru | POS | Cash | Upfront | `paid` |
-| Drive Thru | POS | Card | Upfront (transaction # required) | `paid` |
-| Dine-in | POS | Cash/Card (Pay Now) | Upfront | `paid` |
-| Dine-in | POS | Pay Later | After eating | `pending` → `paid` |
-| Delivery | POS (Own Driver) | Card | Upfront | `paid` |
-| Delivery | POS (Own Driver) | Cash | Driver collects → cashier | `pending` → `paid` |
-| Delivery | API (Partner) | Any | Partner handles | `app_payment` |
+| Order Type | Order Source | Payment Method | Payment Timing | Initial `payment_status` | Notes |
+|------------|--------------|----------------|----------------|--------------------------|-------|
+| Takeaway | POS | Cash | Upfront | `paid` | - |
+| Takeaway | POS | Card | Upfront (transaction # required) | `paid` | - |
+| Drive Thru | POS | Cash | Upfront | `paid` | - |
+| Drive Thru | POS | Card | Upfront (transaction # required) | `paid` | - |
+| Dine-in | POS | Cash/Card (Pay Now) | Upfront | `paid` | - |
+| Dine-in | POS | Pay Later | After eating | `pending` → `paid` | - |
+| Delivery | POS (Own Driver) | Card | Upfront | `paid` | - |
+| Delivery | POS (Own Driver) | Cash | Driver collects → cashier | `pending` → `paid` | - |
+| Delivery | API (Partner) | Any | Partner handles | `app_payment` | Accepted on partner's device before reaching POS |
 
 ---
 
@@ -230,26 +230,35 @@ Customer orders delivery
 └─────────────────────────────────────────────────────────────┘
                           │
                           ▼
-              Order arrives via API
+┌─────────────────────────────────────────────────────────────┐
+│         ACCEPTANCE ON PARTNER'S DEVICE                       │
+│         (at restaurant location)                             │
+│                                                              │
+│   Restaurant staff reviews order on partner's tablet/device  │
+│   → Accepts or Rejects on that device                        │
+│   → If rejected, order never reaches POS                     │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                          │
+                   (If Accepted)
+                          ▼
+              Order sent to POS via API
                           │
                           ▼
               payment_status = 'app_payment'
-              order_status = 'pending'
-                          │
-                          ▼
-              Store accepts order
-                          │
-                          ▼
               order_status = 'in_progress'
                           │
                           ▼
               Kitchen prepares
                           │
                           ▼
+              order_status = 'completed'
+                          │
+                          ▼
               Partner driver picks up
                           │
                           ▼
-              order_status = 'completed'
+              order_status = 'picked_up'
 
 
 ┌─────────────────────────────────────────────────────────────┐
@@ -269,7 +278,11 @@ Customer orders delivery
 └─────────────────────────────────────────────────────────────┘
 ```
 
+> **Important:** Order acceptance/rejection happens on the delivery partner's device (tablet/phone at the restaurant), NOT in the POS system. Orders only reach the POS after being accepted externally, arriving with `in_progress` status ready for kitchen preparation.
+
 **Key Points:**
+- **Acceptance happens externally** - Restaurant accepts/rejects on partner's device, not in POS
+- Orders arrive at POS as `in_progress` (already accepted)
 - Delivery partner handles **ALL** customer payments
 - Restaurant doesn't track per-order payment collection
 - Payment status is always `app_payment` for API orders
@@ -370,8 +383,9 @@ POST /api/pos/orders/:orderId/payment
 
 1. **Always collect card transaction number** - Required for reconciliation and disputes
 2. **Track cash in/out for cash payments** - Essential for cash drawer management
-3. **Don't build accept/reject UI for API orders** - Partner device handles this
+3. **Don't build accept/reject UI for API orders** - This happens on the delivery partner's device at the restaurant before orders reach your POS
 4. **Mark COD orders paid when driver returns** - Don't mark paid at order creation
 5. **Process payments before completing orders** - Except for pay later scenarios
+6. **API orders arrive pre-accepted** - They reach your system as `in_progress`, ready for kitchen preparation
 
 

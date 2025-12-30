@@ -45,3 +45,4 @@ COMMENT ON COLUMN delivery_partners.service_areas IS 'Comma-separated list of ar
 
 
 
+

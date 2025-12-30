@@ -17,3 +17,4 @@ COMMENT ON COLUMN business_users.settings IS 'Additional user settings as JSON (
 
 
 
+

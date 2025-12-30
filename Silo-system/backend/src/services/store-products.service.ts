@@ -486,17 +486,55 @@ export class StoreProductsService {
   }
 
   /**
-   * Get single product
+   * Get single product with variants
    */
   async getProduct(productId: number, businessId: number): Promise<StoreProduct | null> {
     const { data: product, error } = await supabaseAdmin
       .from('products')
-      .select('*')
+      .select(`
+        *,
+        product_variants (
+          id,
+          name,
+          name_ar,
+          price_adjustment,
+          sort_order
+        ),
+        product_ingredients (
+          id,
+          variant_id,
+          item_id,
+          quantity,
+          removable,
+          items (
+            id,
+            name,
+            name_ar,
+            unit
+          )
+        )
+      `)
       .eq('id', productId)
       .eq('business_id', businessId)
       .single();
 
     if (error || !product) return null;
+    
+    // Fetch modifiers separately (table might be new)
+    try {
+      const { data: modifiers } = await supabaseAdmin
+        .from('product_modifiers')
+        .select('id, item_id, name, name_ar, removable, addable, quantity, extra_price, sort_order')
+        .eq('product_id', productId)
+        .order('sort_order');
+      
+      if (modifiers) {
+        (product as any).modifiers = modifiers;
+      }
+    } catch (e) {
+      // Table might not exist yet, ignore
+    }
+    
     return product;
   }
 

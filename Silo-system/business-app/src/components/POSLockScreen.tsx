@@ -87,7 +87,7 @@ export function POSLockScreen({ visible, onUnlock, currentEmployeeName }: POSLoc
     try {
       const token = await AsyncStorage.getItem('token');
       
-      const response = await fetch(`${API_URL}/api/pos-sessions/pin-authenticate`, {
+      const response = await fetch(`${API_URL}/pos-sessions/pin-authenticate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

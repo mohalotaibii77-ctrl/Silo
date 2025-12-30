@@ -1,7 +1,7 @@
 # Order Workflow Documentation
 
 > **Last Updated:** December 2024  
-> **Version:** 2.0
+> **Version:** 2.1
 
 ## Overview
 
@@ -44,12 +44,12 @@ The system uses 6 statuses:
 
 | Status | Code | Description |
 |--------|------|-------------|
-| Pending | `pending` | Reserved for future use (scheduled orders) |
-| In Progress | `in_progress` | Order is being prepared (initial status for all orders) |
+| Pending | `pending` | API orders awaiting acceptance/rejection on delivery partner's device |
+| In Progress | `in_progress` | Order is being prepared (initial status for POS orders, and for accepted API orders) |
 | Completed | `completed` | Food is ready - for delivery orders, waiting for driver pickup |
 | Picked Up | `picked_up` | **Delivery orders only** - Driver has collected the order |
 | Cancelled | `cancelled` | Order cancelled |
-| Rejected | `rejected` | Reserved for future use |
+| Rejected | `rejected` | API orders rejected on delivery partner's device |
 
 ---
 
@@ -85,12 +85,34 @@ The system uses 6 statuses:
 ```
 ┌──────────────────────────┐
 │  ORDER FROM DELIVERY APP │
-│  (via API integration)   │
+│  (Customer orders via    │
+│   partner's app)         │
 └───────────┬──────────────┘
             │
             ▼
+┌─────────────────────────────────────────────┐
+│     DELIVERY PARTNER'S TABLET/DEVICE        │
+│     (at restaurant location)                │
+│                                             │
+│   Restaurant staff accepts or rejects       │
+│   order on partner's device                 │
+└───────────┬─────────────────────────────────┘
+            │
+       ┌────┴────┐
+       │         │
+       ▼         ▼
+   ACCEPTED   REJECTED
+       │         │
+       │         └─► Order never enters POS
+       │
+       ▼
+┌─────────────────────────────────────────────┐
+│   Order sent to POS via API                 │
+└───────────┬─────────────────────────────────┘
+            │
+            ▼
       ┌───────────┐
-      │IN_PROGRESS│ ◄──── Direct to kitchen (shows in POS Orders tab)
+      │IN_PROGRESS│ ◄──── Arrives ready for kitchen (shows in POS Orders tab)
       └─────┬─────┘
             │
        ┌────┴────┐
@@ -110,6 +132,8 @@ The system uses 6 statuses:
       ▼
    Order Done
 ```
+
+> **Note:** Acceptance/rejection happens on the delivery partner's device (tablet/phone at restaurant), NOT in the POS system. Orders only reach the POS after being accepted externally.
 
 ---
 
@@ -175,6 +199,42 @@ The system uses 6 statuses:
    - Order is marked as `is_edited = true` (for kitchen display color coding)
    - If total increases after payment, `remaining_amount` is updated
    - Timeline event is logged for audit
+   - **Inventory adjustments** (see "Order Editing & Inventory" section below)
+
+---
+
+## Inventory Reservation on Order Creation
+
+When an order is created, ingredients are **immediately reserved** to prevent overselling:
+
+```
+Order Created → Calculate Required Ingredients → Reserve Each Ingredient
+                                                       │
+                                                       ▼
+                                               reserved_quantity ↑
+                                               (available to sell ↓)
+```
+
+### Why Reserve Immediately?
+
+- Prevents selling the same ingredient to multiple orders
+- Ensures "Available to Sell" accurately reflects what can be ordered
+- Physical stock (`quantity`) unchanged until order completes
+
+### Example
+
+```
+Initial: Beef stock = 10kg, reserved = 0kg, available = 10kg
+
+Order 1: 2 burgers (0.4kg beef needed)
+→ reserved = 0.4kg, available = 9.6kg
+
+Order 2: 3 burgers (0.6kg beef needed)  
+→ reserved = 1.0kg, available = 9.0kg
+
+Order 1 Completed:
+→ quantity = 9.6kg, reserved = 0.6kg, available = 9.0kg
+```
 
 ---
 
@@ -204,10 +264,23 @@ The system supports two modes for completing orders, configured in **Settings �
 2. **Receipt Scan mode:** Users with `orders` permission can complete via scan
 3. **Only `in_progress` orders can be completed**
 4. **On completion:**
-   - Inventory is consumed (deducted from stock)
+   - Inventory is **consumed** (see below)
    - Payment status is finalized
    - Timeline event is logged
-4. **For delivery orders:** `completed` means "food ready for pickup" - not end of workflow
+5. **For delivery orders:** `completed` means "food ready for pickup" - not end of workflow
+
+### Inventory Consumption on Completion
+
+When an order is marked as completed:
+
+```
+For each ingredient in the order:
+  - quantity ↓ (physical stock reduced)
+  - reserved_quantity ↓ (reservation released)
+  - Transaction logged as 'order_sale'
+```
+
+**Note:** Inventory is reserved at order creation time, but only consumed when the order is completed. This ensures accurate tracking of when ingredients are actually used.
 
 ---
 
@@ -222,28 +295,152 @@ The system supports two modes for completing orders, configured in **Settings �
 
 ---
 
+## Order Cancellation & Kitchen Decision Queue
+
+When orders are cancelled or edited, ingredients enter a **Kitchen Decision Queue** instead of being immediately released. This prevents overselling and ensures accurate waste tracking.
+
+### Why Kitchen Decisions?
+
+**Problem:** If reservations are released immediately on cancellation, another order could claim those ingredients. But if the kitchen already prepared the food, those ingredients are actually wasted - leading to overselling.
+
+**Solution:** Keep ingredients locked until kitchen confirms:
+- **RETURN** - Ingredients weren't used, return to available stock
+- **WASTE** - Ingredients were used/prepared, deduct from physical stock
+
+### Cancellation Flow
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│                    ORDER CANCELLED                                 │
+│              (or item removed from order)                          │
+└───────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌───────────────────────────────────────────────────────────────────┐
+│              ITEMS ENTER DECISION QUEUE                            │
+│         (reserved_quantity stays LOCKED)                           │
+│                                                                    │
+│   • Items NOT released to available stock                          │
+│   • Appears in Kitchen Display for decision                        │
+│   • Tracks: item, quantity, order_id, cancellation_source          │
+└───────────────────────────────────────────────────────────────────┘
+                              │
+            ┌─────────────────┴─────────────────┐
+            ▼                                   ▼
+┌─────────────────────┐             ┌─────────────────────┐
+│   Kitchen Marks     │             │   Kitchen Marks     │
+│      RETURN         │             │       WASTE         │
+│                     │             │                     │
+│ • Not prepared      │             │ • Already prepared  │
+│ • Ingredients ok    │             │ • Must discard      │
+└─────────────────────┘             └─────────────────────┘
+            │                                   │
+            ▼                                   ▼
+┌─────────────────────┐             ┌─────────────────────┐
+│ reserved_qty ↓      │             │ reserved_qty ↓      │
+│ quantity unchanged  │             │ quantity ↓ (waste)  │
+│                     │             │                     │
+│ → Back to available │             │ → Deducted as waste │
+│ → Timeline: return  │             │ → Timeline: waste   │
+└─────────────────────┘             └─────────────────────┘
+```
+
+### Kitchen Display Tabs
+
+| Tab | Shows | Source |
+|-----|-------|--------|
+| **Cancelled Orders** | Full order cancellations | `cancellation_source = 'order_cancelled'` |
+| **Edited Orders** | Items removed from orders | `cancellation_source = 'order_edited'` |
+
+### Ingredient Breakdown
+
+In both tabs, kitchen staff see:
+- Order details
+- Each affected product
+- **Ingredient breakdown** with quantities
+- Return/Waste buttons per ingredient
+
+### Auto-Expire Rules
+
+If kitchen doesn't make a decision, items automatically become **WASTE**:
+
+| Trigger | Action |
+|---------|--------|
+| 24 hours elapsed | Auto-mark as waste |
+| POS Session closed | Auto-mark items from that session as waste |
+
+This ensures no items remain indefinitely locked.
+
+### Cancellation Permissions
+
+| Action | Who Can Do It |
+|--------|---------------|
+| Cancel Order | Any business user |
+| Make Return/Waste Decision | `kitchen_display` role |
+
+---
+
+## Order Editing & Inventory
+
+When orders are edited, inventory is adjusted accordingly:
+
+### Item Additions
+- New ingredients are **reserved immediately**
+- Consumed when order completes
+
+### Item Removals / Quantity Reductions
+- Affected ingredients enter **Kitchen Decision Queue**
+- Kitchen decides Return or Waste (see above)
+- NOT immediately released to prevent overselling
+- **IMPORTANT**: Return decisions are **deferred** until order completion
+  - Kitchen marks item as "return" → decision saved
+  - Inventory transaction created **only when order is completed**
+  - This ensures "Additions Today" count only updates after order is done
+- Waste decisions are processed immediately (item is gone regardless)
+
+### Modifier Removals (e.g., "No Cheese")
+- If removing an ingredient that's in the recipe
+- That ingredient enters **Kitchen Decision Queue**
+- Kitchen decides if the removed ingredient was wasted
+- Same deferred behavior for returns as above
+
+---
+
 ## Delivery Partner Integration
 
+### How It Works
+
+1. **Customer Orders** - Customer places order on delivery partner's app (Talabat, Jahez, etc.)
+2. **Partner's Device** - Order appears on delivery partner's tablet/phone at the restaurant
+3. **Accept/Reject** - Restaurant staff accepts or rejects the order **on the partner's device**
+4. **If Accepted** - Order is sent to POS via API webhook
+5. **If Rejected** - Order never enters POS system
+
+> **Important:** The POS system does NOT have accept/reject functionality. This happens exclusively on the delivery partner's device before the order reaches your system.
+
 ### Incoming Orders
-- Orders from delivery partners arrive via webhook/API
-- Initial status: `in_progress` (immediately goes to kitchen)
+- Orders arrive via webhook/API **after being accepted** on partner's device
+- Initial status: `in_progress` (already accepted, ready for kitchen)
 - Orders appear in the POS Orders tab alongside all other orders
 
-### Order Flow
+### Order Flow (in POS System)
 1. **Order arrives** → `in_progress` (kitchen starts preparing)
 2. **Kitchen completes** → `completed` (food ready, waiting for driver)
 3. **Driver picks up** → `picked_up` (POS marks when driver collects)
 
 ### Order Visibility
-- All delivery partner orders show in the POS Orders tab
+- All **accepted** delivery partner orders show in the POS Orders tab
 - Kitchen Display shows orders to prepare
 - POS can see completed delivery orders awaiting pickup
+- Rejected orders never appear in the system
 
 ---
 
 ## Timeline Events
 
 Every order action is logged for audit trail:
+
+### Order Timeline Events
 
 | Event Type | Description |
 |------------|-------------|
@@ -256,8 +453,19 @@ Every order action is logged for audit trail:
 | `payment_updated` | Payment status changed |
 | `cancelled` | Order cancelled |
 | `completed` | Order completed |
-| `ingredient_wasted` | Ingredient marked as waste |
-| `ingredient_returned` | Ingredient returned to inventory |
+| `ingredient_wasted` | Ingredient marked as waste by kitchen |
+| `ingredient_returned` | Ingredient returned to inventory by kitchen |
+
+### Inventory Timeline Events (related to orders)
+
+| Transaction Type | Description | Effect |
+|------------------|-------------|--------|
+| `sale_reserve` | Ingredients reserved for order | reserved_qty ↑ |
+| `order_sale` | Ingredients consumed on completion | quantity ↓, reserved_qty ↓ |
+| `order_cancel_return` | Kitchen returned ingredients | reserved_qty ↓ |
+| `order_cancel_waste` | Kitchen marked as waste | quantity ↓, reserved_qty ↓ |
+
+> **See Also:** [INVENTORY_FLOW.md](./INVENTORY_FLOW.md) for complete inventory documentation
 
 ---
 
@@ -293,8 +501,9 @@ Every order action is logged for audit trail:
 1. **POS operators** should focus on order creation and editing
 2. **Kitchen display** should only mark orders complete when food is ready
 3. **Managers** can view and monitor all orders but editing is restricted to POS
-4. **API orders** flow through delivery partner devices - don't build accept/reject UI
-5. Always check `is_edited` flag in kitchen display to highlight modified orders
+4. **API orders** - Acceptance/rejection happens on delivery partner's device (tablet at restaurant), not in the POS system. Orders arrive pre-accepted as `in_progress`.
+5. **Don't build accept/reject UI** for API orders in the POS - this functionality exists only on partner devices
+6. Always check `is_edited` flag in kitchen display to highlight modified orders
 
 ---
 
@@ -305,5 +514,13 @@ Every order action is logged for audit trail:
 - **Service:** `backend/src/services/pos.service.ts`
 - **Types:** `backend/src/types/index.ts`
 - **Timeline Service:** `backend/src/services/order-timeline.service.ts`
+- **Inventory Stock Service:** `backend/src/services/inventory-stock.service.ts`
 - **Migrations:** `backend/migrations/add_order_workflow_tables.sql`
+
+---
+
+## Related Documentation
+
+- [INVENTORY_FLOW.md](./INVENTORY_FLOW.md) - Complete inventory management documentation
+- [PAYMENT_WORKFLOW.md](./PAYMENT_WORKFLOW.md) - Payment processing documentation
 

@@ -399,7 +399,7 @@ export default function SettingsScreen({ navigation }: any) {
       style={[styles.tabButton, activeTab === tab && styles.tabButtonActive]}
       onPress={() => setActiveTab(tab)}
     >
-      <Icon size={16} color={activeTab === tab ? colors.background : colors.mutedForeground} />
+      <Icon size={18} color={activeTab === tab ? colors.background : colors.mutedForeground} />
       <Text style={[styles.tabButtonText, activeTab === tab && styles.tabButtonTextActive]}>
         {title}
       </Text>
@@ -1043,7 +1043,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    paddingVertical: 8,
+    paddingVertical: 10,
     paddingHorizontal: 14,
     borderRadius: 10,
     backgroundColor: colors.secondary,
@@ -1052,7 +1052,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.foreground,
   },
   tabButtonText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     color: colors.mutedForeground,
   },

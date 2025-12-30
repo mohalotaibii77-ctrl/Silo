@@ -18,3 +18,4 @@ COMMENT ON COLUMN orders.delivery_partner_id IS 'Reference to delivery partner (
 CREATE INDEX IF NOT EXISTS idx_orders_delivery_partner ON orders(delivery_partner_id) WHERE delivery_partner_id IS NOT NULL;
 
 
+

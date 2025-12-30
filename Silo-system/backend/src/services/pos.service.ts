@@ -20,6 +20,7 @@ import {
 import { storageToServing, ServingUnit } from '../utils/unit-conversion';
 import { inventoryStockService } from './inventory-stock.service';
 import { orderTimelineService } from './order-timeline.service';
+import { inventoryTransactionService } from './inventory-transaction.service';
 
 // Type for inventory check result
 interface InventoryCheckResult {
@@ -1118,13 +1119,37 @@ export class POSService {
   async getOrderById(orderId: number): Promise<Order | null> {
     const { data, error } = await supabaseAdmin
       .from('orders')
-      .select('*, order_items(*, order_item_modifiers(*))')
+      .select(`
+        *,
+        order_items(
+          *,
+          order_item_modifiers(*),
+          product_variants:variant_id(id, name, name_ar)
+        )
+      `)
       .eq('id', orderId)
       .single();
 
     if (error) {
       if (error.code === 'PGRST116') return null;
       throw new Error(`Failed to fetch order: ${error.message}`);
+    }
+    
+    // Map variant_name from the joined product_variants to each order item
+    if (data && data.order_items) {
+      data.order_items = data.order_items.map((item: any) => {
+        if (item.product_variants) {
+          // Supabase returns single relation as object, not array
+          const variant = item.product_variants;
+          return {
+            ...item,
+            variant_name: variant.name,
+            variant_name_ar: variant.name_ar,
+            product_variants: undefined, // Remove the joined data to keep response clean
+          };
+        }
+        return item;
+      });
     }
     
     return data as Order;
@@ -1272,6 +1297,15 @@ export class POSService {
       // Log but don't fail - inventory can be adjusted manually
     }
 
+    // Process any pending returns from edited order items
+    // These were deferred until order completion
+    try {
+      await this.processPendingReturnsForOrder(orderId, order.business_id, order.branch_id, completedBy);
+    } catch (returnError) {
+      console.error('Failed to process pending returns:', returnError);
+      // Log but don't fail - returns can be processed manually
+    }
+
     // Log timeline event
     try {
       await orderTimelineService.logOrderCompleted(orderId, {
@@ -1322,9 +1356,10 @@ export class POSService {
 
   /**
    * Cancel an order (in_progress → cancelled)
-   * Releases reserved ingredients immediately and creates queue for kitchen to decide waste vs return
+   * Keeps ingredients RESERVED until kitchen decides waste vs return
+   * Kitchen will release reservations when processing decisions
    */
-  async cancelOrder(orderId: number, cancelledBy: number, reason?: string): Promise<Order> {
+  async cancelOrder(orderId: number, cancelledBy: number, reason?: string, posSessionId?: number): Promise<Order> {
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
     
@@ -1332,7 +1367,8 @@ export class POSService {
       throw new Error(`Cannot cancel order: order must be pending or in progress (current: ${order.order_status})`);
     }
 
-    // Calculate ingredients and handle reservation + cancellation queue
+    // Calculate ingredients and create cancellation queue
+    // RESERVATIONS STAY LOCKED until kitchen decides waste vs return
     // Note: Supabase returns order_items, not items
     const orderItems = (order as any).order_items || [];
     try {
@@ -1349,20 +1385,9 @@ export class POSService {
         itemsForCancellation
       );
 
-      // IMMEDIATELY release all reservations to free up inventory
-      // Kitchen will later decide if items should be wasted (deducted from actual stock)
-      await inventoryStockService.releaseReservation(
-        order.business_id,
-        order.branch_id,
-        ingredients.map(ing => ({
-          item_id: ing.item_id,
-          quantity_in_storage: ing.quantity_in_storage,
-          item_name: ing.item_name,
-        })),
-        orderId,
-        cancelledBy,
-        `Order #${orderId} cancelled - reservation released`
-      );
+      // DO NOT release reservations here - keep items locked
+      // Kitchen will release reservations when they decide waste vs return
+      // This prevents overselling while kitchen decides
 
       // Create cancellation queue entries for kitchen to decide waste vs return
       for (const ing of ingredients) {
@@ -1375,16 +1400,18 @@ export class POSService {
             product_name: ing.product_name,
             quantity: ing.quantity_in_storage,
             unit: ing.storage_unit,
-            decision: null, // Kitchen will decide: waste (deduct stock) or return (do nothing)
+            decision: null, // Kitchen will decide: waste (deduct stock + release) or return (release only)
+            cancellation_source: 'order_cancelled',
+            pos_session_id: posSessionId || (order as any).pos_session_id || null,
           });
       }
     } catch (cancelError) {
       console.error('Failed to process cancellation:', cancelError);
     }
 
-    // Log timeline event
+    // Log timeline event - note that reservations are kept
     try {
-      await orderTimelineService.logOrderCancelled(orderId, reason || 'Order cancelled', cancelledBy);
+      await orderTimelineService.logOrderCancelled(orderId, reason || 'Order cancelled - items reserved pending kitchen decision', cancelledBy);
     } catch (timelineError) {
       console.error('Failed to log timeline:', timelineError);
     }
@@ -1446,29 +1473,6 @@ export class POSService {
     return data as Order;
   }
 
-  /**
-   * Void order
-   */
-  async voidOrder(orderId: number, reason: string, voidedBy: number): Promise<Order> {
-    const { data, error } = await supabaseAdmin
-      .from('orders')
-      .update({
-        is_void: true,
-        void_reason: reason,
-        void_at: new Date().toISOString(),
-        voided_by: voidedBy,
-        order_status: 'cancelled',  // Using existing column name
-      })
-      .eq('id', orderId)
-      .select('*, order_items(*, order_item_modifiers(*))')
-      .single();
-
-    if (error) throw new Error(`Failed to void order: ${error.message}`);
-
-    await this.logStatusChange(orderId, undefined, 'cancelled', voidedBy, `Voided: ${reason}`);
-
-    return data as Order;
-  }
 
   /**
    * Refund order
@@ -1796,18 +1800,32 @@ export class POSService {
 
   /**
    * Edit an order (POS orders only)
-   * Handles adding, removing, and modifying items
+   * 
+   * TERMINOLOGY CLARIFICATION:
+   * - PRODUCTS = Menu items (Burger, Pizza, etc.) - stored in 'order_items' table
+   * - ITEMS = Raw ingredients (beef, cheese, etc.) - stored in 'items' table
+   * 
+   * This function handles PRODUCTS:
+   * - products_to_add: Add entire PRODUCTS to order (e.g., add a Burger)
+   * - products_to_remove: Remove entire PRODUCTS from order (e.g., remove a Pizza)
+   * - products_to_modify: Modify existing PRODUCTS (change variant, quantity, or modifiers)
+   * 
+   * To add/remove ITEMS (ingredients) within a product, use modifiers:
+   * - modifiers with type 'extra': Add ingredient (e.g., Extra Cheese)
+   * - modifiers with type 'removal': Remove ingredient (e.g., No Onions)
+   * 
    * Updates inventory reservations accordingly
    */
   async editOrder(
     orderId: number,
     updates: {
-      items_to_add?: CreateOrderItemInput[];
-      items_to_remove?: number[];           // order_item_ids to remove
-      items_to_modify?: Array<{
+      products_to_add?: CreateOrderItemInput[];      // Add entire products to order
+      products_to_remove?: number[];                 // Remove products from order (order_item_ids)
+      products_to_modify?: Array<{
         order_item_id: number;
-        quantity?: number;
-        modifiers?: Array<{
+        variant_id?: number;                         // NEW: Change product variant
+        quantity?: number;                           // Change product quantity
+        modifiers?: Array<{                          // Add/remove items (ingredients) in product
           modifier_id: number;
           quantity: number;
           modifier_name: string;
@@ -1837,9 +1855,10 @@ export class POSService {
     // Note: Supabase returns order_items, not items
     const orderItems = (order as any).order_items || [];
 
-    // Handle items to remove
-    if (updates.items_to_remove && updates.items_to_remove.length > 0) {
-      for (const orderItemId of updates.items_to_remove) {
+    // ==================== REMOVE PRODUCTS ====================
+    // Remove entire products from order (e.g., remove a Burger)
+    if (updates.products_to_remove && updates.products_to_remove.length > 0) {
+      for (const orderItemId of updates.products_to_remove) {
         const orderItem = orderItems.find((oi: any) => oi.id === orderItemId);
         if (!orderItem) continue;
 
@@ -1856,21 +1875,11 @@ export class POSService {
           itemsForCancellation
         );
 
-        // IMMEDIATELY release reservations for removed items
-        await inventoryStockService.releaseReservation(
-          order.business_id,
-          order.branch_id,
-          ingredients.map(ing => ({
-            item_id: ing.item_id,
-            quantity_in_storage: ing.quantity_in_storage,
-            item_name: ing.item_name,
-          })),
-          orderId,
-          editedBy,
-          `Item removed from order #${orderId}`
-        );
+        // DO NOT release reservations here - keep items locked
+        // Kitchen will release reservations when they decide waste vs return
+        // This prevents overselling while kitchen decides
 
-        // Create cancellation queue for kitchen to decide waste vs no-action
+        // Create cancellation queue for kitchen to decide waste vs return
         for (const ing of ingredients) {
           await supabaseAdmin
             .from('cancelled_order_items')
@@ -1883,6 +1892,8 @@ export class POSService {
               quantity: ing.quantity_in_storage,
               unit: ing.storage_unit,
               decision: null,
+              cancellation_source: 'order_edited',
+              pos_session_id: (order as any).pos_session_id || null,
             });
         }
 
@@ -1904,64 +1915,136 @@ export class POSService {
       }
     }
 
-    // Handle items to add
-    if (updates.items_to_add && updates.items_to_add.length > 0) {
-      for (const newItem of updates.items_to_add) {
-        // Get product details
-        const { data: product } = await supabaseAdmin
+    // ==================== ADD PRODUCTS ====================
+    // Add entire products to order (e.g., add a new Burger)
+    if (updates.products_to_add && updates.products_to_add.length > 0) {
+      console.log(`[Edit Order] Adding ${updates.products_to_add.length} products to order ${orderId}`);
+      
+      for (const newProduct of updates.products_to_add) {
+        console.log(`[Edit Order] Processing product_id: ${newProduct.product_id}, type: ${typeof newProduct.product_id}`);
+        
+        // Ensure product_id is a number
+        const productId = typeof newProduct.product_id === 'string' 
+          ? parseInt(newProduct.product_id, 10) 
+          : newProduct.product_id;
+        
+        if (!productId || isNaN(productId)) {
+          console.error(`[Edit Order] Invalid product_id: ${newProduct.product_id}`);
+          continue;
+        }
+        
+        // Get product details (must belong to same business)
+        const { data: product, error: productError } = await supabaseAdmin
           .from('products')
           .select('*')
-          .eq('id', newItem.product_id)
+          .eq('id', productId)
+          .eq('business_id', order.business_id)
           .single();
 
-        if (!product) continue;
+        if (productError) {
+          console.error(`[Edit Order] Product lookup error:`, productError);
+        }
+        
+        if (!product) {
+          console.error(`[Edit Order] Product not found: ${productId} for business ${order.business_id}`);
+          continue;
+        }
+        
+        console.log(`[Edit Order] Found product: ${product.name} (ID: ${product.id})`);
 
-        // Calculate price
-        let unitPrice = product.price || 0;
-        if (newItem.variant_id) {
+        // Calculate base price (use provided unit_price or get from product/variant)
+        let unitPrice = newProduct.unit_price || product.price || 0;
+        let variantName: string | null = null;
+        
+        if (newProduct.variant_id) {
           const { data: variant } = await supabaseAdmin
             .from('product_variants')
             .select('*')
-            .eq('id', newItem.variant_id)
+            .eq('id', newProduct.variant_id)
             .single();
-          if (variant) unitPrice = variant.price || unitPrice;
+          if (variant) {
+            // Apply price adjustment if variant has one
+            if (variant.price_adjustment) {
+              unitPrice = (product.price || 0) + variant.price_adjustment;
+            }
+            variantName = variant.name;
+          }
         }
 
-        const itemTotal = unitPrice * newItem.quantity;
-        totalChange += itemTotal;
+        // Calculate modifiers total
+        let modifiersTotal = 0;
+        if (newProduct.modifiers && newProduct.modifiers.length > 0) {
+          for (const mod of newProduct.modifiers) {
+            if (mod.modifier_type === 'extra' && mod.unit_price) {
+              modifiersTotal += (mod.unit_price * (mod.quantity || 1));
+            }
+          }
+        }
 
-        // Create order item
+        const productSubtotal = unitPrice * newProduct.quantity;
+        const productTotal = productSubtotal + modifiersTotal;
+        totalChange += productTotal;
+
+        // Ensure variant_id is also a number
+        const variantId = newProduct.variant_id 
+          ? (typeof newProduct.variant_id === 'string' ? parseInt(newProduct.variant_id, 10) : newProduct.variant_id)
+          : null;
+
+        // Create order item (product in order)
         const { data: orderItem, error } = await supabaseAdmin
           .from('order_items')
           .insert({
+            business_id: order.business_id,
             order_id: orderId,
-            product_id: newItem.product_id,
-            variant_id: newItem.variant_id,
-            product_name: newItem.product_name || product.name,
+            product_id: productId,
+            variant_id: variantId,
+            product_name: newProduct.product_name || product.name,
+            product_name_ar: product.name_ar,
             product_sku: product.sku,
-            quantity: newItem.quantity,
-            original_quantity: newItem.quantity,
+            quantity: newProduct.quantity,
             unit_price: unitPrice,
-            subtotal: itemTotal,
-            total: itemTotal,
+            subtotal: productSubtotal,
+            total: productTotal,
+            has_modifiers: (newProduct.modifiers && newProduct.modifiers.length > 0) || false,
+            modifiers_total: modifiersTotal,
+            item_status: 'pending',
+            is_void: false,
           })
           .select()
           .single();
 
         if (error) {
-          console.error('Failed to add order item:', error);
+          console.error('[Edit Order] Failed to add product to order:', error);
           continue;
         }
+        
+        console.log(`[Edit Order] Created order item ID: ${orderItem.id}`);
 
-        // Reserve ingredients for new item
+        // Add modifiers to order_item_modifiers
+        if (orderItem && newProduct.modifiers && newProduct.modifiers.length > 0) {
+          const modifiersToInsert = newProduct.modifiers.map((mod: any) => ({
+            order_item_id: orderItem.id,
+            modifier_name: mod.modifier_name,
+            modifier_type: mod.modifier_type,
+            unit_price: mod.unit_price || 0,
+            quantity: mod.quantity || 1,
+          }));
+
+          await supabaseAdmin
+            .from('order_item_modifiers')
+            .insert(modifiersToInsert);
+        }
+
+        // Reserve ingredients (items) for new product
         await inventoryStockService.reserveForOrder(
           order.business_id,
           order.branch_id,
           [{
-            product_id: newItem.product_id,
-            variant_id: newItem.variant_id,
-            quantity: newItem.quantity,
-            product_name: newItem.product_name || product.name,
+            product_id: productId,
+            variant_id: variantId || undefined,
+            quantity: newProduct.quantity,
+            product_name: newProduct.product_name || product.name,
+            modifiers: newProduct.modifiers,
           }],
           orderId,
           editedBy
@@ -1969,22 +2052,128 @@ export class POSService {
 
         // Log timeline
         await orderTimelineService.logItemAdded(orderId, {
-          product_id: newItem.product_id || 0,
-          product_name: newItem.product_name || product.name,
-          quantity: newItem.quantity,
+          product_id: productId,
+          product_name: newProduct.product_name || product.name,
+          quantity: newProduct.quantity,
           unit_price: unitPrice,
-          variant_id: newItem.variant_id,
+          variant_id: variantId || undefined,
+          variant_name: variantName,
+          modifiers: newProduct.modifiers,
         }, editedBy);
+        
+        console.log(`[Edit Order] Successfully added product ${product.name} to order ${orderId}`);
       }
     }
 
-    // Handle item modifications (quantity changes and modifier changes)
-    if (updates.items_to_modify && updates.items_to_modify.length > 0) {
-      for (const mod of updates.items_to_modify) {
+    // ==================== MODIFY PRODUCTS ====================
+    // Modify existing products: change variant, quantity, or modifiers (extras/removals of items)
+    if (updates.products_to_modify && updates.products_to_modify.length > 0) {
+      for (const mod of updates.products_to_modify) {
         const orderItem = orderItems.find((oi: any) => oi.id === mod.order_item_id);
         if (!orderItem) continue;
 
-        // Handle quantity changes
+        // ========== VARIANT CHANGE ==========
+        // Change product variant (e.g., Original Burger → Spicy Burger)
+        if (mod.variant_id !== undefined && mod.variant_id !== orderItem.variant_id) {
+          const oldVariantId = orderItem.variant_id;
+          const newVariantId = mod.variant_id;
+          const quantity = orderItem.quantity;
+
+          // Calculate old variant ingredients (to be released/cancelled)
+          const oldIngredients = await inventoryStockService.calculateOrderIngredients(
+            order.business_id,
+            [{
+              product_id: orderItem.product_id,
+              variant_id: oldVariantId,
+              quantity: quantity,
+              product_name: orderItem.product_name,
+            }]
+          );
+
+          // Add old variant ingredients to cancellation queue for kitchen decision
+          for (const ing of oldIngredients) {
+            await supabaseAdmin
+              .from('cancelled_order_items')
+              .insert({
+                order_id: orderId,
+                order_item_id: mod.order_item_id,
+                item_id: ing.item_id,
+                product_id: ing.product_id,
+                product_name: `${orderItem.product_name} (Variant Changed)`,
+                quantity: ing.quantity_in_storage,
+                unit: ing.storage_unit,
+                decision: null,
+                cancellation_source: 'order_edited',
+                pos_session_id: (order as any).pos_session_id || null,
+              });
+          }
+
+          // Reserve new variant ingredients
+          await inventoryStockService.reserveForOrder(
+            order.business_id,
+            order.branch_id,
+            [{
+              product_id: orderItem.product_id,
+              variant_id: newVariantId,
+              quantity: quantity,
+              product_name: orderItem.product_name,
+            }],
+            orderId,
+            editedBy
+          );
+
+          // Get new variant details for price update
+          const { data: newVariant } = await supabaseAdmin
+            .from('product_variants')
+            .select('name, name_ar, price_adjustment')
+            .eq('id', newVariantId)
+            .single();
+
+          // Get base product price
+          const { data: product } = await supabaseAdmin
+            .from('products')
+            .select('price')
+            .eq('id', orderItem.product_id)
+            .single();
+
+          const newPrice = (product?.price || 0) + (newVariant?.price_adjustment || 0);
+          const oldPrice = parseFloat(String(orderItem.unit_price || 0));
+          const priceChange = (newPrice - oldPrice) * quantity;
+          totalChange += priceChange;
+
+          // Update order item with new variant
+          await supabaseAdmin
+            .from('order_items')
+            .update({
+              variant_id: newVariantId,
+              unit_price: newPrice,
+              subtotal: newPrice * quantity,
+              total: newPrice * quantity,
+            })
+            .eq('id', mod.order_item_id);
+
+          // Get old variant name for logging
+          const { data: oldVariant } = await supabaseAdmin
+            .from('product_variants')
+            .select('name')
+            .eq('id', oldVariantId)
+            .single();
+
+          // Log timeline
+          await orderTimelineService.logItemModified(orderId, {
+            product_id: orderItem.product_id!,
+            product_name: orderItem.product_name,
+            changes: [{
+              field: 'variant',
+              from: oldVariant?.name || 'Unknown',
+              to: newVariant?.name || 'Unknown',
+            }],
+            price_difference: priceChange,
+          }, editedBy);
+        }
+
+        // ========== QUANTITY CHANGE ==========
+        // Change product quantity (e.g., 1x Burger → 2x Burger)
         if (mod.quantity !== undefined && mod.quantity !== orderItem.quantity) {
           const qtyDiff = mod.quantity - orderItem.quantity;
           const unitPrice = parseFloat(String(orderItem.unit_price || 0));
@@ -2017,21 +2206,11 @@ export class POSService {
               }]
             );
 
-            // IMMEDIATELY release reservations for reduced quantity
-            await inventoryStockService.releaseReservation(
-              order.business_id,
-              order.branch_id,
-              ingredients.map(ing => ({
-                item_id: ing.item_id,
-                quantity_in_storage: ing.quantity_in_storage,
-                item_name: ing.item_name,
-              })),
-              orderId,
-              editedBy,
-              `Quantity reduced in order #${orderId}`
-            );
+            // DO NOT release reservations here - keep items locked
+            // Kitchen will release reservations when they decide waste vs return
+            // This prevents overselling while kitchen decides
 
-            // Create cancellation entries for kitchen to decide waste vs no-action
+            // Create cancellation entries for kitchen to decide waste vs return
             for (const ing of ingredients) {
               await supabaseAdmin
                 .from('cancelled_order_items')
@@ -2044,6 +2223,8 @@ export class POSService {
                   quantity: ing.quantity_in_storage,
                   unit: ing.storage_unit,
                   decision: null,
+                  cancellation_source: 'order_edited',
+                  pos_session_id: (order as any).pos_session_id || null,
                 });
             }
           }
@@ -2071,7 +2252,8 @@ export class POSService {
           }, editedBy);
         }
 
-        // Handle modifier changes
+        // ========== MODIFIER CHANGES ==========
+        // Add/remove items (ingredients) within product (e.g., Extra Cheese, No Onions)
         if (mod.modifiers !== undefined) {
           // Get current modifiers for this item
           const { data: currentModifiers } = await supabaseAdmin
@@ -2096,6 +2278,11 @@ export class POSService {
           let newModifiersTotal = 0;
           const modifierNames: string[] = [];
           
+          // Track which removals existed before (to only create cancelled items for NEW removals)
+          const existingRemovalNames = currentMods
+            .filter((m: any) => m.modifier_type === 'removal')
+            .map((m: any) => m.modifier_name?.toLowerCase());
+          
           for (const newMod of mod.modifiers) {
             const modTotal = (newMod.unit_price || 0) * (newMod.quantity || 1);
             
@@ -2115,6 +2302,73 @@ export class POSService {
               modifierNames.push(`+${newMod.modifier_name}`);
             } else if (newMod.modifier_type === 'removal') {
               modifierNames.push(`No ${newMod.modifier_name}`);
+              
+              // Check if this is a NEW removal (not an existing one)
+              const isNewRemoval = !existingRemovalNames.includes(newMod.modifier_name?.toLowerCase());
+              
+              if (isNewRemoval) {
+                // This is a NEW removal - need to track for kitchen decision
+                // Look up the item_id from product_ingredients table (where removables are configured)
+                let itemId = newMod.item_id;
+                let itemUnit = newMod.unit || 'unit';
+                let removalQuantity = newMod.quantity || 1;
+                
+                if (!itemId) {
+                  // Try to find the item from product_ingredients (where removable items have removable=true)
+                  const { data: ingredients } = await supabaseAdmin
+                    .from('product_ingredients')
+                    .select('item_id, quantity, removable, items!inner(name, storage_unit)')
+                    .eq('product_id', orderItem.product_id)
+                    .eq('removable', true);
+                  
+                  // Find matching ingredient by name (case-insensitive)
+                  const matchingIngredient = ingredients?.find((ing: any) => 
+                    ing.items?.name?.toLowerCase() === newMod.modifier_name?.toLowerCase()
+                  );
+                  
+                  if (matchingIngredient?.item_id) {
+                    itemId = matchingIngredient.item_id;
+                    removalQuantity = parseFloat(String(matchingIngredient.quantity || 1));
+                    itemUnit = (matchingIngredient.items as any)?.storage_unit || 'unit';
+                  } else {
+                    // Fallback: Try product_modifiers table
+                    const { data: modifier } = await supabaseAdmin
+                      .from('product_modifiers')
+                      .select('item_id, quantity, items(storage_unit)')
+                      .eq('product_id', orderItem.product_id)
+                      .ilike('name', newMod.modifier_name)
+                      .single();
+                    
+                    if (modifier?.item_id) {
+                      itemId = modifier.item_id;
+                      removalQuantity = parseFloat(String(modifier.quantity || 1));
+                      itemUnit = (modifier.items as any)?.storage_unit || 'unit';
+                    }
+                  }
+                }
+                
+                if (itemId) {
+                  // Create cancelled_order_items entry for kitchen decision
+                  await supabaseAdmin
+                    .from('cancelled_order_items')
+                    .insert({
+                      order_id: orderId,
+                      order_item_id: mod.order_item_id,
+                      item_id: itemId,
+                      product_id: orderItem.product_id,
+                      product_name: `${orderItem.product_name} - No ${newMod.modifier_name}`,
+                      quantity: removalQuantity * (orderItem.quantity || 1), // Multiply by order item quantity
+                      unit: itemUnit,
+                      decision: null,
+                      cancellation_source: 'order_edited',
+                      pos_session_id: (order as any).pos_session_id || null,
+                    });
+                    
+                  console.log(`[Edit Order] Created cancelled item for removal: ${newMod.modifier_name} (item_id: ${itemId})`);
+                } else {
+                  console.warn(`[Edit Order] Could not find item_id for removal: ${newMod.modifier_name}`);
+                }
+              }
             }
           }
 
@@ -2200,8 +2454,13 @@ export class POSService {
 
   /**
    * Get cancelled order items pending kitchen decision
+   * Optionally filter by cancellation_source: 'order_cancelled' or 'order_edited'
    */
-  async getCancelledItemsPendingDecision(businessId: number, branchId?: number): Promise<any[]> {
+  async getCancelledItemsPendingDecision(
+    businessId: number, 
+    branchId?: number,
+    source?: 'order_cancelled' | 'order_edited'
+  ): Promise<any[]> {
     let query = supabaseAdmin
       .from('cancelled_order_items')
       .select(`
@@ -2229,6 +2488,11 @@ export class POSService {
       query = query.eq('orders.branch_id', branchId);
     }
 
+    // Filter by cancellation source if provided
+    if (source) {
+      query = query.eq('cancellation_source', source);
+    }
+
     const { data, error } = await query.order('created_at', { ascending: true });
 
     if (error) {
@@ -2242,6 +2506,7 @@ export class POSService {
   /**
    * Process waste/return decisions from kitchen
    * Kitchen decides for each cancelled/removed item whether it's waste or can return to inventory
+   * NOW: Reservations are still locked - we release them here based on decision
    */
   async processWasteDecisions(
     decisions: Array<{
@@ -2274,12 +2539,30 @@ export class POSService {
           continue;
         }
 
+        // Skip if already decided
+        if (cancelledItem.decision) {
+          errors.push(`Cancelled item ${cancelled_item_id} already has decision: ${cancelledItem.decision}`);
+          continue;
+        }
+
         const orderInfo = cancelledItem.orders as any;
 
+        // Get current stock info for transaction logging
+        const { data: stockInfo } = await supabaseAdmin
+          .from('inventory_stock')
+          .select('quantity, storage_unit, cost_per_unit')
+          .eq('business_id', orderInfo.business_id)
+          .eq('item_id', cancelledItem.item_id)
+          .eq('branch_id', orderInfo.branch_id)
+          .single();
+
+        const quantityBefore = stockInfo?.quantity || 0;
+
         if (decision === 'waste') {
-          // Process as waste - only deduct from actual quantity
-          // (reservation was already released when order/item was cancelled)
-          await inventoryStockService.deductWasteOnly(
+          // Process as waste:
+          // 1. Release reservation (decrease reserved_quantity)
+          // 2. Deduct from actual stock (decrease quantity)
+          await inventoryStockService.releaseAndDeductWaste(
             orderInfo.business_id,
             orderInfo.branch_id,
             [{
@@ -2289,30 +2572,88 @@ export class POSService {
             }],
             cancelledItem.order_id,
             decidedBy,
-            'Marked as waste by kitchen'
+            'Marked as waste by kitchen - reservation released + stock deducted'
           );
 
-          // Log timeline
+          // Log to inventory transactions (for timeline display)
+          await inventoryTransactionService.recordTransaction({
+            business_id: orderInfo.business_id,
+            branch_id: orderInfo.branch_id,
+            item_id: cancelledItem.item_id,
+            transaction_type: 'order_cancel_waste',
+            quantity: cancelledItem.quantity,
+            unit: cancelledItem.unit || stockInfo?.storage_unit || 'units',
+            reference_type: 'order',
+            reference_id: cancelledItem.order_id.toString(),
+            notes: `Waste from cancelled/edited order - ${cancelledItem.product_name || 'Item'}`,
+            performed_by: decidedBy,
+            quantity_before: quantityBefore,
+            quantity_after: quantityBefore - cancelledItem.quantity,
+            cost_per_unit_at_time: stockInfo?.cost_per_unit,
+          });
+
+          // Log order timeline
           await orderTimelineService.logIngredientWasted(cancelledItem.order_id, {
             item_id: cancelledItem.item_id,
             item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
             quantity: cancelledItem.quantity,
             unit: cancelledItem.unit || 'units',
-            reason: 'Marked as waste by kitchen',
+            reason: 'Marked as waste by kitchen - reservation released + stock deducted',
           }, decidedBy);
 
         } else {
-          // Process as return - no action needed
-          // Reservation was already released when order/item was cancelled
-          // Actual stock quantity doesn't need to change (items weren't used)
+          // Process as return:
+          // For items from EDITED orders: defer inventory action until order completion
+          // For items from CANCELLED orders: process immediately (order is already done)
+          const isFromEditedOrder = cancelledItem.cancellation_source === 'order_edited';
+          
+          if (isFromEditedOrder) {
+            // DEFER: Just save the decision, inventory will be processed when order completes
+            // Don't release reservation yet - order is still in progress
+            console.log(`[Waste Decision] Deferring return for edited order item ${cancelled_item_id} - will process on order completion`);
+          } else {
+            // IMMEDIATE: Order is already cancelled, process the return now
+            // 1. Release reservation ONLY (decrease reserved_quantity)
+            // 2. DO NOT touch actual stock (items weren't used)
+            await inventoryStockService.releaseReservation(
+              orderInfo.business_id,
+              orderInfo.branch_id,
+              [{
+                item_id: cancelledItem.item_id,
+                quantity_in_storage: cancelledItem.quantity,
+                item_name: cancelledItem.product_name,
+              }],
+              cancelledItem.order_id,
+              decidedBy,
+              'Marked as return by kitchen - reservation released, stock unchanged'
+            );
 
-          // Log timeline for audit
-          await orderTimelineService.logIngredientReturned(cancelledItem.order_id, {
-            item_id: cancelledItem.item_id,
-            item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
-            quantity: cancelledItem.quantity,
-            unit: cancelledItem.unit || 'units',
-          }, decidedBy);
+            // Log to inventory transactions (for timeline display)
+            // For returns, quantity stays same but we log it for visibility
+            await inventoryTransactionService.recordTransaction({
+              business_id: orderInfo.business_id,
+              branch_id: orderInfo.branch_id,
+              item_id: cancelledItem.item_id,
+              transaction_type: 'order_cancel_return',
+              quantity: cancelledItem.quantity,
+              unit: cancelledItem.unit || stockInfo?.storage_unit || 'units',
+              reference_type: 'order',
+              reference_id: cancelledItem.order_id.toString(),
+              notes: `Returned to inventory from cancelled order - ${cancelledItem.product_name || 'Item'}`,
+              performed_by: decidedBy,
+              quantity_before: quantityBefore,
+              quantity_after: quantityBefore, // Stock unchanged for returns
+              cost_per_unit_at_time: stockInfo?.cost_per_unit,
+            });
+
+            // Log order timeline for audit
+            await orderTimelineService.logIngredientReturned(cancelledItem.order_id, {
+              item_id: cancelledItem.item_id,
+              item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
+              quantity: cancelledItem.quantity,
+              unit: cancelledItem.unit || 'units',
+            }, decidedBy);
+          }
         }
 
         // Update the cancelled item record
@@ -2336,6 +2677,116 @@ export class POSService {
   }
 
   /**
+   * Process pending returns for an order when it's completed
+   * Called when an edited order is completed - processes any items marked as 'return'
+   * that were deferred during the edit
+   */
+  async processPendingReturnsForOrder(
+    orderId: number, 
+    businessId: number, 
+    branchId: number | undefined,
+    completedBy: number
+  ): Promise<{ processed: number; errors: string[] }> {
+    const errors: string[] = [];
+    let processed = 0;
+
+    // Get all cancelled items for this order that were:
+    // 1. From order edits (cancellation_source = 'order_edited')
+    // 2. Marked as 'return' (decision = 'return')
+    // 3. Not yet processed (we'll add a processed_at field check if needed)
+    const { data: pendingReturns, error: fetchError } = await supabaseAdmin
+      .from('cancelled_order_items')
+      .select('*')
+      .eq('order_id', orderId)
+      .eq('cancellation_source', 'order_edited')
+      .eq('decision', 'return');
+
+    if (fetchError) {
+      console.error(`[Pending Returns] Failed to fetch returns for order ${orderId}:`, fetchError);
+      return { processed: 0, errors: [`Failed to fetch pending returns: ${fetchError.message}`] };
+    }
+
+    if (!pendingReturns || pendingReturns.length === 0) {
+      console.log(`[Pending Returns] No pending returns for order ${orderId}`);
+      return { processed: 0, errors: [] };
+    }
+
+    console.log(`[Pending Returns] Processing ${pendingReturns.length} returns for order ${orderId}`);
+
+    for (const cancelledItem of pendingReturns) {
+      try {
+        // Get current stock info for transaction logging
+        const { data: stockInfo } = await supabaseAdmin
+          .from('inventory_stock')
+          .select('quantity, storage_unit, cost_per_unit')
+          .eq('business_id', businessId)
+          .eq('item_id', cancelledItem.item_id)
+          .eq('branch_id', branchId)
+          .single();
+
+        const quantityBefore = stockInfo?.quantity || 0;
+
+        // Release reservation - these items weren't used
+        await inventoryStockService.releaseReservation(
+          businessId,
+          branchId,
+          [{
+            item_id: cancelledItem.item_id,
+            quantity_in_storage: cancelledItem.quantity,
+            item_name: cancelledItem.product_name,
+          }],
+          orderId,
+          completedBy,
+          'Returned on order completion - reservation released, stock unchanged'
+        );
+
+        // Log to inventory transactions (for timeline display)
+        await inventoryTransactionService.recordTransaction({
+          business_id: businessId,
+          branch_id: branchId,
+          item_id: cancelledItem.item_id,
+          transaction_type: 'order_cancel_return',
+          quantity: cancelledItem.quantity,
+          unit: cancelledItem.unit || stockInfo?.storage_unit || 'units',
+          reference_type: 'order',
+          reference_id: orderId.toString(),
+          notes: `Returned to inventory from edited order (on completion) - ${cancelledItem.product_name || 'Item'}`,
+          performed_by: completedBy,
+          quantity_before: quantityBefore,
+          quantity_after: quantityBefore, // Stock unchanged for returns
+          cost_per_unit_at_time: stockInfo?.cost_per_unit,
+        });
+
+        // Log order timeline for audit
+        await orderTimelineService.logIngredientReturned(orderId, {
+          item_id: cancelledItem.item_id,
+          item_name: cancelledItem.product_name || `Item ${cancelledItem.item_id}`,
+          quantity: cancelledItem.quantity,
+          unit: cancelledItem.unit || 'units',
+        }, completedBy);
+
+        // Mark as processed (update decided_at to now if not set)
+        await supabaseAdmin
+          .from('cancelled_order_items')
+          .update({
+            decided_at: cancelledItem.decided_at || new Date().toISOString(),
+          })
+          .eq('id', cancelledItem.id);
+
+        processed++;
+        console.log(`[Pending Returns] Processed return for item ${cancelledItem.item_id} in order ${orderId}`);
+
+      } catch (err: any) {
+        errors.push(`Failed to process return for item ${cancelledItem.item_id}: ${err.message}`);
+        console.error(`[Pending Returns] Error processing item ${cancelledItem.item_id}:`, err);
+      }
+    }
+
+    console.log(`[Pending Returns] Completed: ${processed} processed, ${errors.length} errors for order ${orderId}`);
+    return { processed, errors };
+  }
+
+  /**
    * Get order timeline
    */
   async getOrderTimeline(orderId: number): Promise<any[]> {
@@ -2343,20 +2794,18 @@ export class POSService {
   }
 
   /**
-   * Auto-expire cancelled items older than 24 hours
-   * Marks all pending decisions as 'waste' automatically
-   * Should be called by a scheduled job (cron)
+   * Auto-expire cancelled items
+   * Triggered by:
+   * 1. Items older than 24 hours (scheduled job)
+   * 2. Items from a specific POS session when session closes
+   * 
+   * NOW: Releases reservations before deducting stock
    */
-  async autoExpireCancelledItems(): Promise<{ expired: number; errors: string[] }> {
+  async autoExpireCancelledItems(sessionId?: number): Promise<{ expired: number; errors: string[] }> {
     const errors: string[] = [];
     let expired = 0;
 
-    // Calculate 24 hours ago
-    const twentyFourHoursAgo = new Date();
-    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
-    // Find all cancelled items older than 24 hours with no decision
-    const { data: expiredItems, error: fetchError } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('cancelled_order_items')
       .select(`
         *,
@@ -2366,8 +2815,21 @@ export class POSService {
           branch_id
         )
       `)
-      .is('decision', null)
-      .lt('created_at', twentyFourHoursAgo.toISOString());
+      .is('decision', null);
+
+    if (sessionId) {
+      // Session-based expiry: expire all items from this specific session
+      console.log(`[Auto-Expire] Processing items for session ${sessionId}`);
+      query = query.eq('pos_session_id', sessionId);
+    } else {
+      // Time-based expiry: expire items older than 24 hours
+      const twentyFourHoursAgo = new Date();
+      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      console.log(`[Auto-Expire] Processing items older than ${twentyFourHoursAgo.toISOString()}`);
+      query = query.lt('created_at', twentyFourHoursAgo.toISOString());
+    }
+
+    const { data: expiredItems, error: fetchError } = await query;
 
     if (fetchError) {
       console.error('Failed to fetch expired cancelled items:', fetchError);
@@ -2375,7 +2837,7 @@ export class POSService {
     }
 
     if (!expiredItems || expiredItems.length === 0) {
-      console.log('[Auto-Expire] No expired cancelled items found');
+      console.log('[Auto-Expire] No items to auto-expire');
       return { expired: 0, errors: [] };
     }
 
@@ -2385,9 +2847,14 @@ export class POSService {
     for (const item of expiredItems) {
       try {
         const orderInfo = item.orders as any;
+        const expiryReason = sessionId 
+          ? `Auto-expired as waste on POS session close (session ${sessionId})`
+          : 'Auto-expired as waste after 24 hours (no kitchen decision)';
 
-        // Process as waste - deduct from actual quantity
-        await inventoryStockService.deductWasteOnly(
+        // Process as waste:
+        // 1. Release reservation (decrease reserved_quantity)
+        // 2. Deduct from actual stock (decrease quantity)
+        await inventoryStockService.releaseAndDeductWaste(
           orderInfo.business_id,
           orderInfo.branch_id,
           [{
@@ -2397,7 +2864,7 @@ export class POSService {
           }],
           item.order_id,
           undefined, // No user - auto-expired
-          'Auto-expired as waste after 24 hours'
+          expiryReason
         );
 
         // Log timeline
@@ -2406,7 +2873,7 @@ export class POSService {
           item_name: item.product_name || `Item ${item.item_id}`,
           quantity: item.quantity,
           unit: item.unit || 'units',
-          reason: 'Auto-expired as waste after 24 hours (no kitchen decision)',
+          reason: expiryReason,
         }, undefined);
 
         // Update the cancelled item record

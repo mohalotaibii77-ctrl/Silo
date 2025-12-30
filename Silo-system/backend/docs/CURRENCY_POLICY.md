@@ -416,3 +416,4 @@ This architecture eliminates currency-related bugs and ensures data consistency 
 **Migration**: `049_enforce_currency_required.sql`  
 **Version**: 1.0
 
+

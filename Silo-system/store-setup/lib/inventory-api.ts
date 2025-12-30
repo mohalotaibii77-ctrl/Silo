@@ -662,7 +662,8 @@ export type TransactionType =
   | 'production_consume'
   | 'production_yield'
   | 'inventory_count_adjustment'
-  | 'order_void_return';
+  | 'order_cancel_waste'
+  | 'order_cancel_return';
 
 export type DeductionReason = 'expired' | 'damaged' | 'spoiled' | 'others';
 

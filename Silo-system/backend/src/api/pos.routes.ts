@@ -600,18 +600,19 @@ router.post('/orders/:orderId/pickup', requireBusinessAccess, requirePOSAccess, 
  */
 router.post('/orders/:orderId/cancel', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { reason } = req.body;
+  const { reason, pos_session_id } = req.body;
 
   const order = await posService.cancelOrder(
     parseInt(orderId),
     parseInt(req.user!.userId),
-    reason
+    reason,
+    pos_session_id ? parseInt(pos_session_id) : undefined
   );
 
   res.json({
     success: true,
     data: order,
-    message: 'Order cancelled',
+    message: 'Order cancelled - items reserved pending kitchen decision',
   });
 }));
 
@@ -652,32 +653,6 @@ router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(asyn
   });
 }));
 
-/**
- * POST /api/pos/orders/:orderId/void
- * Void an order
- */
-router.post('/orders/:orderId/void', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const { orderId } = req.params;
-  const { reason } = req.body;
-
-  if (!reason) {
-    return res.status(400).json({
-      success: false,
-      error: 'Reason is required to void an order',
-    });
-  }
-
-  const order = await posService.voidOrder(
-    parseInt(orderId),
-    reason,
-    parseInt(req.user!.userId)
-  );
-
-  res.json({
-    success: true,
-    data: order,
-  });
-}));
 
 /**
  * POST /api/pos/orders/:orderId/refund
@@ -807,29 +782,50 @@ router.post('/calculate-delivery-margin', requireBusinessAccess, asyncHandler(as
 
 /**
  * PATCH /api/pos/orders/:orderId/edit
- * Edit order items (POS orders only)
- * Can add items, remove items, or modify quantities
+ * Edit order (POS orders only)
+ * 
+ * TERMINOLOGY CLARIFICATION:
+ * - PRODUCTS = Menu items (Burger, Pizza) - use products_to_add/remove/modify
+ * - ITEMS = Raw ingredients (beef, cheese) - use modifiers within products_to_modify
+ * 
+ * Can:
+ * - Add entire products (products_to_add)
+ * - Remove entire products (products_to_remove)
+ * - Modify products: change variant, quantity, or modifiers (products_to_modify)
+ * 
+ * Note: Also accepts legacy parameter names (items_to_*) for backward compatibility
  * 
  * ACCESS: POS operators, cashiers, and owners only
  */
 router.patch('/orders/:orderId/edit', requireBusinessAccess, requirePOSAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { items_to_add, items_to_remove, items_to_modify } = req.body;
+  
+  // Support both new names (products_*) and legacy names (items_*) for backward compatibility
+  const { 
+    products_to_add, items_to_add,
+    products_to_remove, items_to_remove,
+    products_to_modify, items_to_modify 
+  } = req.body;
+
+  // Use new names if provided, otherwise fall back to legacy names
+  const productsToAdd = products_to_add || items_to_add;
+  const productsToRemove = products_to_remove || items_to_remove;
+  const productsToModify = products_to_modify || items_to_modify;
 
   // Must have at least one edit operation
-  if (!items_to_add?.length && !items_to_remove?.length && !items_to_modify?.length) {
+  if (!productsToAdd?.length && !productsToRemove?.length && !productsToModify?.length) {
     return res.status(400).json({
       success: false,
-      error: 'At least one edit operation is required (items_to_add, items_to_remove, or items_to_modify)',
+      error: 'At least one edit operation is required (products_to_add, products_to_remove, or products_to_modify)',
     });
   }
 
   const order = await posService.editOrder(
     parseInt(orderId),
     {
-      items_to_add,
-      items_to_remove,
-      items_to_modify,
+      products_to_add: productsToAdd,
+      products_to_remove: productsToRemove,
+      products_to_modify: productsToModify,
     },
     parseInt(req.user!.userId)
   );
@@ -912,13 +908,23 @@ router.get('/kitchen/orders', requireBusinessAccess, asyncHandler(async (req, re
 /**
  * GET /api/pos/kitchen/cancelled-items
  * Get cancelled order items awaiting kitchen decision (waste vs return)
+ * Optional filter by source: 'order_cancelled' or 'order_edited'
  */
 router.get('/kitchen/cancelled-items', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const { branch_id } = req.query;
+  const { branch_id, source } = req.query;
+
+  // Validate source if provided
+  if (source && !['order_cancelled', 'order_edited'].includes(source as string)) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid source. Must be "order_cancelled" or "order_edited"',
+    });
+  }
 
   const items = await posService.getCancelledItemsPendingDecision(
     parseInt(req.user!.businessId),
-    branch_id ? parseInt(branch_id as string) : undefined
+    branch_id ? parseInt(branch_id as string) : undefined,
+    source as 'order_cancelled' | 'order_edited' | undefined
   );
 
   res.json({

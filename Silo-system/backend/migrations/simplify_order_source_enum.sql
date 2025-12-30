@@ -74,3 +74,4 @@ COMMENT ON COLUMN orders.order_source IS
 'Where the order originated: pos (POS terminal), api (external delivery partner API), phone, website, mobile_app, walk_in, other. Specific delivery partner identified by delivery_partner_id.';
 
 
+

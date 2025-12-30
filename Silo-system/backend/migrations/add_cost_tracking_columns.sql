@@ -58,3 +58,4 @@ COMMENT ON COLUMN items.last_purchase_date IS 'Date of last purchase';
 
 
 
+

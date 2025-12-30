@@ -42,3 +42,4 @@ ALTER TABLE business_change_requests
 ADD COLUMN IF NOT EXISTS requester_notes TEXT;
 
 
+

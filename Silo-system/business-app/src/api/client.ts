@@ -1,6 +1,7 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 /**
  * Backend API URL Configuration
@@ -22,6 +23,17 @@ const getApiBase = () => {
   // First check environment variable
   if (process.env.EXPO_PUBLIC_API_URL) {
     return process.env.EXPO_PUBLIC_API_URL;
+  }
+  // On web, default to the same host as the current page (avoids LAN IP issues)
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    const protocol = window.location.protocol || 'http:';
+    // Expo web dev runs on localhost; backend is on the same machine
+    if (host === 'localhost' || host === '127.0.0.1') {
+      return 'http://localhost:9000';
+    }
+    // If user opened the web app via LAN IP, use that same LAN host for the backend
+    return `${protocol}//${host}:9000`;
   }
   // Then check app.json config
   if (Constants.expoConfig?.extra?.apiUrl) {

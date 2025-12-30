@@ -39,7 +39,9 @@ import {
   History,
   ArrowUpCircle,
   ArrowDownCircle,
-  Calendar
+  Calendar,
+  Trash2,
+  RotateCcw
 } from 'lucide-react-native';
 
 // Types
@@ -109,6 +111,8 @@ type TransactionType =
   | 'production_consume'
   | 'production_yield'
   | 'inventory_count_adjustment'
+  | 'order_cancel_waste'
+  | 'order_cancel_return'
   | 'order_void_return';
 
 type DeductionReason = 'expired' | 'damaged' | 'spoiled' | 'others';
@@ -914,6 +918,8 @@ export default function InventoryScreen({ navigation }: any) {
       case 'manual_deduction': return <ArrowDownCircle size={16} color="#ef4444" />;
       case 'po_receive': return <Package size={16} color="#3b82f6" />;
       case 'order_sale': return <Minus size={16} color="#f97316" />;
+      case 'order_cancel_waste': return <Trash2 size={16} color="#ef4444" />;
+      case 'order_cancel_return': return <RotateCcw size={16} color="#10b981" />;
       case 'transfer_in': return <ArrowRight size={16} color="#10b981" />;
       case 'transfer_out': return <ArrowLeftRight size={16} color="#f59e0b" />;
       case 'production_consume': return <Minus size={16} color="#8b5cf6" />;
@@ -927,13 +933,14 @@ export default function InventoryScreen({ navigation }: any) {
       'manual_addition': { en: 'Added', ar: 'إضافة' },
       'manual_deduction': { en: 'Deducted', ar: 'خصم' },
       'po_receive': { en: 'PO Received', ar: 'استلام PO' },
-      'order_sale': { en: 'Sold', ar: 'بيع' },
+      'order_sale': { en: 'Order Sale', ar: 'بيع طلب' },
+      'order_cancel_waste': { en: 'Waste', ar: 'هدر' },
+      'order_cancel_return': { en: 'Returned', ar: 'مرتجع' },
       'transfer_in': { en: 'Transfer In', ar: 'تحويل وارد' },
       'transfer_out': { en: 'Transfer Out', ar: 'تحويل صادر' },
       'production_consume': { en: 'Production', ar: 'إنتاج' },
       'production_yield': { en: 'Produced', ar: 'منتج' },
       'inventory_count_adjustment': { en: 'Count', ar: 'جرد' },
-      'order_void_return': { en: 'Return', ar: 'إرجاع' },
     };
     return language === 'ar' ? labels[type]?.ar : labels[type]?.en;
   };
@@ -949,7 +956,8 @@ export default function InventoryScreen({ navigation }: any) {
   };
 
   const isAdditionType = (type: TransactionType) => {
-    return ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_void_return'].includes(type);
+    // order_cancel_return means items returned to inventory (positive)
+    return ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_cancel_return'].includes(type);
   };
 
   const renderTimelineContent = () => {

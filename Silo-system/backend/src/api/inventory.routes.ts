@@ -797,4 +797,19 @@ router.post('/migrate-to-own-items', authenticateBusiness, asyncHandler(async (r
   });
 }));
 
+/**
+ * POST /api/inventory/cleanup-orphaned-stock
+ * Clean up stock records that reference system items instead of business items
+ * This removes duplicate/orphaned entries from inventory_stock
+ */
+router.post('/cleanup-orphaned-stock', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const result = await inventoryService.cleanupOrphanedStockRecords(req.businessUser!.business_id);
+
+  res.json({
+    success: true,
+    message: `Cleanup completed: ${result.deleted} orphaned stock records deleted`,
+    data: result,
+  });
+}));
+
 export default router;

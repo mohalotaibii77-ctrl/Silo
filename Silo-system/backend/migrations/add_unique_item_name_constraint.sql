@@ -78,3 +78,4 @@ COMMENT ON INDEX idx_items_unique_system_name IS 'Ensures unique item names amon
 COMMENT ON INDEX idx_items_unique_business_name IS 'Ensures unique item names within each business (case-insensitive)';
 
 
+

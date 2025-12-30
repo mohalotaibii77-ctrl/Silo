@@ -108,11 +108,12 @@ export function EditItemModal({
   onSuccess, 
   currency 
 }: EditItemModalProps) {
+  const { getCurrencySymbol } = useConfig();
   const { isRTL, t, currency: contextCurrency } = useLanguage();
   // Use passed currency or fall back to context currency (from business settings)
   const activeCurrency = currency || contextCurrency;
   // Get symbol from backend config (centralized source of truth)
-  const currencySymbol = getCurrencySymbol(activeCurrency);
+  const currencySymbol = getCurrencySymbol(activeCurrency || '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [availableItems, setAvailableItems] = useState<Item[]>([]);

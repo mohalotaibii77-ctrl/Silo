@@ -484,30 +484,32 @@ export class InventoryStockService {
   }): Promise<InventoryStock[] | { data: InventoryStock[]; total: number }> {
     const { page, limit, lowStock } = filters || {};
     
-    // For lowStock filter with pagination, we need to filter at DB level
-    // to get accurate counts. Use a raw filter approach.
+    // ENFORCEMENT: Stock levels are always filtered by business AND branch
+    // - items!inner ensures we only get stock for items that exist and belong to this business
+    // - inventory_stock.business_id must match the business
+    // - When branch is specified, inventory_stock.branch_id must match
     let query = supabaseAdmin
       .from('inventory_stock')
       .select(`
         *,
-        items (id, name, name_ar, unit, storage_unit, category, sku),
+        items!inner (id, name, name_ar, unit, storage_unit, category, sku, business_id),
         branches (id, name, name_ar)
       `, { count: page && limit ? 'exact' : undefined })
-      .eq('business_id', businessId);
+      .eq('business_id', businessId)
+      // CRITICAL: Only show stock for items owned by THIS business
+      // This filters out any stock records that reference system items (business_id IS NULL)
+      // or items belonging to other businesses
+      .eq('items.business_id', businessId);
 
-    // When specific branch is requested, only show that branch's stock
+    // ENFORCEMENT: When branch is specified, ONLY show stock for that specific branch
+    // This ensures branch-level isolation - each branch only sees their own inventory
     if (filters?.branchId) {
       query = query.eq('branch_id', filters.branchId);
     }
-    // When no branch specified, we'll fetch all and dedupe below
 
     if (filters?.itemId) {
       query = query.eq('item_id', filters.itemId);
     }
-
-    // Note: lowStock filter is applied in-memory after fetch because
-    // Supabase PostgREST doesn't support column-to-column comparison
-    // The filter will be applied after data is fetched
 
     // Apply pagination AFTER filters to get correct count
     if (page && limit) {
@@ -530,26 +532,24 @@ export class InventoryStockService {
       branches: undefined,
     })) as InventoryStock[];
 
-    // When no branch filter is provided, deduplicate by item_id
-    // This prevents the same item appearing twice when it has both branch-level and business-level stock
-    // Priority: branch-specific stock (has branch_id) over business-level stock (branch_id is null)
+    // Deduplicate by item_id when no branch filter
+    // This handles cases where the same item might have multiple stock records
+    // (e.g., business-level and branch-level stock for legacy data)
     if (!filters?.branchId) {
       const itemStockMap = new Map<number, InventoryStock>();
       for (const stock of stocks) {
         const existing = itemStockMap.get(stock.item_id);
         if (!existing) {
-          // First time seeing this item
           itemStockMap.set(stock.item_id, stock);
         } else if (stock.branch_id && !existing.branch_id) {
-          // Current has branch_id, existing doesn't - prefer branch-specific
+          // Prefer branch-specific stock over business-level stock
           itemStockMap.set(stock.item_id, stock);
         }
-        // If existing has branch_id or both are same type, keep existing (first one wins)
       }
       stocks = Array.from(itemStockMap.values());
     }
 
-    // Apply lowStock filter in-memory (Supabase can't do column-to-column comparison)
+    // Apply lowStock filter in-memory (PostgREST doesn't support column-to-column comparison)
     if (lowStock) {
       stocks = stocks.filter((s: InventoryStock) => s.quantity <= s.min_quantity);
     }
@@ -558,7 +558,7 @@ export class InventoryStockService {
     if (page && limit && count !== null) {
       return {
         data: stocks,
-        total: stocks.length, // Use filtered/deduplicated count
+        total: stocks.length,
       };
     }
 
@@ -578,16 +578,18 @@ export class InventoryStockService {
     healthy_stock_count: number;
     overstocked_count: number;
   }> {
+    // ENFORCEMENT: Same rules as getStockLevels - business AND branch filtering
     let query = supabaseAdmin
       .from('inventory_stock')
-      .select('id, item_id, branch_id, quantity, min_quantity, max_quantity')
-      .eq('business_id', businessId);
+      .select('id, item_id, branch_id, quantity, min_quantity, max_quantity, items!inner(business_id)')
+      .eq('business_id', businessId)
+      // CRITICAL: Only count stock for items owned by THIS business
+      .eq('items.business_id', businessId);
 
-    // When specific branch is requested, only count that branch's stock
+    // ENFORCEMENT: When branch is specified, only count that branch's stock
     if (branchId) {
       query = query.eq('branch_id', branchId);
     }
-    // When no branch specified, we'll fetch all and dedupe below
 
     const { data, error } = await query;
 
@@ -634,8 +636,24 @@ export class InventoryStockService {
   /**
    * Get or create stock record for an item
    * Uses upsert pattern to prevent race conditions and duplicate records
+   * ENFORCEMENT: Only creates stock for items owned by this business
    */
   async getOrCreateStock(businessId: number, itemId: number, branchId?: number): Promise<InventoryStock> {
+    // ENFORCEMENT: Verify the item belongs to this business before creating stock
+    const { data: item, error: itemError } = await supabaseAdmin
+      .from('items')
+      .select('id, business_id')
+      .eq('id', itemId)
+      .single();
+
+    if (itemError || !item) {
+      throw new Error(`Item ${itemId} not found`);
+    }
+
+    if (item.business_id !== businessId) {
+      throw new Error(`Item ${itemId} does not belong to business ${businessId}. Stock can only be created for business-owned items.`);
+    }
+
     // Build query - use .is() for null comparison since .eq() doesn't work with NULL
     let query = supabaseAdmin
       .from('inventory_stock')
@@ -783,10 +801,6 @@ export class InventoryStockService {
         case 'inventory_count':
         case 'count_adjustment':
           transactionType = 'inventory_count_adjustment';
-          break;
-        case 'void':
-        case 'return':
-          transactionType = 'order_void_return';
           break;
         case 'manual_addition':
           transactionType = 'manual_addition';
@@ -3226,6 +3240,7 @@ export class InventoryStockService {
   /**
    * Deduct from actual stock quantity ONLY (for waste when reservation already released)
    * Used when kitchen marks cancelled order items as waste after reservation was already released
+   * NOTE: This method is deprecated - use releaseAndDeductWaste() instead
    */
   async deductWasteOnly(
     businessId: number,
@@ -3270,6 +3285,63 @@ export class InventoryStockService {
           quantity_before: quantityBefore,
           quantity_after: newQuantity,
           notes: reason || `Waste from cancelled order #${orderId}`,
+          created_by: userId || null,
+        });
+    }
+  }
+
+  /**
+   * Release reservation AND deduct from actual stock (for waste decision)
+   * Used when kitchen marks cancelled order items as WASTE
+   * 1. Decreases reserved_quantity (releases the lock)
+   * 2. Decreases quantity (physical stock is wasted)
+   */
+  async releaseAndDeductWaste(
+    businessId: number,
+    branchId: number | undefined,
+    items: Array<{ item_id: number; quantity_in_storage: number; item_name?: string }>,
+    orderId: number,
+    userId?: number,
+    reason?: string
+  ): Promise<void> {
+    for (const item of items) {
+      const stock = await this.getOrCreateStock(businessId, item.item_id, branchId);
+      
+      const quantityBefore = stock.quantity;
+      const reservedBefore = stock.reserved_quantity || 0;
+      
+      // Decrease both quantity AND reserved_quantity
+      const newQuantity = Math.max(0, quantityBefore - item.quantity_in_storage);
+      const newReservedQty = Math.max(0, reservedBefore - item.quantity_in_storage);
+      
+      const { error } = await supabaseAdmin
+        .from('inventory_stock')
+        .update({
+          quantity: newQuantity,
+          reserved_quantity: newReservedQty,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', stock.id);
+
+      if (error) {
+        console.error(`Failed to release and deduct waste for item ${item.item_id}:`, error);
+        throw new Error(`Failed to release and deduct waste: ${item.item_name || item.item_id}`);
+      }
+
+      // Log the waste movement (covers both reservation release and stock deduction)
+      await supabaseAdmin
+        .from('inventory_movements')
+        .insert({
+          business_id: businessId,
+          branch_id: branchId || null,
+          item_id: item.item_id,
+          movement_type: 'sale_cancel_waste',
+          reference_type: 'order',
+          reference_id: orderId,
+          quantity: -item.quantity_in_storage,
+          quantity_before: quantityBefore,
+          quantity_after: newQuantity,
+          notes: reason || `Waste from cancelled order #${orderId} - reservation released + stock deducted`,
           created_by: userId || null,
         });
     }

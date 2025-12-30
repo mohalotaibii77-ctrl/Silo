@@ -48,3 +48,4 @@ COMMENT ON COLUMN receipt_settings.show_creator_username IS 'Whether to display 
 CREATE INDEX IF NOT EXISTS idx_receipt_settings_business_id ON receipt_settings(business_id);
 
 
+

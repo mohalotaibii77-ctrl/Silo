@@ -215,3 +215,4 @@ CREATE INDEX idx_inventory_movements_reference ON inventory_movements(reference_
 
 
 
+

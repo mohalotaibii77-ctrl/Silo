@@ -34,3 +34,4 @@ ADD CONSTRAINT businesses_currency_valid CHECK (
 -- Add comment
 COMMENT ON COLUMN businesses.currency IS 'Currency code (ISO 4217) - REQUIRED, no default. Must be set by super admin during business creation.';
 
+

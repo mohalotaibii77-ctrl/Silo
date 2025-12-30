@@ -39,3 +39,4 @@ COMMENT ON COLUMN business_change_requests.new_vat_rate IS 'New VAT rate percent
 COMMENT ON COLUMN business_change_requests.requester_notes IS 'Notes from the business explaining the change request';
 
 
+

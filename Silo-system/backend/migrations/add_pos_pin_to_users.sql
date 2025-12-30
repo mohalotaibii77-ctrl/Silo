@@ -21,3 +21,4 @@ COMMENT ON COLUMN business_users.pos_pin IS 'POS PIN code (4-6 digits) for quick
 COMMENT ON COLUMN business_users.pos_pin_hash IS 'Bcrypt hash of the POS PIN for secure verification.';
 
 
+

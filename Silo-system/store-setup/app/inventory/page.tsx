@@ -10,7 +10,7 @@ import {
   ArrowRight, Edit2, Trash2, Eye, X, Loader2,
   AlertCircle, ChevronRight, ChevronDown, RefreshCw,
   PackageCheck, AlertTriangle, TrendingUp, TrendingDown,
-  Camera, Upload, History, ArrowUpCircle, ArrowDownCircle
+  Camera, Upload, History, ArrowUpCircle, ArrowDownCircle, RotateCcw
 } from 'lucide-react';
 import { PageLayout } from '@/components/page-layout';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -761,12 +761,13 @@ function TimelineTab() {
       case 'manual_deduction': return <ArrowDownCircle className="w-4 h-4 text-red-500" />;
       case 'po_receive': return <Package className="w-4 h-4 text-blue-500" />;
       case 'order_sale': return <Minus className="w-4 h-4 text-orange-500" />;
+      case 'order_cancel_waste': return <Trash2 className="w-4 h-4 text-red-500" />;
+      case 'order_cancel_return': return <RotateCcw className="w-4 h-4 text-emerald-500" />;
       case 'transfer_in': return <ArrowRight className="w-4 h-4 text-emerald-500" />;
       case 'transfer_out': return <ArrowLeftRight className="w-4 h-4 text-amber-500" />;
       case 'production_consume': return <Minus className="w-4 h-4 text-purple-500" />;
       case 'production_yield': return <Plus className="w-4 h-4 text-purple-500" />;
       case 'inventory_count_adjustment': return <ClipboardList className="w-4 h-4 text-zinc-500" />;
-      case 'order_void_return': return <Plus className="w-4 h-4 text-zinc-500" />;
       default: return <Clock className="w-4 h-4 text-zinc-400" />;
     }
   };
@@ -777,12 +778,13 @@ function TimelineTab() {
       'manual_deduction': { en: 'Manual Deduction', ar: 'خصم يدوي' },
       'po_receive': { en: 'PO Received', ar: 'استلام أمر شراء' },
       'order_sale': { en: 'Order Sale', ar: 'بيع طلب' },
+      'order_cancel_waste': { en: 'Waste', ar: 'هدر' },
+      'order_cancel_return': { en: 'Returned', ar: 'مرتجع' },
       'transfer_in': { en: 'Transfer In', ar: 'تحويل وارد' },
       'transfer_out': { en: 'Transfer Out', ar: 'تحويل صادر' },
       'production_consume': { en: 'Production Used', ar: 'استهلاك إنتاج' },
       'production_yield': { en: 'Production Yield', ar: 'ناتج إنتاج' },
       'inventory_count_adjustment': { en: 'Count Adjustment', ar: 'تعديل جرد' },
-      'order_void_return': { en: 'Void Return', ar: 'إرجاع ملغي' },
     };
     return isRTL ? labels[type]?.ar : labels[type]?.en;
   };
@@ -798,7 +800,8 @@ function TimelineTab() {
   };
 
   const isAddition = (type: TransactionType) => {
-    return ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_void_return'].includes(type);
+    // order_cancel_return means items returned to inventory (positive)
+    return ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_cancel_return'].includes(type);
   };
 
   return (
@@ -879,6 +882,8 @@ function TimelineTab() {
           <option value="manual_deduction">{t('Manual Deduction', 'خصم يدوي')}</option>
           <option value="po_receive">{t('PO Received', 'استلام أمر شراء')}</option>
           <option value="order_sale">{t('Order Sale', 'بيع طلب')}</option>
+          <option value="order_cancel_waste">{t('Waste', 'هدر')}</option>
+          <option value="order_cancel_return">{t('Returned', 'مرتجع')}</option>
           <option value="transfer_in">{t('Transfer In', 'تحويل وارد')}</option>
           <option value="transfer_out">{t('Transfer Out', 'تحويل صادر')}</option>
           <option value="production_consume">{t('Production Used', 'استهلاك إنتاج')}</option>
@@ -2026,7 +2031,7 @@ function PurchaseOrderModal({ isOpen, onClose, onSave, isSaving }: {
     setLineItems([...lineItems, {
       item_id: item.id,
       item_name: item.name,
-      item_name_ar: item.name_ar,
+      item_name_ar: item.name_ar ?? undefined,
       storage_unit: unit,
       quantity: 1,
       // No price at creation - prices entered at receive time
@@ -2425,7 +2430,7 @@ function TemplateEditModal({ isOpen, onClose, onSave, template, isSaving }: {
     setLineItems([...lineItems, {
       item_id: item.id,
       item_name: item.name,
-      item_name_ar: item.name_ar,
+      item_name_ar: item.name_ar ?? undefined,
       storage_unit: unit,
       quantity: 1,
     }]);
@@ -2756,6 +2761,12 @@ function PODetailModal({ isOpen, onClose, order, onUpdate, getStatusColor, getSt
         storage_unit: item.storage_unit
       }
     }]);
+  };
+
+  // Calculate edit total - since prices aren't set during editing, return 0
+  // Prices are entered at receive time
+  const getEditTotal = () => {
+    return 0; // No prices available during edit phase
   };
 
   const handleCancel = async () => {

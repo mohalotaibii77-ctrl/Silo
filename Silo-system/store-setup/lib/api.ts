@@ -61,10 +61,16 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Don't log 404 errors - they're often expected (e.g., product without ingredients)
-    // Let individual pages handle errors appropriately
-    if (error.response?.status !== 404) {
-      console.error('API Error:', error.response?.status, error.response?.data);
+    // Don't spam Next.js dev overlay for expected client errors (4xx).
+    // Pages handle validation/expected errors (e.g., "pending request") themselves.
+    const status = error.response?.status;
+    if (!status) {
+      console.error('API Error: no response', error);
+    } else if (status >= 500) {
+      console.error('API Error:', status, error.response?.data);
+    } else if (status !== 404) {
+      // Use warn to avoid red overlay while still surfacing info during dev
+      console.warn('API Warning:', status, error.response?.data);
     }
     return Promise.reject(error);
   }

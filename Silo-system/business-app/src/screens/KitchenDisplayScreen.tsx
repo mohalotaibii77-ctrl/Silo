@@ -36,8 +36,8 @@ import api from '../api/client';
 const { width } = Dimensions.get('window');
 const isLargeScreen = width > 768;
 
-// Tab types
-type TabType = 'all' | 'pending' | 'cancelled' | 'completed';
+// Tab types - includes 'edited' for items removed during order editing
+type TabType = 'all' | 'pending' | 'cancelled' | 'edited' | 'completed';
 
 interface OrderItem {
   id: number;
@@ -77,6 +77,7 @@ interface CancelledItem {
   quantity: number;
   unit?: string;
   decision?: 'waste' | 'return' | null;
+  cancellation_source?: 'order_cancelled' | 'order_edited';
   created_at?: string;
   orders?: {
     order_number: string;
@@ -280,7 +281,17 @@ export default function KitchenDisplayScreen({ navigation }: any) {
       case 'pending':
         return allOrders.filter(o => o.order_status === 'pending' || o.order_status === 'in_progress');
       case 'cancelled':
+        // Show cancelled orders (those with cancelled_order_items where source is 'order_cancelled')
         return allOrders.filter(o => o.order_status === 'cancelled');
+      case 'edited':
+        // Show orders that have edited items pending decision
+        // These are active orders that had items removed during editing
+        const editedOrderIds = new Set(
+          cancelledItems
+            .filter(item => item.cancellation_source === 'order_edited' && !item.decision)
+            .map(item => item.order_id)
+        );
+        return allOrders.filter(o => editedOrderIds.has(o.id));
       case 'completed':
         return allOrders.filter(o => o.order_status === 'completed');
       default:
@@ -288,13 +299,42 @@ export default function KitchenDisplayScreen({ navigation }: any) {
     }
   };
 
+  // Get cancelled items filtered by source
+  const getCancelledItemsFiltered = (): CancelledItem[] => {
+    if (activeTab === 'cancelled') {
+      return cancelledItems.filter(item => 
+        item.cancellation_source === 'order_cancelled' && !item.decision
+      );
+    }
+    if (activeTab === 'edited') {
+      return cancelledItems.filter(item => 
+        item.cancellation_source === 'order_edited' && !item.decision
+      );
+    }
+    return cancelledItems.filter(item => !item.decision);
+  };
+
   // Get tab counts
-  const getTabCounts = () => ({
-    all: allOrders.length,
-    pending: allOrders.filter(o => o.order_status === 'pending' || o.order_status === 'in_progress').length,
-    cancelled: allOrders.filter(o => o.order_status === 'cancelled').length,
-    completed: allOrders.filter(o => o.order_status === 'completed').length,
-  });
+  const getTabCounts = () => {
+    const cancelledOrderIds = new Set(
+      cancelledItems
+        .filter(item => item.cancellation_source === 'order_cancelled' && !item.decision)
+        .map(item => item.order_id)
+    );
+    const editedOrderIds = new Set(
+      cancelledItems
+        .filter(item => item.cancellation_source === 'order_edited' && !item.decision)
+        .map(item => item.order_id)
+    );
+    
+    return {
+      all: allOrders.length,
+      pending: allOrders.filter(o => o.order_status === 'pending' || o.order_status === 'in_progress').length,
+      cancelled: cancelledOrderIds.size, // Count unique orders with cancelled items
+      edited: editedOrderIds.size, // Count unique orders with edited items
+      completed: allOrders.filter(o => o.order_status === 'completed').length,
+    };
+  };
 
   const markAsCompleted = async (orderId: number) => {
     try {
@@ -311,9 +351,22 @@ export default function KitchenDisplayScreen({ navigation }: any) {
     }
   };
 
-  // Get pending items for a cancelled order
+  // Get pending items for a cancelled/edited order
+  // Filters by cancellation_source based on active tab
   const getPendingItemsForOrder = (orderId: number): CancelledItem[] => {
-    return cancelledItems.filter(item => item.order_id === orderId && !item.decision);
+    return cancelledItems.filter(item => {
+      if (item.order_id !== orderId || item.decision) return false;
+      
+      // Filter by source based on active tab
+      if (activeTab === 'cancelled') {
+        return item.cancellation_source === 'order_cancelled';
+      }
+      if (activeTab === 'edited') {
+        return item.cancellation_source === 'order_edited';
+      }
+      // For 'all' tab or any other, show all pending items for this order
+      return true;
+    });
   };
 
   // Process waste decisions for an order
@@ -946,8 +999,8 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           ))}
         </ScrollView>
 
-        {/* Footer Actions */}
-        {isPending && (
+        {/* Footer Actions - Show complete button for pending orders, unless in edited tab with pending decisions */}
+        {isPending && !(activeTab === 'edited' && hasPendingDecisions) && (
           <View style={styles.orderFooter}>
             <TouchableOpacity
               style={[
@@ -969,7 +1022,8 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           </View>
         )}
 
-        {order.order_status === 'cancelled' && hasPendingDecisions && (() => {
+        {/* Show waste/return decision UI for cancelled orders OR edited orders with pending decisions */}
+        {(order.order_status === 'cancelled' || activeTab === 'edited') && hasPendingDecisions && (() => {
           // Get the oldest pending item to show time remaining
           const oldestItem = pendingItems.reduce((oldest, item) => {
             if (!oldest || (item.created_at && (!oldest.created_at || item.created_at < oldest.created_at))) {
@@ -979,6 +1033,7 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           }, pendingItems[0]);
           
           const timeInfo = oldestItem?.created_at ? getTimeRemaining(oldestItem.created_at) : null;
+          const isEditedTab = activeTab === 'edited';
           
           return (
             <View style={[styles.orderFooter, { position: 'relative', flexDirection: 'column', gap: 8 }]}>
@@ -1027,7 +1082,9 @@ export default function KitchenDisplayScreen({ navigation }: any) {
                   }}
                 >
                   <AlertCircle size={18} color={colors.foreground} />
-                  <Text style={styles.wasteButtonText}>Process Waste/Return</Text>
+                  <Text style={styles.wasteButtonText}>
+                    {isEditedTab ? 'Process Removed Items' : 'Process Waste/Return'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1046,6 +1103,8 @@ export default function KitchenDisplayScreen({ navigation }: any) {
         return { title: 'All caught up!', subtitle: 'No orders in progress right now', icon: <CheckCircle size={36} color={colors.foreground} /> };
       case 'cancelled':
         return { title: 'No cancelled orders', subtitle: 'Cancelled orders will appear here', icon: <XCircle size={36} color={colors.mutedForeground} /> };
+      case 'edited':
+        return { title: 'No edited orders', subtitle: 'Items removed from orders will appear here', icon: <Edit3 size={36} color={colors.mutedForeground} /> };
       case 'completed':
         return { title: 'No completed orders', subtitle: 'Completed orders will appear here', icon: <CheckCircle size={36} color={colors.mutedForeground} /> };
       default:
@@ -1112,6 +1171,7 @@ export default function KitchenDisplayScreen({ navigation }: any) {
           { key: 'all' as TabType, label: 'All Orders', count: tabCounts.all },
           { key: 'pending' as TabType, label: 'Pending', count: tabCounts.pending },
           { key: 'cancelled' as TabType, label: 'Cancelled', count: tabCounts.cancelled },
+          { key: 'edited' as TabType, label: 'Edited', count: tabCounts.edited },
           { key: 'completed' as TabType, label: 'Completed', count: tabCounts.completed },
         ].map((tab) => {
           const isActive = activeTab === tab.key;

@@ -63,6 +63,62 @@ The backend is a **Modular Monolith** containing all microservices:
 - Serves as the single source of truth for all three frontends (SuperAdmin, Business App, Main)
 
 
+## Core Workflow Documentation (CRITICAL)
+
+### The Foundation
+Any POS system relies on three foundational workflows. These are the **CORE** of our application:
+
+1. **Order Workflow** - How orders are created, processed, and completed
+2. **Payment Workflow** - How payments are collected and tracked
+3. **Inventory Workflow** - How stock is managed, reserved, and consumed
+
+### Documentation Files (Source of Truth)
+
+| Workflow | Documentation File | Description |
+|----------|-------------------|-------------|
+| Orders | `backend/ORDER_WORKFLOW.md` | Order sources, statuses, transitions, access control, editing rules, completion rules, cancellation & kitchen decision queue |
+| Payments | `backend/PAYMENT_WORKFLOW.md` | Payment methods, statuses, timing by order type, COD handling, API order payments, refunds |
+| Inventory | `backend/INVENTORY_FLOW.md` | Stock structure, reservation system, movement types, kitchen decision queue, production, transfers, purchase orders |
+
+### MANDATORY Rules
+
+#### Before Implementation (Read First)
+**ALWAYS reference the relevant documentation BEFORE implementing any feature related to:**
+- Creating, editing, cancelling, or completing orders
+- Processing payments, refunds, or payment status changes
+- Reserving, consuming, returning, or wasting inventory
+- Kitchen operations (completion, decision queue)
+- Transfer, production, or purchase order flows
+
+**Why:** These workflows are complex with interdependencies. Understanding the existing flow prevents breaking critical business logic.
+
+#### After Implementation (Update Documentation)
+**ALWAYS update the corresponding documentation file AFTER making changes to:**
+- Order statuses, transitions, or rules
+- Payment methods, statuses, or timing
+- Inventory reservation, consumption, or adjustment logic
+- Kitchen decision queue behavior
+- Any workflow that affects orders, payments, or inventory
+
+**Why:** Documentation must stay synchronized with implementation. Out-of-date docs lead to bugs and confusion.
+
+### Implementation Checklist
+
+When working on order/payment/inventory features:
+- [ ] Read relevant documentation file(s) first
+- [ ] Understand existing workflow and business rules
+- [ ] Implement changes in backend
+- [ ] Update documentation to reflect changes
+- [ ] Add/update API tests (see API Testing section)
+- [ ] Verify workflow end-to-end
+
+### Never
+- ❌ Implement order/payment/inventory features without reading the docs first
+- ❌ Change workflow behavior without updating documentation
+- ❌ Assume you know the workflow - always verify against docs
+- ❌ Skip documentation updates "for later" - update in same session
+
+
 ## API Testing Requirement
 
 ### Core Principle

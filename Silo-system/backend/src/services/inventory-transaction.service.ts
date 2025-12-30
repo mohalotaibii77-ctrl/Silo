@@ -22,7 +22,8 @@ export type TransactionType =
   | 'production_consume'
   | 'production_yield'
   | 'inventory_count_adjustment'
-  | 'order_void_return';
+  | 'order_cancel_waste'
+  | 'order_cancel_return';
 
 export type DeductionReason = 'expired' | 'damaged' | 'spoiled' | 'others';
 
@@ -471,12 +472,12 @@ class InventoryTransactionService {
 
     const { count: todayCount } = await todayQuery;
 
-    // Today's additions
+    // Today's additions (includes returns from cancelled orders)
     let additionsQuery = supabaseAdmin
       .from('inventory_transactions')
       .select('id', { count: 'exact' })
       .eq('business_id', businessId)
-      .in('transaction_type', ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_void_return'])
+      .in('transaction_type', ['manual_addition', 'po_receive', 'transfer_in', 'production_yield', 'order_cancel_return'])
       .gte('created_at', todayISO);
     
     if (branchId) {
@@ -485,12 +486,12 @@ class InventoryTransactionService {
 
     const { count: additionsCount } = await additionsQuery;
 
-    // Today's deductions
+    // Today's deductions (includes waste from cancelled orders)
     let deductionsQuery = supabaseAdmin
       .from('inventory_transactions')
       .select('id', { count: 'exact' })
       .eq('business_id', businessId)
-      .in('transaction_type', ['manual_deduction', 'order_sale', 'transfer_out', 'production_consume'])
+      .in('transaction_type', ['manual_deduction', 'order_sale', 'transfer_out', 'production_consume', 'order_cancel_waste'])
       .gte('created_at', todayISO);
     
     if (branchId) {

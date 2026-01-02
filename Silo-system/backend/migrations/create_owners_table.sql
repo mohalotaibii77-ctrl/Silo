@@ -54,3 +54,5 @@ COMMENT ON COLUMN businesses.primary_owner_id IS 'The primary owner of the busin
 
 
 
+
+

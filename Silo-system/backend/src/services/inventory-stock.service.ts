@@ -1289,16 +1289,19 @@ export class InventoryStockService {
   /**
    * Get barcode for an item within a business
    */
-  async getItemBarcode(itemId: number, businessId: number): Promise<ItemBarcode | null> {
+  async getItemBarcode(itemId: number, businessId: number): Promise<(ItemBarcode & { created_by_user?: { first_name: string | null; last_name: string | null; username: string } | null }) | null> {
     const { data, error } = await supabaseAdmin
       .from('item_barcodes')
-      .select('*')
+      .select(`
+        *,
+        created_by_user:business_users!created_by (first_name, last_name, username)
+      `)
       .eq('item_id', itemId)
       .eq('business_id', businessId)
       .single();
 
     if (error) return null;
-    return data as ItemBarcode;
+    return data as (ItemBarcode & { created_by_user?: { first_name: string | null; last_name: string | null; username: string } | null });
   }
 
   /**
@@ -1389,6 +1392,24 @@ export class InventoryStockService {
     }
 
     return data as ItemBarcode;
+  }
+
+  /**
+   * Delete barcode association for an item within a business
+   */
+  async deleteBarcode(itemId: number, businessId: number): Promise<boolean> {
+    const { error } = await supabaseAdmin
+      .from('item_barcodes')
+      .delete()
+      .eq('item_id', itemId)
+      .eq('business_id', businessId);
+
+    if (error) {
+      console.error('Failed to delete barcode:', error);
+      throw new Error('Failed to delete barcode');
+    }
+
+    return true;
   }
 
   // ==================== PO COUNTING (Two-Step Receiving) ====================

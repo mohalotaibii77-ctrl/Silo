@@ -186,9 +186,12 @@ class POSSessionService {
     opening_float: number;
     total_cash_received: number;
     total_change_given: number;
+    total_refunds: number;
     total_adjustments: number;
     current_balance: number;
   }> {
+    console.log('[CashSummary] Getting summary for session:', sessionId);
+
     // Get session
     const { data: session } = await supabaseAdmin
       .from('pos_sessions')
@@ -198,15 +201,28 @@ class POSSessionService {
 
     if (!session) throw new Error('Session not found');
 
-    // Get cash payments for this session
-    const { data: payments } = await supabaseAdmin
+    // Get cash payments for this session (includes both regular payments and refunds)
+    const { data: payments, error: paymentsError } = await supabaseAdmin
       .from('order_payments')
-      .select('amount_received, change_given')
+      .select('amount, amount_received, change_given, status')
       .eq('pos_session_id', sessionId)
       .eq('payment_method', 'cash');
 
-    const totalCashReceived = (payments || []).reduce((sum, p) => sum + (p.amount_received || 0), 0);
-    const totalChangeGiven = (payments || []).reduce((sum, p) => sum + (p.change_given || 0), 0);
+    console.log('[CashSummary] Payments query result:', {
+      sessionId,
+      paymentsCount: payments?.length || 0,
+      payments: payments?.slice(0, 5), // Log first 5 for debugging
+      error: paymentsError?.message,
+    });
+
+    // Regular payments: use amount_received and change_given
+    const regularPayments = (payments || []).filter(p => p.status !== 'refunded');
+    const totalCashReceived = regularPayments.reduce((sum, p) => sum + (p.amount_received || 0), 0);
+    const totalChangeGiven = regularPayments.reduce((sum, p) => sum + (p.change_given || 0), 0);
+
+    // Refunds: use the amount field (which is negative for refunds)
+    const refundPayments = (payments || []).filter(p => p.status === 'refunded');
+    const totalRefunds = refundPayments.reduce((sum, p) => sum + (p.amount || 0), 0); // Negative values
 
     // Get adjustments
     const { data: adjustments } = await supabaseAdmin
@@ -220,12 +236,24 @@ class POSSessionService {
       return sum + adj.amount; // correction can be positive or negative
     }, 0);
 
-    const currentBalance = session.opening_float + totalCashReceived - totalChangeGiven + totalAdjustments;
+    // Current balance = opening + received - change + adjustments + refunds (refunds are negative, so they subtract)
+    const currentBalance = session.opening_float + totalCashReceived - totalChangeGiven + totalAdjustments + totalRefunds;
+
+    console.log('[CashSummary] Final calculation:', {
+      sessionId,
+      opening_float: session.opening_float,
+      total_cash_received: totalCashReceived,
+      total_change_given: totalChangeGiven,
+      total_refunds: totalRefunds,
+      total_adjustments: totalAdjustments,
+      current_balance: currentBalance,
+    });
 
     return {
       opening_float: session.opening_float,
       total_cash_received: totalCashReceived,
       total_change_given: totalChangeGiven,
+      total_refunds: totalRefunds,
       total_adjustments: totalAdjustments,
       current_balance: currentBalance,
     };

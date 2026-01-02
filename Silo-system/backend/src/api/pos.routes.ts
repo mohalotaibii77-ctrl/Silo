@@ -132,12 +132,19 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
 
   const order = await posService.createOrder(orderInput);
 
-  // OPTIMIZATION: Process payment inline if requested (avoids second API call)
+  // Process payment inline if requested (avoids second API call)
   // Only for immediate payment methods (not pay_later or app_payment)
   if (process_payment_inline && payment_method && payment_method !== 'pay_later' && payment_method !== 'app_payment') {
-    // Fire-and-forget payment recording (non-blocking for response speed)
-    // Payment record is created but we don't wait for it
-    posService.processPayment(
+    // Log received values for debugging
+    console.log('[CreateOrder] Processing inline payment:', {
+      order_id: order.id,
+      payment_method,
+      pos_session_id,
+      amount_received,
+      change_given,
+    });
+    // Wait for payment to be recorded so cash drawer balance is updated before response
+    await posService.processPayment(
       order.id,
       payment_method,
       order.total_amount,
@@ -147,7 +154,7 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
         ? { amount_received, change_given }
         : undefined,
       pos_session_id ? parseInt(pos_session_id) : undefined
-    ).catch(err => console.error('Failed to process inline payment:', err));
+    );
   }
 
   res.status(201).json({
@@ -656,11 +663,11 @@ router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(asyn
 
 /**
  * POST /api/pos/orders/:orderId/refund
- * Refund an order
+ * Refund an order (cash refunds are recorded in order_payments for cash drawer tracking)
  */
 router.post('/orders/:orderId/refund', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { amount, reason, reference } = req.body;
+  const { amount, reason, reference, pos_session_id } = req.body;
 
   if (amount === undefined || !reason) {
     return res.status(400).json({
@@ -674,7 +681,8 @@ router.post('/orders/:orderId/refund', requireBusinessAccess, asyncHandler(async
     amount,
     reason,
     reference,
-    parseInt(req.user!.userId)
+    parseInt(req.user!.userId),
+    pos_session_id ? parseInt(pos_session_id) : undefined
   );
 
   res.json({

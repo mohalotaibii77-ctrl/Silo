@@ -37,3 +37,5 @@ COMMENT ON COLUMN cancelled_order_items.cancellation_source IS 'Source of cancel
 COMMENT ON COLUMN cancelled_order_items.pos_session_id IS 'POS session during which the cancellation occurred - used for session-based auto-expire';
 
 
+
+

@@ -51,6 +51,13 @@ router.get('/:id', async (req: Request, res: Response): Promise<void> => {
   }
 });
 
+// Valid currency codes - must match business.service.ts
+const VALID_CURRENCIES = [
+  'KWD', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'QAR', 'BHD', 'OMR',
+  'EGP', 'JOD', 'LBP', 'INR', 'PKR', 'CNY', 'JPY', 'KRW', 'THB',
+  'MYR', 'SGD', 'AUD', 'CAD', 'CHF', 'TRY', 'RUB', 'BRL', 'MXN', 'ZAR'
+];
+
 /**
  * POST /api/businesses
  * Create new business with optional users and branches
@@ -65,8 +72,32 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Validate required localization fields
+    if (!input.country) {
+      res.status(400).json({ error: 'Country is required' });
+      return;
+    }
+
+    if (!input.currency) {
+      res.status(400).json({ error: 'Currency is required' });
+      return;
+    }
+
+    if (!VALID_CURRENCIES.includes(input.currency)) {
+      res.status(400).json({
+        error: `Invalid currency code: ${input.currency}`,
+        valid_currencies: VALID_CURRENCIES
+      });
+      return;
+    }
+
+    if (!input.timezone) {
+      res.status(400).json({ error: 'Timezone is required' });
+      return;
+    }
+
     const result = await businessService.createBusiness(input);
-    
+
     res.status(201).json({
       message: 'Business created successfully',
       business: result.business,
@@ -76,7 +107,7 @@ router.post('/', async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('Error creating business:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
-    
+
     if (message.includes('already exists')) {
       res.status(409).json({ error: message });
     } else {

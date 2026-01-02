@@ -12,3 +12,5 @@ COMMENT ON COLUMN operational_settings.pos_opening_float_amount IS 'Fixed openin
 COMMENT ON COLUMN operational_settings.pos_session_allowed_user_ids IS 'Array of user IDs allowed to open/close POS sessions. Empty array means all users with POS permission can open/close sessions';
 
 
+
+

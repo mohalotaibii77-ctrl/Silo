@@ -23,3 +23,5 @@ CREATE INDEX IF NOT EXISTS idx_inventory_stock_held ON inventory_stock(held_quan
 
 
 
+
+

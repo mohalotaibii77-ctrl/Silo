@@ -12,3 +12,5 @@ CHECK (role IN ('owner', 'manager', 'employee', 'pos', 'kitchen_display'));
 
 
 
+
+

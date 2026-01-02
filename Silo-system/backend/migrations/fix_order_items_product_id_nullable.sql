@@ -10,3 +10,5 @@ ALTER COLUMN product_id DROP NOT NULL;
 COMMENT ON COLUMN order_items.product_id IS 'Product ID - nullable when is_combo is true (bundles use combo_id instead)';
 
 
+
+

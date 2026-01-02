@@ -49,3 +49,5 @@ CREATE INDEX IF NOT EXISTS idx_receipt_settings_business_id ON receipt_settings(
 
 
 
+
+

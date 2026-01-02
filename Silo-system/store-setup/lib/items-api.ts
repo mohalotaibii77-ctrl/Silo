@@ -109,6 +109,33 @@ export async function resetItemPrice(itemId: number): Promise<void> {
   await api.delete(`/inventory/items/${itemId}/price`);
 }
 
+// ============ ITEM BARCODES ============
+
+export interface ItemBarcode {
+  id: number;
+  item_id: number;
+  business_id: number;
+  barcode: string;
+  created_at: string;
+  created_by?: number | null;
+  created_by_user?: {
+    first_name: string | null;
+    last_name: string | null;
+    username: string;
+  } | null;
+}
+
+// Get barcode for an item (if any)
+export async function getItemBarcode(itemId: number): Promise<ItemBarcode | null> {
+  const response = await api.get(`/inventory-stock/items/${itemId}/barcode`);
+  return response.data.data;
+}
+
+// Delete barcode for an item
+export async function deleteItemBarcode(itemId: number): Promise<void> {
+  await api.delete(`/inventory-stock/items/${itemId}/barcode`);
+}
+
 // ============ COMPOSITE ITEMS ============
 
 // Get all composite items

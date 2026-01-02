@@ -20,3 +20,5 @@ COMMENT ON COLUMN business_users.password_changed IS 'Tracks whether user has ch
 
 
 
+
+

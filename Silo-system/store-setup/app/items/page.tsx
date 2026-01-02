@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Package, LogOut, User, Command, Bell, Search, Plus, Edit, Trash2, DollarSign, ChevronDown, Building2, Check, Eye, ClipboardList, Calendar, Layers, Play, MapPin, Store } from 'lucide-react';
+import { Package, LogOut, User, Command, Bell, Search, Plus, Edit, Trash2, DollarSign, ChevronDown, Building2, Check, Eye, ClipboardList, Calendar, Layers, Play, MapPin, Store, Barcode } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
 import { AddItemModal } from '@/components/items/add-item-modal';
@@ -11,6 +11,7 @@ import { EditPriceModal } from '@/components/items/edit-price-modal';
 import { ViewItemModal } from '@/components/items/view-item-modal';
 import { EditItemModal } from '@/components/items/edit-item-modal';
 import { DeleteItemModal } from '@/components/items/delete-item-modal';
+import { BarcodeModal } from '@/components/items/barcode-modal';
 import { ProduceModal } from '@/components/items/produce-modal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Item, ItemCategory, ItemType, CompositeItem } from '@/types/items';
@@ -96,6 +97,7 @@ export default function ItemsPage() {
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterItemType, setFilterItemType] = useState<string>('all');
@@ -1031,6 +1033,16 @@ export default function ItemsPage() {
                         <button
                           onClick={() => {
                             setSelectedItem(item);
+                            setShowBarcodeModal(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                          title={t('Barcode', 'الباركود')}
+                        >
+                          <Barcode className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedItem(item);
                             setShowViewModal(true);
                           }}
                           className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
@@ -1130,6 +1142,16 @@ export default function ItemsPage() {
           setSelectedItem(null);
         }}
         onSuccess={fetchItems}
+      />
+
+      {/* Barcode Modal */}
+      <BarcodeModal
+        isOpen={showBarcodeModal}
+        item={selectedItem}
+        onClose={() => {
+          setShowBarcodeModal(false);
+          setSelectedItem(null);
+        }}
       />
 
       {/* Produce Modal */}

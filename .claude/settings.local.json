@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add :*)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(TEST_USERNAME=Bassam TEST_PASSWORD=90074007 SUPERADMIN_EMAIL=admin@syloco.com SUPERADMIN_PASSWORD=123 npx ts-node tests/integration/inventory.test.ts)",
+      "Bash(TEST_USERNAME=Bassam TEST_PASSWORD=90074007 SUPERADMIN_EMAIL=admin@syloco.com SUPERADMIN_PASSWORD=123 npx ts-node tests/integration/products.test.ts)",
+      "Bash(TEST_USERNAME=Bassam TEST_PASSWORD=90074007 SUPERADMIN_EMAIL=admin@syloco.com SUPERADMIN_PASSWORD=123 npx ts-node tests/integration/config.test.ts)",
+      "Bash(TEST_USERNAME=Bassam TEST_PASSWORD=90074007 SUPERADMIN_EMAIL=admin@syloco.com SUPERADMIN_PASSWORD=123 npx ts-node:*)",
+      "Bash(TEST_USERNAME=Bassam TEST_PASSWORD=90074007 npx ts-node:*)",
+      "Bash(SUPERADMIN_EMAIL=admin@syloco.com SUPERADMIN_PASSWORD=123 npx ts-node:*)",
+      "Bash(ipconfig:*)",
+      "Bash(findstr:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}

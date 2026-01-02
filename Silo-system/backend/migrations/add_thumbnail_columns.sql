@@ -22,3 +22,5 @@ COMMENT ON COLUMN businesses.logo_thumbnail_url IS 'Pre-generated thumbnail URL 
 
 
 
+
+

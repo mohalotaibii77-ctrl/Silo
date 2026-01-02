@@ -823,11 +823,16 @@ export default function POSScreen({ navigation }: any) {
   
   // Start editing an existing order item (variant/modifiers)
   const startEditingOrderItem = (item: any) => {
-    setEditingOrderItemId(item.id);
+    // For expanded products (qty > 1), use the original ID for modifications
+    // Expanded products have _originalItemId, regular products just use id
+    const originalOrderItemId = item._originalItemId ?? item.id;
+
+    setEditingOrderItemId(item.id); // Use display ID for UI state
     setEditItemVariantId(item.variant_id || null);
-    
-    // Check if there's already a pending modification for this item
-    const existingMod = pendingProductModifications.find(m => m.order_item_id === item.id);
+
+    // Check if there's already a pending modification for this product
+    // Use originalOrderItemId (number) to match against pendingProductModifications
+    const existingMod = pendingProductModifications.find(m => m.order_item_id === originalOrderItemId);
     
     // Initialize modifiers from existing modification or original item
     const modsToUse = existingMod?.new_modifiers || item.order_item_modifiers || [];
@@ -5379,11 +5384,12 @@ export default function POSScreen({ navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Receipt Modal */}
+      {/* Receipt Modal - only show when we have a valid amount to display */}
+      {/* Using animationType="none" to prevent ghost popup (0 KD flash) during close animation */}
       <Modal
-        visible={showReceiptModal}
+        visible={showReceiptModal && (lastPaymentAmount !== null || lastOrderTotal > 0)}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={completeOrder}
       >
         <TouchableOpacity 
@@ -6367,7 +6373,7 @@ export default function POSScreen({ navigation }: any) {
                                       <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 12 }}>Cancel</Text>
                                     </TouchableOpacity>
                                     <TouchableOpacity
-                                      onPress={() => applyOrderItemChanges(item.id, item, product)}
+                                      onPress={() => applyOrderItemChanges(item._originalItemId ?? item.id, item, product)}
                                       style={{ flex: 1, padding: 10, borderRadius: 8, backgroundColor: colors.primary, alignItems: 'center' }}
                                     >
                                       <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>Apply</Text>

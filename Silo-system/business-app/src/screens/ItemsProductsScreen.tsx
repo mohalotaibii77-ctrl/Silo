@@ -19,7 +19,7 @@ import api from '../api/client';
 import { useLocalization } from '../localization/LocalizationContext';
 import { useConfig } from '../context/ConfigContext';
 import { safeGoBack } from '../utils/navigationHelpers';
-import { 
+import {
   Package,
   Layers,
   ShoppingBag,
@@ -33,7 +33,11 @@ import {
   ChevronDown,
   Check,
   DollarSign,
-  Box
+  Box,
+  Barcode,
+  CheckCircle2,
+  XCircle,
+  Loader2
 } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
@@ -161,8 +165,10 @@ export default function ItemsProductsScreen({ navigation }: any) {
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showAddCompositeModal, setShowAddCompositeModal] = useState(false);
   const [showAddProductModal, setShowAddProductModal] = useState(false);
+  const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [barcodeItem, setBarcodeItem] = useState<Item | null>(null);
 
   useEffect(() => {
     loadData();
@@ -307,7 +313,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
         style={[styles.tab, activeTab === 'items' && styles.tabActive]}
         onPress={() => setActiveTab('items')}
       >
-        <Package size={18} color={activeTab === 'items' ? colors.primary : colors.mutedForeground} />
+        <Package size={18} color={activeTab === 'items' ? colors.background : colors.mutedForeground} />
         <Text style={[styles.tabText, activeTab === 'items' && styles.tabTextActive]}>
           {t('itemsTab')}
         </Text>
@@ -316,7 +322,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
         style={[styles.tab, activeTab === 'composite' && styles.tabActive]}
         onPress={() => setActiveTab('composite')}
       >
-        <Layers size={18} color={activeTab === 'composite' ? colors.primary : colors.mutedForeground} />
+        <Layers size={18} color={activeTab === 'composite' ? colors.background : colors.mutedForeground} />
         <Text style={[styles.tabText, activeTab === 'composite' && styles.tabTextActive]}>
           {t('compositeItemsTab')}
         </Text>
@@ -325,7 +331,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
         style={[styles.tab, activeTab === 'products' && styles.tabActive]}
         onPress={() => setActiveTab('products')}
       >
-        <ShoppingBag size={18} color={activeTab === 'products' ? colors.primary : colors.mutedForeground} />
+        <ShoppingBag size={18} color={activeTab === 'products' ? colors.background : colors.mutedForeground} />
         <Text style={[styles.tabText, activeTab === 'products' && styles.tabTextActive]}>
           {t('productsTab')}
         </Text>
@@ -358,7 +364,16 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <Text style={styles.itemUnit}>/{item.unit}</Text>
         </View>
         <View style={styles.itemActions}>
-          <TouchableOpacity 
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => {
+              setBarcodeItem(item);
+              setShowBarcodeModal(true);
+            }}
+          >
+            <Barcode size={16} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
             style={styles.actionButton}
             onPress={() => {
               setEditingItem(item);
@@ -371,7 +386,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
           >
             <Edit2 size={16} color={colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.actionButton, styles.deleteButton]}
             onPress={() => handleDeleteItem(item.id)}
           >
@@ -632,6 +647,19 @@ export default function ItemsProductsScreen({ navigation }: any) {
         language={language}
         t={t}
         currency={currency}
+      />
+
+      {/* Barcode Modal */}
+      <BarcodeModal
+        visible={showBarcodeModal}
+        item={barcodeItem}
+        onClose={() => {
+          setShowBarcodeModal(false);
+          setBarcodeItem(null);
+        }}
+        isRTL={isRTL}
+        language={language}
+        t={t}
       />
     </View>
   );
@@ -1469,6 +1497,417 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   );
 }
 
+// Barcode Modal Component
+interface ItemBarcode {
+  id: number;
+  item_id: number;
+  business_id: number;
+  barcode: string;
+  created_at: string;
+  created_by?: number | null;
+  created_by_user?: {
+    first_name: string | null;
+    last_name: string | null;
+    username: string;
+  } | null;
+}
+
+function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
+  visible: boolean;
+  item: Item | null;
+  onClose: () => void;
+  isRTL: boolean;
+  language: string;
+  t: (key: string) => string;
+}) {
+  const { colors } = useTheme();
+  const [loading, setLoading] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [barcode, setBarcode] = useState<ItemBarcode | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (visible && item) {
+      fetchBarcode();
+    } else {
+      setBarcode(null);
+      setError(null);
+    }
+  }, [visible, item]);
+
+  const fetchBarcode = async () => {
+    if (!item) return;
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await api.get(`/inventory-stock/items/${item.id}/barcode`);
+      setBarcode(response.data.data);
+    } catch (err: any) {
+      console.error('Failed to fetch barcode:', err);
+      setError(err.response?.data?.error || 'Failed to fetch barcode information');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!item || !barcode) return;
+
+    Alert.alert(
+      language === 'ar' ? 'حذف الباركود' : 'Delete Barcode',
+      language === 'ar' ? 'هل أنت متأكد من حذف الباركود؟' : 'Are you sure you want to delete this barcode?',
+      [
+        { text: t('cancel'), style: 'cancel' },
+        {
+          text: language === 'ar' ? 'حذف' : 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            setError(null);
+
+            try {
+              await api.delete(`/inventory-stock/items/${item.id}/barcode`);
+              setBarcode(null);
+              Alert.alert(
+                t('success'),
+                language === 'ar' ? 'تم حذف الباركود بنجاح' : 'Barcode deleted successfully'
+              );
+            } catch (err: any) {
+              console.error('Failed to delete barcode:', err);
+              setError(err.response?.data?.error || 'Failed to delete barcode');
+            } finally {
+              setDeleting(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  if (!item) return null;
+
+  const itemName = language === 'ar' && item.name_ar ? item.name_ar : item.name;
+
+  const modalStyles = StyleSheet.create({
+    overlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    container: {
+      backgroundColor: colors.card,
+      borderRadius: 20,
+      width: '100%',
+      maxWidth: 400,
+      overflow: 'hidden',
+    },
+    header: {
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      alignItems: 'center',
+      padding: 20,
+      borderBottomWidth: 1,
+      borderBottomColor: colors.border,
+    },
+    headerIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: `${colors.primary}15`,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: isRTL ? 0 : 12,
+      marginLeft: isRTL ? 12 : 0,
+    },
+    headerTextContainer: {
+      flex: 1,
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: colors.foreground,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    subtitle: {
+      fontSize: 14,
+      color: colors.mutedForeground,
+      marginTop: 2,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    closeButton: {
+      padding: 8,
+    },
+    content: {
+      padding: 20,
+    },
+    loadingContainer: {
+      alignItems: 'center',
+      paddingVertical: 40,
+    },
+    loadingText: {
+      fontSize: 14,
+      color: colors.mutedForeground,
+      marginTop: 12,
+    },
+    errorContainer: {
+      backgroundColor: `${colors.destructive}15`,
+      borderRadius: 12,
+      padding: 16,
+      alignItems: 'center',
+    },
+    errorText: {
+      fontSize: 14,
+      color: colors.destructive,
+      textAlign: 'center',
+    },
+    retryText: {
+      fontSize: 14,
+      color: colors.destructive,
+      marginTop: 12,
+      textDecorationLine: 'underline',
+    },
+    barcodeExistsContainer: {
+      backgroundColor: '#22c55e15',
+      borderRadius: 12,
+      padding: 16,
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      alignItems: 'flex-start',
+      marginBottom: 16,
+    },
+    barcodeExistsIcon: {
+      marginRight: isRTL ? 0 : 12,
+      marginLeft: isRTL ? 12 : 0,
+      marginTop: 2,
+    },
+    barcodeExistsTextContainer: {
+      flex: 1,
+    },
+    barcodeExistsTitle: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#166534',
+    },
+    barcodeExistsSubtitle: {
+      fontSize: 12,
+      color: '#15803d',
+      marginTop: 4,
+    },
+    barcodeValueContainer: {
+      backgroundColor: colors.secondary,
+      borderRadius: 12,
+      padding: 16,
+      marginBottom: 16,
+    },
+    barcodeLabel: {
+      fontSize: 12,
+      color: colors.mutedForeground,
+      marginBottom: 8,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    barcodeValue: {
+      fontSize: 18,
+      fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+      color: colors.foreground,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    barcodeMeta: {
+      marginTop: 12,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+      gap: 4,
+    },
+    barcodeDate: {
+      fontSize: 12,
+      color: colors.mutedForeground,
+      textAlign: isRTL ? 'right' : 'left',
+    },
+    deleteButton: {
+      backgroundColor: `${colors.destructive}15`,
+      borderRadius: 12,
+      paddingVertical: 14,
+      flexDirection: isRTL ? 'row-reverse' : 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    deleteButtonText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: colors.destructive,
+    },
+    noBarcodeContainer: {
+      alignItems: 'center',
+      paddingVertical: 32,
+    },
+    noBarcodeIconContainer: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: colors.secondary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 16,
+    },
+    noBarcodeTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: colors.foreground,
+      marginBottom: 8,
+    },
+    noBarcodeSubtitle: {
+      fontSize: 14,
+      color: colors.mutedForeground,
+      textAlign: 'center',
+      paddingHorizontal: 20,
+    },
+    footer: {
+      padding: 20,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    closeFooterButton: {
+      backgroundColor: colors.secondary,
+      borderRadius: 12,
+      paddingVertical: 14,
+      alignItems: 'center',
+    },
+    closeFooterButtonText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: colors.foreground,
+    },
+  });
+
+  return (
+    <Modal visible={visible} transparent animationType="fade">
+      <View style={modalStyles.overlay}>
+        <View style={modalStyles.container}>
+          {/* Header */}
+          <View style={modalStyles.header}>
+            <View style={modalStyles.headerIcon}>
+              <Barcode size={22} color={colors.primary} />
+            </View>
+            <View style={modalStyles.headerTextContainer}>
+              <Text style={modalStyles.title}>
+                {language === 'ar' ? 'الباركود' : 'Barcode'}
+              </Text>
+              <Text style={modalStyles.subtitle} numberOfLines={1}>
+                {itemName}
+              </Text>
+            </View>
+            <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
+              <X size={22} color={colors.mutedForeground} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Content */}
+          <View style={modalStyles.content}>
+            {loading ? (
+              <View style={modalStyles.loadingContainer}>
+                <Loader2 size={32} color={colors.mutedForeground} />
+                <Text style={modalStyles.loadingText}>
+                  {language === 'ar' ? 'جاري التحقق من الباركود...' : 'Checking barcode...'}
+                </Text>
+              </View>
+            ) : error ? (
+              <View style={modalStyles.errorContainer}>
+                <Text style={modalStyles.errorText}>{error}</Text>
+                <TouchableOpacity onPress={fetchBarcode}>
+                  <Text style={modalStyles.retryText}>
+                    {language === 'ar' ? 'حاول مرة أخرى' : 'Try again'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : barcode ? (
+              <>
+                {/* Barcode exists */}
+                <View style={modalStyles.barcodeExistsContainer}>
+                  <CheckCircle2 size={20} color="#16a34a" style={modalStyles.barcodeExistsIcon} />
+                  <View style={modalStyles.barcodeExistsTextContainer}>
+                    <Text style={modalStyles.barcodeExistsTitle}>
+                      {language === 'ar' ? 'تم حفظ الباركود' : 'Barcode saved'}
+                    </Text>
+                    <Text style={modalStyles.barcodeExistsSubtitle}>
+                      {language === 'ar'
+                        ? 'هذه المادة لديها باركود مرتبط بها.'
+                        : 'This item has a barcode associated with it.'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Barcode value */}
+                <View style={modalStyles.barcodeValueContainer}>
+                  <Text style={modalStyles.barcodeLabel}>
+                    {language === 'ar' ? 'قيمة الباركود' : 'Barcode Value'}
+                  </Text>
+                  <Text style={modalStyles.barcodeValue}>{barcode.barcode}</Text>
+                  <View style={modalStyles.barcodeMeta}>
+                    <Text style={modalStyles.barcodeDate}>
+                      {language === 'ar' ? 'تم الحفظ في' : 'Saved on'}: {new Date(barcode.created_at).toLocaleDateString(language === 'ar' ? 'ar' : 'en')}
+                    </Text>
+                    {barcode.created_by_user && (
+                      <Text style={modalStyles.barcodeDate}>
+                        {language === 'ar' ? 'تم الحفظ بواسطة' : 'Saved by'}: {barcode.created_by_user.first_name || barcode.created_by_user.last_name
+                          ? `${barcode.created_by_user.first_name || ''} ${barcode.created_by_user.last_name || ''}`.trim()
+                          : barcode.created_by_user.username}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {/* Delete button */}
+                <TouchableOpacity
+                  style={modalStyles.deleteButton}
+                  onPress={handleDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? (
+                    <Loader2 size={18} color={colors.destructive} />
+                  ) : (
+                    <Trash2 size={18} color={colors.destructive} />
+                  )}
+                  <Text style={modalStyles.deleteButtonText}>
+                    {deleting
+                      ? (language === 'ar' ? 'جاري الحذف...' : 'Deleting...')
+                      : (language === 'ar' ? 'حذف الباركود' : 'Delete Barcode')}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <View style={modalStyles.noBarcodeContainer}>
+                <View style={modalStyles.noBarcodeIconContainer}>
+                  <XCircle size={32} color={colors.mutedForeground} />
+                </View>
+                <Text style={modalStyles.noBarcodeTitle}>
+                  {language === 'ar' ? 'لا يوجد باركود محفوظ' : 'No barcode saved'}
+                </Text>
+                <Text style={modalStyles.noBarcodeSubtitle}>
+                  {language === 'ar'
+                    ? 'هذه المادة ليس لديها باركود مرتبط بها. يمكنك مسح باركود أثناء جرد طلب الشراء لربط باركود.'
+                    : 'This item does not have a barcode associated with it. You can scan a barcode during PO counting to associate one.'}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Footer */}
+          <View style={modalStyles.footer}>
+            <TouchableOpacity style={modalStyles.closeFooterButton} onPress={onClose}>
+              <Text style={modalStyles.closeFooterButtonText}>
+                {language === 'ar' ? 'إغلاق' : 'Close'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
@@ -1536,9 +1975,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     gap: 6,
   },
   tabActive: {
-    backgroundColor: `${colors.primary}15`,
-    borderWidth: 1,
-    borderColor: colors.primary,
+    backgroundColor: colors.foreground,
   },
   tabText: {
     fontSize: 13,
@@ -1546,7 +1983,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.mutedForeground,
   },
   tabTextActive: {
-    color: colors.primary,
+    color: colors.background,
   },
   content: {
     flex: 1,

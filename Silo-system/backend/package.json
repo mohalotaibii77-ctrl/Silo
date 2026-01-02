@@ -8,15 +8,27 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
-    "test:inventory": "npx ts-node tests/inventory.test.ts",
-    "test:products": "npx ts-node tests/products.test.ts",
-    "test:pos": "npx ts-node tests/pos.test.ts",
-    "test:users": "npx ts-node tests/users.test.ts",
-    "test:business": "npx ts-node tests/business.test.ts",
-    "test:delivery": "npx ts-node tests/delivery.test.ts",
-    "test:config": "npx ts-node tests/config.test.ts",
-    "test:superadmin": "npx ts-node tests/superadmin.test.ts",
-    "test:all": "npm run test:inventory && npm run test:products && npm run test:pos && npm run test:users && npm run test:business && npm run test:delivery && npm run test:config && npm run test:superadmin"
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:unit:coverage": "vitest run --coverage",
+    "test:integration:inventory": "npx ts-node tests/integration/inventory.test.ts",
+    "test:integration:products": "npx ts-node tests/integration/products.test.ts",
+    "test:integration:pos": "npx ts-node tests/integration/pos.test.ts",
+    "test:integration:users": "npx ts-node tests/integration/users.test.ts",
+    "test:integration:business": "npx ts-node tests/integration/business.test.ts",
+    "test:integration:delivery": "npx ts-node tests/integration/delivery.test.ts",
+    "test:integration:config": "npx ts-node tests/integration/config.test.ts",
+    "test:integration:superadmin": "npx ts-node tests/integration/superadmin.test.ts",
+    "test:integration:all": "npm run test:integration:inventory && npm run test:integration:products && npm run test:integration:pos && npm run test:integration:users && npm run test:integration:business && npm run test:integration:delivery && npm run test:integration:config && npm run test:integration:superadmin",
+    "test:inventory": "npm run test:integration:inventory",
+    "test:products": "npm run test:integration:products",
+    "test:pos": "npm run test:integration:pos",
+    "test:users": "npm run test:integration:users",
+    "test:business": "npm run test:integration:business",
+    "test:delivery": "npm run test:integration:delivery",
+    "test:config": "npm run test:integration:config",
+    "test:superadmin": "npm run test:integration:superadmin",
+    "test:all": "npm run test:unit && npm run test:integration:all"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
@@ -36,7 +48,8 @@
     "@types/node": "^20.10.0",
     "@types/uuid": "^9.0.7",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.2"
+    "typescript": "^5.3.2",
+    "vitest": "^2.1.0"
   },
   "engines": {
     "node": ">=20"

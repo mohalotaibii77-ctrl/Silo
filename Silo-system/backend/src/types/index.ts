@@ -129,17 +129,19 @@ export type OrderSource =
 // Order types
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'drive_thru';
 
-// Order status (6 statuses)
-// Flow: 
+// Order status (7 statuses)
+// Flow:
 //   POS orders: in_progress → completed/cancelled
 //   Delivery API orders: in_progress → completed (food ready) → picked_up (driver collected)
-export type OrderStatus = 
+//   Refunded orders: any → refunded (full refund)
+export type OrderStatus =
   | 'pending'           // Reserved for future use (scheduled orders)
   | 'in_progress'       // Order being prepared (first status for all orders)
   | 'completed'         // Food ready - for delivery orders, waiting for pickup
   | 'picked_up'         // Delivery orders only: driver has picked up the order
   | 'cancelled'         // Order cancelled
-  | 'rejected';         // Reserved for future use
+  | 'rejected'          // Reserved for future use
+  | 'refunded';         // Order fully refunded
 
 // Payment methods - Simplified to actual methods used
 // Note: 'pay_later' is not a payment method, it's a payment timing option stored separately
@@ -255,6 +257,10 @@ export interface Order {
   voided_by?: number;
   internal_notes?: string;
   external_metadata?: Record<string, unknown>;
+
+  // Order Edit Tracking
+  is_edited?: boolean;           // True if order was edited after creation
+  remaining_amount?: number;     // Amount remaining after edit (positive = owes more, negative = credit)
   
   // Timestamps
   created_at: string;

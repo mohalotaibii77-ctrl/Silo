@@ -49,6 +49,11 @@ web-build/
 .cache/
 *.log
 
+# MCP config (contains sensitive tokens)
+.mcp.json
+
+
+
 
 
 

@@ -508,7 +508,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.secondary,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -536,11 +536,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surface,
+    backgroundColor: colors.secondary,
     borderRadius: 12,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     height: 44,
-    gap: 8,
+    gap: 10,
   },
   searchInputWrapperRTL: {
     flexDirection: 'row-reverse',

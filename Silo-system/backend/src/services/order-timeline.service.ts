@@ -14,6 +14,8 @@ export type TimelineEventType =
   | 'status_changed'       // Order status changed
   | 'payment_received'     // Payment received
   | 'payment_updated'      // Payment status changed (e.g., additional payment needed after edit)
+  | 'refund_issued'        // Refund issued (partial or full)
+  | 'extra_payment_collected' // Extra payment collected after order edit
   | 'cancelled'            // Order cancelled
   | 'completed'            // Order completed (food ready)
   | 'picked_up'            // Delivery order picked up by driver
@@ -226,6 +228,49 @@ export class OrderTimelineService {
     return this.logEvent({
       order_id: orderId,
       event_type: 'payment_updated',
+      event_data: paymentData,
+      created_by: userId,
+    });
+  }
+
+  /**
+   * Log refund issued event
+   */
+  async logRefundIssued(
+    orderId: number,
+    refundData: {
+      amount: number;
+      currency: string;
+      reason: string;
+      is_partial: boolean;
+      refund_reference?: string;
+    },
+    userId?: number
+  ): Promise<TimelineEvent> {
+    return this.logEvent({
+      order_id: orderId,
+      event_type: 'refund_issued',
+      event_data: refundData,
+      created_by: userId,
+    });
+  }
+
+  /**
+   * Log extra payment collected event (after order edit increases total)
+   */
+  async logExtraPaymentCollected(
+    orderId: number,
+    paymentData: {
+      amount: number;
+      currency: string;
+      payment_method: string;
+      payment_reference?: string;
+    },
+    userId?: number
+  ): Promise<TimelineEvent> {
+    return this.logEvent({
+      order_id: orderId,
+      event_type: 'extra_payment_collected',
       event_data: paymentData,
       created_by: userId,
     });

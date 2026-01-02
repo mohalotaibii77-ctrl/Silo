@@ -172,13 +172,14 @@ async function testBusinessManagement(ctx: SuperAdminContext): Promise<{ busines
   });
   track(assertStatus(createWithInvalidCurrency, 400, 'POST /businesses - Validation (invalid currency code)'));
   
-  // POST /api/businesses - Create business with valid currency
+  // POST /api/businesses - Create business with valid data
   const businessSlug = `test_biz_${Date.now()}`;
   const createBusiness = await saRequest(ctx, 'POST', '/businesses', {
     name: `Test Business ${uniqueId()}`,
     slug: businessSlug,
     country: 'SA',
     currency: 'SAR',
+    timezone: 'Asia/Riyadh',
     language: 'en',
   });
   track(assertSuccess(createBusiness, 'POST /businesses - Create business'));

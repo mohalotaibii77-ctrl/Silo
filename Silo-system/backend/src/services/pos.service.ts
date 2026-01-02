@@ -1435,8 +1435,18 @@ export class POSService {
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
 
+    // Log payment details for debugging cash drawer issues
+    console.log('[Payment] Creating payment record:', {
+      orderId,
+      paymentMethod,
+      amount,
+      posSessionId,
+      amount_received: cashDetails?.amount_received,
+      change_given: cashDetails?.change_given,
+    });
+
     // Create payment record with cash details if provided
-    await supabaseAdmin
+    const { error: paymentError } = await supabaseAdmin
       .from('order_payments')
       .insert({
         order_id: orderId,
@@ -1453,6 +1463,14 @@ export class POSService {
         pos_session_id: posSessionId,
       });
 
+    if (paymentError) {
+      console.error('Failed to create payment record:', paymentError);
+      throw new Error(`Failed to create payment record: ${paymentError.message}`);
+    }
+
+    // Check if this is an extra payment (order was edited and had remaining_amount > 0)
+    const isExtraPayment = order.is_edited && parseFloat(String(order.remaining_amount || 0)) > 0;
+
     // Update order payment status
     const { data, error } = await supabaseAdmin
       .from('orders')
@@ -1463,6 +1481,7 @@ export class POSService {
         payment_reference: reference,
         cashier_id: processedBy,
         pos_session_id: posSessionId,
+        remaining_amount: 0, // Clear remaining amount after payment
       })
       .eq('id', orderId)
       .select('*, order_items(*, order_item_modifiers(*))')
@@ -1470,42 +1489,113 @@ export class POSService {
 
     if (error) throw new Error(`Failed to process payment: ${error.message}`);
 
+    // Log to timeline - distinguish between initial payment and extra payment
+    try {
+      if (isExtraPayment) {
+        await orderTimelineService.logExtraPaymentCollected(orderId, {
+          amount,
+          currency: 'KD',
+          payment_method: paymentMethod,
+          payment_reference: reference,
+        }, processedBy);
+      } else {
+        await orderTimelineService.logPaymentReceived(orderId, {
+          amount,
+          payment_method: paymentMethod,
+          payment_reference: reference,
+        }, processedBy);
+      }
+    } catch (timelineError) {
+      console.error('Failed to log payment to timeline:', timelineError);
+    }
+
     return data as Order;
   }
 
 
   /**
    * Refund order
+   * Records refund in order_payments table for cash drawer tracking
+   * Partial refunds: order remains active, payment_status = 'partial_refund'
+   * Full refunds: order_status = 'refunded', payment_status = 'refunded'
    */
   async refundOrder(
-    orderId: number, 
-    refundAmount: number, 
+    orderId: number,
+    refundAmount: number,
     reason: string,
     refundReference?: string,
-    processedBy?: number
+    processedBy?: number,
+    posSessionId?: number
   ): Promise<Order> {
     const order = await this.getOrderById(orderId);
     if (!order) throw new Error('Order not found');
 
-    const isPartialRefund = refundAmount < (order.total_amount || order.total || 0);
-    
+    const orderTotal = parseFloat(String(order.total_amount || order.total || 0));
+    const isPartialRefund = refundAmount < orderTotal;
+
+    // Record the refund in order_payments with negative amount for cash drawer tracking
+    // Cash refunds are subtracted from the cash drawer
+    const { error: refundPaymentError } = await supabaseAdmin
+      .from('order_payments')
+      .insert({
+        order_id: orderId,
+        payment_method: 'cash', // Refunds are currently cash only
+        amount: -refundAmount, // Negative amount indicates money going out
+        payment_reference: refundReference,
+        status: 'refunded',
+        paid_at: new Date().toISOString(),
+        processed_by: processedBy,
+        pos_session_id: posSessionId,
+      });
+
+    if (refundPaymentError) {
+      console.error('Failed to create refund payment record:', refundPaymentError);
+      throw new Error(`Failed to create refund payment record: ${refundPaymentError.message}`);
+    }
+
+    // Build update payload - partial refunds keep order as "paid"
+    const updatePayload: any = {
+      refund_amount: (parseFloat(String(order.refund_amount || 0)) + refundAmount), // Accumulate refunds
+      refunded_at: new Date().toISOString(),
+      refund_reference: refundReference,
+      // Partial refunds: order stays "paid" (refund_amount > 0 indicates partial refund)
+      // Full refunds: order becomes "refunded"
+      payment_status: isPartialRefund ? 'paid' : 'refunded',
+    };
+
+    // Only change order_status for FULL refunds (order is essentially cancelled)
+    // Partial refunds keep the order in its current status (still a valid order)
+    if (!isPartialRefund) {
+      updatePayload.order_status = 'refunded';
+      updatePayload.cancellation_reason = reason;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('orders')
-      .update({
-        refund_amount: refundAmount,
-        refunded_at: new Date().toISOString(),
-        refund_reference: refundReference,
-        payment_status: isPartialRefund ? 'partial_refund' : 'refunded',
-        order_status: 'refunded',  // Using existing column name
-        cancellation_reason: reason,
-      })
+      .update(updatePayload)
       .eq('id', orderId)
       .select('*, order_items(*, order_item_modifiers(*))')
       .single();
 
     if (error) throw new Error(`Failed to refund order: ${error.message}`);
 
-    await this.logStatusChange(orderId, order.order_status as OrderStatus, 'completed', processedBy, `Refund processed: ${reason}`);
+    const logMessage = isPartialRefund
+      ? `Partial refund processed: ${refundAmount} - ${reason}`
+      : `Full refund processed: ${reason}`;
+    await this.logStatusChange(orderId, order.order_status as OrderStatus, isPartialRefund ? order.order_status as OrderStatus : 'refunded', processedBy, logMessage);
+
+    // Log refund to timeline for audit trail
+    try {
+      await orderTimelineService.logRefundIssued(orderId, {
+        amount: refundAmount,
+        currency: 'KD',
+        reason,
+        is_partial: isPartialRefund,
+        refund_reference: refundReference,
+      }, processedBy);
+    } catch (timelineError) {
+      console.error('Failed to log refund to timeline:', timelineError);
+    }
 
     return data as Order;
   }
@@ -2431,8 +2521,31 @@ export class POSService {
         reason: 'Order edited - additional payment required',
       }, editedBy);
     } else if (newTotal < paidAmount) {
-      // Credit to customer (less to pay)
+      // Credit to customer (less to pay) - this is a partial refund scenario
       remainingAmount = newTotal - paidAmount; // Negative = credit
+      const refundAmount = paidAmount - newTotal; // Positive amount to refund
+
+      // NOTE: Do NOT record refund here - the frontend handles the refund workflow
+      // by calling the /refund endpoint AFTER saveOrderChanges completes.
+      // Recording here would cause DOUBLE refund recording.
+
+      // Log the payment status update (refund amount tracked separately)
+      await orderTimelineService.logPaymentUpdated(orderId, {
+        previous_status: order.payment_status || 'paid',
+        new_status: 'paid', // Order remains paid (refund processed separately)
+        remaining_amount: remainingAmount,
+        reason: `Order edited - refund of ${refundAmount} required`,
+      }, editedBy);
+
+      // Update refund tracking on the order
+      const currentRefundAmount = parseFloat(String((order as any).refund_amount || 0));
+      await supabaseAdmin
+        .from('orders')
+        .update({
+          refund_amount: currentRefundAmount + refundAmount,
+          refunded_at: new Date().toISOString(),
+        })
+        .eq('id', orderId);
     }
 
     await supabaseAdmin

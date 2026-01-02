@@ -52,3 +52,5 @@ COMMENT ON COLUMN business_deleted_items.item_id IS 'The default item that was d
 
 
 
+
+

@@ -637,13 +637,28 @@ router.post('/items/:id/barcode', authenticateBusiness, asyncHandler(async (req:
  */
 router.get('/items/:id/barcode', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
   const itemId = parseInt(req.params.id);
-  
+
   const result = await inventoryStockService.getItemBarcode(
     itemId,
     req.businessUser!.business_id
   );
-  
+
   res.json({ success: true, data: result });
+}));
+
+/**
+ * DELETE /api/inventory-stock/items/:id/barcode
+ * Delete barcode association for a specific item within the user's business
+ */
+router.delete('/items/:id/barcode', authenticateBusiness, asyncHandler(async (req: AuthenticatedRequest, res) => {
+  const itemId = parseInt(req.params.id);
+
+  await inventoryStockService.deleteBarcode(
+    itemId,
+    req.businessUser!.business_id
+  );
+
+  res.json({ success: true, message: 'Barcode deleted successfully' });
 }));
 
 // ==================== TRANSFERS ====================

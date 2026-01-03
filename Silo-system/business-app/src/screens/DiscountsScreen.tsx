@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
@@ -18,7 +17,8 @@ import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
 import { ListSkeleton } from '../components/SkeletonLoader';
-import { 
+import { BaseModal } from '../components/BaseModal';
+import {
   ArrowLeft,
   ArrowRight,
   Search,
@@ -486,181 +486,163 @@ export default function DiscountsScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Add/Edit Modal */}
-      <Modal
+      <BaseModal
         visible={isModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCloseModal}
+        onClose={handleCloseModal}
+        title={editingDiscount ? t('editDiscount', 'Edit Discount') : t('addDiscount', 'Add Discount')}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-              <Text style={styles.modalTitle}>
-                {editingDiscount ? t('editDiscount', 'Edit Discount') : t('addDiscount', 'Add Discount')}
-              </Text>
-              <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
-            {/* Modal Body */}
-            <ScrollView style={styles.modalBody}>
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('discountCode', 'Discount Code')} *
+          </Text>
+          <TextInput
+            style={[styles.formInput, styles.formInputMono]}
+            value={code}
+            onChangeText={(text) => setCode(text.toUpperCase())}
+            placeholder={t('egSUMMER20', 'e.g., SUMMER20')}
+            placeholderTextColor={colors.mutedForeground}
+            autoCapitalize="characters"
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('discountCode', 'Discount Code')} *
-                </Text>
-                <TextInput
-                  style={[styles.formInput, styles.formInputMono]}
-                  value={code}
-                  onChangeText={(text) => setCode(text.toUpperCase())}
-                  placeholder={t('egSUMMER20', 'e.g., SUMMER20')}
-                  placeholderTextColor={colors.mutedForeground}
-                  autoCapitalize="characters"
-                />
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('name', 'Name')}
-                  </Text>
-                  <TextInput
-                    style={[styles.formInput, isRTL && styles.textRTL]}
-                    value={name}
-                    onChangeText={setName}
-                    placeholder={t('summerSale', 'Summer Sale')}
-                    placeholderTextColor={colors.mutedForeground}
-                    textAlign={isRTL ? 'right' : 'left'}
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('arabicName', 'Arabic Name')}
-                  </Text>
-                  <TextInput
-                    style={[styles.formInput, { textAlign: 'right' }]}
-                    value={nameAr}
-                    onChangeText={setNameAr}
-                    placeholder="تخفيضات الصيف"
-                    placeholderTextColor={colors.mutedForeground}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('discountType', 'Discount Type')} *
-                </Text>
-                <View style={[styles.typeButtons, isRTL && styles.typeButtonsRTL]}>
-                  <TouchableOpacity
-                    style={[styles.typeButton, discountType === 'percentage' && styles.typeButtonActive]}
-                    onPress={() => setDiscountType('percentage')}
-                  >
-                    <Percent size={16} color={discountType === 'percentage' ? colors.background : colors.mutedForeground} />
-                    <Text style={[styles.typeButtonText, discountType === 'percentage' && styles.typeButtonTextActive]}>
-                      {t('percentage', 'Percentage')}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.typeButton, discountType === 'fixed' && styles.typeButtonActive]}
-                    onPress={() => setDiscountType('fixed')}
-                  >
-                    <Coins size={16} color={discountType === 'fixed' ? colors.background : colors.mutedForeground} />
-                    <Text style={[styles.typeButtonText, discountType === 'fixed' && styles.typeButtonTextActive]}>
-                      {t('fixedAmount', 'Fixed Amount')}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('discountValue', 'Discount Value')} *
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={discountValue}
-                    onChangeText={setDiscountValue}
-                    placeholder={discountType === 'percentage' ? '20' : '5.000'}
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('minOrderAmount', 'Min Order Amount')}
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={minOrderAmount}
-                    onChangeText={setMinOrderAmount}
-                    placeholder="0.000"
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('maxDiscount', 'Max Discount')}
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={maxDiscountAmount}
-                    onChangeText={setMaxDiscountAmount}
-                    placeholder={t('noLimit', 'No limit')}
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('usageLimit', 'Usage Limit')}
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={usageLimit}
-                    onChangeText={setUsageLimit}
-                    placeholder={t('unlimited', 'Unlimited')}
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
-            </ScrollView>
-
-            {/* Modal Footer */}
-            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-              <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
-                <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitButtonText}>
-                  {isSubmitting 
-                    ? t('saving', 'Saving...') 
-                    : editingDiscount 
-                      ? t('update', 'Update')
-                      : t('create', 'Create')}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('name', 'Name')}
+            </Text>
+            <TextInput
+              style={[styles.formInput, isRTL && styles.textRTL]}
+              value={name}
+              onChangeText={setName}
+              placeholder={t('summerSale', 'Summer Sale')}
+              placeholderTextColor={colors.mutedForeground}
+              textAlign={isRTL ? 'right' : 'left'}
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('arabicName', 'Arabic Name')}
+            </Text>
+            <TextInput
+              style={[styles.formInput, { textAlign: 'right' }]}
+              value={nameAr}
+              onChangeText={setNameAr}
+              placeholder="تخفيضات الصيف"
+              placeholderTextColor={colors.mutedForeground}
+            />
           </View>
         </View>
-      </Modal>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('discountType', 'Discount Type')} *
+          </Text>
+          <View style={[styles.typeButtons, isRTL && styles.typeButtonsRTL]}>
+            <TouchableOpacity
+              style={[styles.typeButton, discountType === 'percentage' && styles.typeButtonActive]}
+              onPress={() => setDiscountType('percentage')}
+            >
+              <Percent size={16} color={discountType === 'percentage' ? colors.background : colors.mutedForeground} />
+              <Text style={[styles.typeButtonText, discountType === 'percentage' && styles.typeButtonTextActive]}>
+                {t('percentage', 'Percentage')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.typeButton, discountType === 'fixed' && styles.typeButtonActive]}
+              onPress={() => setDiscountType('fixed')}
+            >
+              <Coins size={16} color={discountType === 'fixed' ? colors.background : colors.mutedForeground} />
+              <Text style={[styles.typeButtonText, discountType === 'fixed' && styles.typeButtonTextActive]}>
+                {t('fixedAmount', 'Fixed Amount')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('discountValue', 'Discount Value')} *
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={discountValue}
+              onChangeText={setDiscountValue}
+              placeholder={discountType === 'percentage' ? '20' : '5.000'}
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="decimal-pad"
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('minOrderAmount', 'Min Order Amount')}
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={minOrderAmount}
+              onChangeText={setMinOrderAmount}
+              placeholder="0.000"
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="decimal-pad"
+            />
+          </View>
+        </View>
+
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('maxDiscount', 'Max Discount')}
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={maxDiscountAmount}
+              onChangeText={setMaxDiscountAmount}
+              placeholder={t('noLimit', 'No limit')}
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="decimal-pad"
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('usageLimit', 'Usage Limit')}
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={usageLimit}
+              onChangeText={setUsageLimit}
+              placeholder={t('unlimited', 'Unlimited')}
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="numeric"
+            />
+          </View>
+        </View>
+
+        {/* Modal Footer */}
+        <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
+            <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.submitButtonText}>
+              {isSubmitting
+                ? t('saving', 'Saving...')
+                : editingDiscount
+                  ? t('update', 'Update')
+                  : t('create', 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -942,49 +924,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '85%',
-  },
-  modalContentRTL: {},
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalHeaderRTL: {
-    flexDirection: 'row-reverse',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
+  // Form styles
   errorBanner: {
     backgroundColor: colors.destructive + '20',
     borderRadius: 10,

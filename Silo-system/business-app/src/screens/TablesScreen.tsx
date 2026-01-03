@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
@@ -459,134 +459,116 @@ export default function TablesScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Add/Edit Modal */}
-      <Modal
+      <BaseModal
         visible={isModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCloseModal}
+        onClose={handleCloseModal}
+        title={editingTable ? t('editTable', 'Edit Table') : t('addTable', 'Add Table')}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-              <Text style={styles.modalTitle}>
-                {editingTable ? t('editTable', 'Edit Table') : t('addTable', 'Add Table')}
-              </Text>
-              <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
-            {/* Modal Body */}
-            <ScrollView style={styles.modalBody}>
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('tableNumberCode', 'Table Number/Code')} *
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={tableNumber}
+            onChangeText={setTableNumber}
+            placeholder={t('egT1A5VIP1', 'e.g., T1, A5, VIP-1')}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('tableNumberCode', 'Table Number/Code')} *
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={tableNumber}
-                  onChangeText={setTableNumber}
-                  placeholder={t('egT1A5VIP1', 'e.g., T1, A5, VIP-1')}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('numberOfSeats', 'Number of Seats')} *
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={seats}
+            onChangeText={(text) => setSeats(text.replace(/[^0-9]/g, ''))}
+            placeholder="2"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="numeric"
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('numberOfSeats', 'Number of Seats')} *
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={seats}
-                  onChangeText={(text) => setSeats(text.replace(/[^0-9]/g, ''))}
-                  placeholder="2"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="numeric"
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('zoneArea', 'Zone/Area')}
-                </Text>
-                <View style={[styles.zoneButtons, isRTL && styles.zoneButtonsRTL]}>
-                  {commonZones.map((z) => (
-                    <TouchableOpacity
-                      key={z.id}
-                      style={[styles.zoneButton, zone === z.id && styles.zoneButtonActive]}
-                      onPress={() => setZone(zone === z.id ? '' : z.id)}
-                    >
-                      <Text style={[styles.zoneButtonText, zone === z.id && styles.zoneButtonTextActive]}>
-                        {z.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('qrBarcode', 'QR/Barcode')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={tableCode}
-                  onChangeText={setTableCode}
-                  placeholder={t('optionalUniqueIdentifier', 'Optional unique identifier')}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('description', 'Description')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, styles.formTextarea, isRTL && styles.textRTL]}
-                  value={description}
-                  onChangeText={setDescription}
-                  placeholder={t('egNearWindowCornerTable', 'e.g., Near window, corner table')}
-                  placeholderTextColor={colors.mutedForeground}
-                  multiline
-                  numberOfLines={2}
-                  textAlign={isRTL ? 'right' : 'left'}
-                  textAlignVertical="top"
-                />
-              </View>
-            </ScrollView>
-
-            {/* Modal Footer */}
-            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-              <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
-                <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('zoneArea', 'Zone/Area')}
+          </Text>
+          <View style={[styles.zoneButtons, isRTL && styles.zoneButtonsRTL]}>
+            {commonZones.map((z) => (
+              <TouchableOpacity
+                key={z.id}
+                style={[styles.zoneButton, zone === z.id && styles.zoneButtonActive]}
+                onPress={() => setZone(zone === z.id ? '' : z.id)}
               >
-                <Text style={styles.submitButtonText}>
-                  {isSubmitting 
-                    ? t('saving', 'Saving...') 
-                    : editingTable 
-                      ? t('update', 'Update')
-                      : t('create', 'Create')}
+                <Text style={[styles.zoneButtonText, zone === z.id && styles.zoneButtonTextActive]}>
+                  {z.name}
                 </Text>
               </TouchableOpacity>
-            </View>
+            ))}
           </View>
         </View>
-      </Modal>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('qrBarcode', 'QR/Barcode')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={tableCode}
+            onChangeText={setTableCode}
+            placeholder={t('optionalUniqueIdentifier', 'Optional unique identifier')}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('description', 'Description')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, styles.formTextarea, isRTL && styles.textRTL]}
+            value={description}
+            onChangeText={setDescription}
+            placeholder={t('egNearWindowCornerTable', 'e.g., Near window, corner table')}
+            placeholderTextColor={colors.mutedForeground}
+            multiline
+            numberOfLines={2}
+            textAlign={isRTL ? 'right' : 'left'}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {/* Modal Footer */}
+        <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
+            <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.submitButtonText}>
+              {isSubmitting
+                ? t('saving', 'Saving...')
+                : editingTable
+                  ? t('update', 'Update')
+                  : t('create', 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -875,49 +857,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '80%',
-  },
-  modalContentRTL: {},
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalHeaderRTL: {
-    flexDirection: 'row-reverse',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
+  // Form styles (used in BaseModal content)
   errorBanner: {
     backgroundColor: colors.destructive + '20',
     borderRadius: 10,

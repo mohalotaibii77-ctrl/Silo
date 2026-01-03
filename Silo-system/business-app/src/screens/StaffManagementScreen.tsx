@@ -8,11 +8,11 @@ import {
   Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert,
   Switch
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
@@ -631,277 +631,266 @@ export default function StaffManagementScreen({ navigation }: any) {
       </ScrollView>
 
       {/* Add/Edit User Modal */}
-      <Modal visible={showModal} transparent animationType="slide">
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.container}>
-            <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-              <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-                {editingUser 
-                  ? (language === 'ar' ? 'تعديل المستخدم' : 'Edit User')
-                  : (language === 'ar' ? 'إضافة مستخدم' : 'Add User')}
-              </Text>
-              <TouchableOpacity onPress={closeModal}>
-                <X size={24} color={colors.foreground} />
-              </TouchableOpacity>
-            </View>
+      <BaseModal
+        visible={showModal}
+        onClose={closeModal}
+        title={editingUser
+          ? (language === 'ar' ? 'تعديل المستخدم' : 'Edit User')
+          : (language === 'ar' ? 'إضافة مستخدم' : 'Add User')}
+      >
+        {error && (
+          <View style={modalStyles.errorBox}>
+            <Text style={modalStyles.errorText}>{error}</Text>
+          </View>
+        )}
 
-            <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
-              {error && (
-                <View style={modalStyles.errorBox}>
-                  <Text style={modalStyles.errorText}>{error}</Text>
-                </View>
-              )}
+        {successMessage && (
+          <View style={modalStyles.successBox}>
+            <Text style={modalStyles.successText}>{successMessage}</Text>
+          </View>
+        )}
 
-              {successMessage && (
-                <View style={modalStyles.successBox}>
-                  <Text style={modalStyles.successText}>{successMessage}</Text>
-                </View>
-              )}
+        {editingUser?.role === 'owner' && (
+          <View style={modalStyles.ownerWarning}>
+            <Crown size={16} color="#d97706" />
+            <Text style={[modalStyles.ownerWarningText, isRTL && styles.rtlText]}>
+              {language === 'ar'
+                ? 'لا يمكن تغيير دور المالك أو حالته'
+                : 'Owner role and status cannot be changed'}
+            </Text>
+          </View>
+        )}
 
-              {editingUser?.role === 'owner' && (
-                <View style={modalStyles.ownerWarning}>
-                  <Crown size={16} color="#d97706" />
-                  <Text style={[modalStyles.ownerWarningText, isRTL && styles.rtlText]}>
-                    {language === 'ar' 
-                      ? 'لا يمكن تغيير دور المالك أو حالته'
-                      : 'Owner role and status cannot be changed'}
-                  </Text>
-                </View>
-              )}
+        {/* Username */}
+        <View style={modalStyles.field}>
+          <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+            {language === 'ar' ? 'اسم المستخدم *' : 'Username *'}
+          </Text>
+          <TextInput
+            style={[modalStyles.input, isRTL && styles.rtlText]}
+            value={username}
+            onChangeText={setUsername}
+            placeholder={language === 'ar' ? 'مثال: john_doe' : 'e.g., john_doe'}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
 
-              {/* Username */}
-              <View style={modalStyles.field}>
-                <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'اسم المستخدم *' : 'Username *'}
-                </Text>
-                <TextInput
-                  style={[modalStyles.input, isRTL && styles.rtlText]}
-                  value={username}
-                  onChangeText={setUsername}
-                  placeholder={language === 'ar' ? 'مثال: john_doe' : 'e.g., john_doe'}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              {/* First & Last Name */}
-              <View style={[modalStyles.row, isRTL && styles.rtlRow]}>
-                <View style={[modalStyles.field, { flex: 1, marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0 }]}>
-                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'الاسم الأول' : 'First Name'}
-                  </Text>
-                  <TextInput
-                    style={[modalStyles.input, isRTL && styles.rtlText]}
-                    value={firstName}
-                    onChangeText={setFirstName}
-                    textAlign={isRTL ? 'right' : 'left'}
-                  />
-                </View>
-                <View style={[modalStyles.field, { flex: 1 }]}>
-                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'الاسم الأخير' : 'Last Name'}
-                  </Text>
-                  <TextInput
-                    style={[modalStyles.input, isRTL && styles.rtlText]}
-                    value={lastName}
-                    onChangeText={setLastName}
-                    textAlign={isRTL ? 'right' : 'left'}
-                  />
-                </View>
-              </View>
-
-              {/* Role (not for owner) */}
-              {(!editingUser || editingUser.role !== 'owner') && (
-                <View style={modalStyles.field}>
-                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'الدور *' : 'Role *'}
-                  </Text>
-                  <TouchableOpacity
-                    style={[modalStyles.picker, isRTL && styles.rtlRow]}
-                    onPress={() => setShowRolePicker(!showRolePicker)}
-                  >
-                    <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
-                      {roleOptions.find(r => r.id === role)?.label}
-                    </Text>
-                    <ChevronDown size={18} color={colors.mutedForeground} />
-                  </TouchableOpacity>
-                  {showRolePicker && (
-                    <View style={modalStyles.pickerOptions}>
-                      <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
-                        {roleOptions.map(option => (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[modalStyles.pickerOption, role === option.id && modalStyles.pickerOptionActive]}
-                            onPress={() => handleRoleChange(option.id as any)}
-                          >
-                            <Text style={[
-                              modalStyles.pickerOptionText,
-                              role === option.id && modalStyles.pickerOptionTextActive
-                            ]}>
-                              {option.label}
-                            </Text>
-                            {role === option.id && <Check size={16} color={colors.primary} />}
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Status (only for editing non-owner) */}
-              {editingUser && editingUser.role !== 'owner' && (
-                <View style={modalStyles.field}>
-                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'الحالة' : 'Status'}
-                  </Text>
-                  <TouchableOpacity
-                    style={[modalStyles.picker, isRTL && styles.rtlRow]}
-                    onPress={() => setShowStatusPicker(!showStatusPicker)}
-                  >
-                    <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
-                      {statusOptions.find(s => s.id === status)?.label}
-                    </Text>
-                    <ChevronDown size={18} color={colors.mutedForeground} />
-                  </TouchableOpacity>
-                  {showStatusPicker && (
-                    <View style={modalStyles.pickerOptions}>
-                      <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
-                        {statusOptions.map(option => (
-                          <TouchableOpacity
-                            key={option.id}
-                            style={[modalStyles.pickerOption, status === option.id && modalStyles.pickerOptionActive]}
-                            onPress={() => { setStatus(option.id as any); setShowStatusPicker(false); }}
-                          >
-                            <Text style={[
-                              modalStyles.pickerOptionText,
-                              status === option.id && modalStyles.pickerOptionTextActive
-                            ]}>
-                              {option.label}
-                            </Text>
-                            {status === option.id && <Check size={16} color={colors.primary} />}
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Permissions (only for manager/employee) */}
-              {(!editingUser || editingUser.role !== 'owner') && (role === 'manager' || role === 'employee') && (
-                <View style={modalStyles.field}>
-                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'الصلاحيات' : 'Permissions'}
-                  </Text>
-                  <View style={modalStyles.permissionsContainer}>
-                    {Object.entries(permissions).map(([key, value]) => {
-                      const permLabels: Record<string, { en: string; ar: string }> = {
-                        orders: { en: 'Orders', ar: 'الطلبات' },
-                        menu_edit: { en: 'Menu Edit', ar: 'تعديل القائمة' },
-                        inventory: { en: 'Inventory', ar: 'المخزون' },
-                        delivery: { en: 'Delivery Partners', ar: 'شركاء التوصيل' },
-                        tables: { en: 'Tables', ar: 'الطاولات' },
-                        drivers: { en: 'Drivers', ar: 'السائقين' },
-                        discounts: { en: 'Discounts', ar: 'الخصومات' },
-                        pos_access: { en: 'POS Access', ar: 'الوصول لنقطة البيع' },
-                      };
-                      const label = permLabels[key];
-                      return (
-                        <View key={key} style={[modalStyles.permissionRow, isRTL && styles.rtlRow]}>
-                          <Text style={[modalStyles.permissionLabel, isRTL && styles.rtlText]}>
-                            {label ? (language === 'ar' ? label.ar : label.en) : key}
-                          </Text>
-                          <Switch
-                            value={value}
-                            onValueChange={(v) => setPermissions(prev => ({ ...prev, [key]: v }))}
-                            trackColor={{ false: colors.border, true: colors.primary }}
-                            thumbColor={colors.background}
-                          />
-                        </View>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-
-              {/* POS/Kitchen info */}
-              {(!editingUser || editingUser.role !== 'owner') && (role === 'pos' || role === 'kitchen_display') && (
-                <View style={modalStyles.infoBox}>
-                  <Text style={[modalStyles.infoText, isRTL && styles.rtlText]}>
-                    {role === 'pos'
-                      ? (language === 'ar' ? 'مستخدمو نقطة البيع لديهم وصول ثابت للطلبات فقط.' : 'POS Terminal users have fixed access to Orders only.')
-                      : (language === 'ar' ? 'مستخدمو شاشة المطبخ لديهم وصول ثابت للطلبات فقط.' : 'Kitchen Display users have fixed access to Orders only.')
-                    }
-                  </Text>
-                </View>
-              )}
-
-              {/* Email */}
-              <View style={modalStyles.field}>
-                <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
-                </Text>
-                <TextInput
-                  style={[modalStyles.input, isRTL && styles.rtlText]}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="user@example.com"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              {/* Phone */}
-              <View style={modalStyles.field}>
-                <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'الهاتف' : 'Phone'}
-                </Text>
-                <TextInput
-                  style={[modalStyles.input, isRTL && styles.rtlText]}
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="+1 (555) 000-0000"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="phone-pad"
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              {/* Default password info */}
-              {!editingUser && (
-                <View style={modalStyles.infoBox}>
-                  <Text style={[modalStyles.infoText, isRTL && styles.rtlText]}>
-                    {language === 'ar' ? 'كلمة المرور الافتراضية ستكون: ' : 'Default password will be: '}
-                    <Text style={modalStyles.infoCode}>90074007</Text>
-                  </Text>
-                </View>
-              )}
-            </ScrollView>
-
-            <View style={modalStyles.footer}>
-              <TouchableOpacity style={modalStyles.cancelButton} onPress={closeModal}>
-                <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
-                onPress={handleSave}
-                disabled={saving || !!successMessage}
-              >
-                <Text style={modalStyles.saveButtonText}>
-                  {saving 
-                    ? t('loading')
-                    : editingUser 
-                      ? (language === 'ar' ? 'تحديث' : 'Update')
-                      : (language === 'ar' ? 'إنشاء' : 'Create')}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        {/* First & Last Name */}
+        <View style={[modalStyles.row, isRTL && styles.rtlRow]}>
+          <View style={[modalStyles.field, { flex: 1, marginRight: isRTL ? 0 : 8, marginLeft: isRTL ? 8 : 0 }]}>
+            <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'الاسم الأول' : 'First Name'}
+            </Text>
+            <TextInput
+              style={[modalStyles.input, isRTL && styles.rtlText]}
+              value={firstName}
+              onChangeText={setFirstName}
+              textAlign={isRTL ? 'right' : 'left'}
+            />
+          </View>
+          <View style={[modalStyles.field, { flex: 1 }]}>
+            <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'الاسم الأخير' : 'Last Name'}
+            </Text>
+            <TextInput
+              style={[modalStyles.input, isRTL && styles.rtlText]}
+              value={lastName}
+              onChangeText={setLastName}
+              textAlign={isRTL ? 'right' : 'left'}
+            />
           </View>
         </View>
-      </Modal>
+
+        {/* Role (not for owner) */}
+        {(!editingUser || editingUser.role !== 'owner') && (
+          <View style={modalStyles.field}>
+            <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'الدور *' : 'Role *'}
+            </Text>
+            <TouchableOpacity
+              style={[modalStyles.picker, isRTL && styles.rtlRow]}
+              onPress={() => setShowRolePicker(!showRolePicker)}
+            >
+              <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
+                {roleOptions.find(r => r.id === role)?.label}
+              </Text>
+              <ChevronDown size={18} color={colors.mutedForeground} />
+            </TouchableOpacity>
+            {showRolePicker && (
+              <View style={modalStyles.pickerOptions}>
+                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+                  {roleOptions.map(option => (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[modalStyles.pickerOption, role === option.id && modalStyles.pickerOptionActive]}
+                      onPress={() => handleRoleChange(option.id as any)}
+                    >
+                      <Text style={[
+                        modalStyles.pickerOptionText,
+                        role === option.id && modalStyles.pickerOptionTextActive
+                      ]}>
+                        {option.label}
+                      </Text>
+                      {role === option.id && <Check size={16} color={colors.primary} />}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Status (only for editing non-owner) */}
+        {editingUser && editingUser.role !== 'owner' && (
+          <View style={modalStyles.field}>
+            <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'الحالة' : 'Status'}
+            </Text>
+            <TouchableOpacity
+              style={[modalStyles.picker, isRTL && styles.rtlRow]}
+              onPress={() => setShowStatusPicker(!showStatusPicker)}
+            >
+              <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
+                {statusOptions.find(s => s.id === status)?.label}
+              </Text>
+              <ChevronDown size={18} color={colors.mutedForeground} />
+            </TouchableOpacity>
+            {showStatusPicker && (
+              <View style={modalStyles.pickerOptions}>
+                <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
+                  {statusOptions.map(option => (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[modalStyles.pickerOption, status === option.id && modalStyles.pickerOptionActive]}
+                      onPress={() => { setStatus(option.id as any); setShowStatusPicker(false); }}
+                    >
+                      <Text style={[
+                        modalStyles.pickerOptionText,
+                        status === option.id && modalStyles.pickerOptionTextActive
+                      ]}>
+                        {option.label}
+                      </Text>
+                      {status === option.id && <Check size={16} color={colors.primary} />}
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Permissions (only for manager/employee) */}
+        {(!editingUser || editingUser.role !== 'owner') && (role === 'manager' || role === 'employee') && (
+          <View style={modalStyles.field}>
+            <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'الصلاحيات' : 'Permissions'}
+            </Text>
+            <View style={modalStyles.permissionsContainer}>
+              {Object.entries(permissions).map(([key, value]) => {
+                const permLabels: Record<string, { en: string; ar: string }> = {
+                  orders: { en: 'Orders', ar: 'الطلبات' },
+                  menu_edit: { en: 'Menu Edit', ar: 'تعديل القائمة' },
+                  inventory: { en: 'Inventory', ar: 'المخزون' },
+                  delivery: { en: 'Delivery Partners', ar: 'شركاء التوصيل' },
+                  tables: { en: 'Tables', ar: 'الطاولات' },
+                  drivers: { en: 'Drivers', ar: 'السائقين' },
+                  discounts: { en: 'Discounts', ar: 'الخصومات' },
+                  pos_access: { en: 'POS Access', ar: 'الوصول لنقطة البيع' },
+                };
+                const label = permLabels[key];
+                return (
+                  <View key={key} style={[modalStyles.permissionRow, isRTL && styles.rtlRow]}>
+                    <Text style={[modalStyles.permissionLabel, isRTL && styles.rtlText]}>
+                      {label ? (language === 'ar' ? label.ar : label.en) : key}
+                    </Text>
+                    <Switch
+                      value={value}
+                      onValueChange={(v) => setPermissions(prev => ({ ...prev, [key]: v }))}
+                      trackColor={{ false: colors.border, true: colors.primary }}
+                      thumbColor={colors.background}
+                    />
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+
+        {/* POS/Kitchen info */}
+        {(!editingUser || editingUser.role !== 'owner') && (role === 'pos' || role === 'kitchen_display') && (
+          <View style={modalStyles.infoBox}>
+            <Text style={[modalStyles.infoText, isRTL && styles.rtlText]}>
+              {role === 'pos'
+                ? (language === 'ar' ? 'مستخدمو نقطة البيع لديهم وصول ثابت للطلبات فقط.' : 'POS Terminal users have fixed access to Orders only.')
+                : (language === 'ar' ? 'مستخدمو شاشة المطبخ لديهم وصول ثابت للطلبات فقط.' : 'Kitchen Display users have fixed access to Orders only.')
+              }
+            </Text>
+          </View>
+        )}
+
+        {/* Email */}
+        <View style={modalStyles.field}>
+          <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+            {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+          </Text>
+          <TextInput
+            style={[modalStyles.input, isRTL && styles.rtlText]}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="user@example.com"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
+
+        {/* Phone */}
+        <View style={modalStyles.field}>
+          <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+            {language === 'ar' ? 'الهاتف' : 'Phone'}
+          </Text>
+          <TextInput
+            style={[modalStyles.input, isRTL && styles.rtlText]}
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="+1 (555) 000-0000"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="phone-pad"
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
+
+        {/* Default password info */}
+        {!editingUser && (
+          <View style={modalStyles.infoBox}>
+            <Text style={[modalStyles.infoText, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'كلمة المرور الافتراضية ستكون: ' : 'Default password will be: '}
+              <Text style={modalStyles.infoCode}>90074007</Text>
+            </Text>
+          </View>
+        )}
+
+        <View style={modalStyles.footer}>
+          <TouchableOpacity style={modalStyles.cancelButton} onPress={closeModal}>
+            <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
+            onPress={handleSave}
+            disabled={saving || !!successMessage}
+          >
+            <Text style={modalStyles.saveButtonText}>
+              {saving
+                ? t('loading')
+                : editingUser
+                  ? (language === 'ar' ? 'تحديث' : 'Update')
+                  : (language === 'ar' ? 'إنشاء' : 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -1102,34 +1091,6 @@ const createStyles = (colors: any) => StyleSheet.create({
 });
 
 const createModalStyles = (colors: any) => StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 40,
-  },
-  container: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    maxHeight: '100%',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  content: {
-    padding: 20,
-  },
   field: {
     marginBottom: 16,
   },

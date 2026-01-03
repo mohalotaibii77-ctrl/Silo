@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert,
   ActivityIndicator
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
@@ -694,25 +694,15 @@ export default function OrdersScreen({ navigation }: any) {
       </ScrollView>
 
       {/* Order Detail Modal */}
-      <Modal visible={showDetailModal} transparent animationType="slide">
-        <View style={modalStyles.overlay}>
-          <View style={modalStyles.container}>
-            <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-              <View style={isRTL ? { alignItems: 'flex-end' } : {}}>
-                <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'الطلب' : 'Order'} #{selectedOrder?.order_number}
-                </Text>
-                <Text style={[modalStyles.subtitle, isRTL && styles.rtlText]}>
-                  {selectedOrder && formatDateTime(selectedOrder.order_date, selectedOrder.order_time)}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowDetailModal(false)}>
-                <X size={24} color={colors.foreground} />
-              </TouchableOpacity>
-            </View>
-
-            {selectedOrder && (
-              <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
+      <BaseModal
+        visible={showDetailModal}
+        onClose={() => setShowDetailModal(false)}
+        title={`${language === 'ar' ? 'الطلب' : 'Order'} #${selectedOrder?.order_number || ''}`}
+        subtitle={selectedOrder ? formatDateTime(selectedOrder.order_date, selectedOrder.order_time) : undefined}
+        height="90%"
+      >
+        {selectedOrder && (
+          <View style={{ flex: 1 }}>
                 {/* Status */}
                 <View style={[modalStyles.row, isRTL && styles.rtlRow]}>
                   <Text style={modalStyles.label}>{language === 'ar' ? 'الحالة' : 'Status'}</Text>
@@ -970,47 +960,38 @@ export default function OrdersScreen({ navigation }: any) {
                   )}
                 </View>
 
-                {/* Make Payment Button - for unpaid orders that haven't been edited */}
-                {orderNeedsPayment(selectedOrder) && (
-                  <TouchableOpacity
-                    style={{
-                      backgroundColor: colors.primary,
-                      paddingVertical: 14,
-                      borderRadius: 10,
-                      alignItems: 'center',
-                      marginTop: 16,
-                    }}
-                    onPress={() => setShowPaymentModal(true)}
-                  >
-                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
-                      {language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </ScrollView>
+            {/* Make Payment Button - for unpaid orders that haven't been edited */}
+            {orderNeedsPayment(selectedOrder) && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.primary,
+                  paddingVertical: 14,
+                  borderRadius: 10,
+                  alignItems: 'center',
+                  marginTop: 16,
+                }}
+                onPress={() => setShowPaymentModal(true)}
+              >
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
+                </Text>
+              </TouchableOpacity>
             )}
           </View>
-        </View>
-      </Modal>
+        )}
+      </BaseModal>
 
       {/* Scanner Modal */}
-      <Modal
+      <BaseModal
         visible={scannerVisible}
-        animationType="slide"
-        onRequestClose={() => setScannerVisible(false)}
+        onClose={() => setScannerVisible(false)}
+        title={language === 'ar' ? 'مسح رمز QR للطلب' : 'Scan Order QR Code'}
+        height="90%"
+        scrollable={false}
       >
-        <View style={styles.scannerContainer}>
-          <View style={styles.scannerHeader}>
-            <Text style={styles.scannerTitle}>
-              {language === 'ar' ? 'مسح رمز QR للطلب' : 'Scan Order QR Code'}
-            </Text>
-            <TouchableOpacity onPress={() => setScannerVisible(false)}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-          
+        <View style={{ flex: 1 }}>
           {permission?.granted ? (
-            <>
+            <View style={{ flex: 1, position: 'relative' }}>
               <CameraView
                 style={styles.camera}
                 onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
@@ -1026,14 +1007,14 @@ export default function OrdersScreen({ navigation }: any) {
                   </Text>
                 </View>
               )}
-            </>
+            </View>
           ) : (
             <View style={styles.permissionContainer}>
               <AlertCircle size={48} color={colors.mutedForeground} />
               <Text style={styles.permissionText}>
                 {language === 'ar' ? 'إذن الكاميرا مطلوب' : 'Camera permission required'}
               </Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.grantButton}
                 onPress={requestPermission}
               >
@@ -1043,9 +1024,8 @@ export default function OrdersScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
           )}
-          
+
           <View style={styles.scannerFooter}>
-            <View style={styles.scannerFrame} />
             <Text style={styles.scannerInstructions}>
               {language === 'ar'
                 ? 'ضع رمز QR داخل الإطار'
@@ -1053,110 +1033,102 @@ export default function OrdersScreen({ navigation }: any) {
             </Text>
           </View>
         </View>
-      </Modal>
+      </BaseModal>
 
       {/* Payment Modal */}
-      <Modal visible={showPaymentModal} transparent animationType="slide">
-        <View style={paymentModalStyles.overlay}>
-          <View style={paymentModalStyles.container}>
-            <View style={paymentModalStyles.header}>
-              <Text style={paymentModalStyles.title}>
-                {language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
+      <BaseModal
+        visible={showPaymentModal}
+        onClose={() => {
+          setShowPaymentModal(false);
+          setCustomerPaidAmount('');
+          setTransactionNumber('');
+        }}
+        title={language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
+        height="75%"
+      >
+        {selectedOrder && (
+          <>
+            {/* Order Total */}
+            <View style={paymentModalStyles.totalSection}>
+              <Text style={paymentModalStyles.totalLabel}>
+                {language === 'ar' ? 'الإجمالي المستحق' : 'Total Due'}
               </Text>
-              <TouchableOpacity onPress={() => {
-                setShowPaymentModal(false);
-                setCustomerPaidAmount('');
-                setTransactionNumber('');
-              }}>
-                <X size={24} color={colors.foreground} />
+              <Text style={paymentModalStyles.totalAmount}>
+                {formatCurrency(selectedOrder.total_amount)}
+              </Text>
+            </View>
+
+            {/* Cash Payment Section */}
+            <View style={paymentModalStyles.paymentSection}>
+              <Text style={paymentModalStyles.sectionTitle}>
+                {language === 'ar' ? 'الدفع نقداً' : 'Cash Payment'}
+              </Text>
+              <TextInput
+                style={paymentModalStyles.input}
+                placeholder={language === 'ar' ? 'المبلغ المدفوع' : 'Amount Received'}
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="decimal-pad"
+                value={customerPaidAmount}
+                onChangeText={setCustomerPaidAmount}
+              />
+              {customerPaidAmount && parseFloat(customerPaidAmount) >= selectedOrder.total_amount && (
+                <Text style={paymentModalStyles.changeText}>
+                  {language === 'ar' ? 'الباقي: ' : 'Change: '}
+                  {formatCurrency(parseFloat(customerPaidAmount) - selectedOrder.total_amount)}
+                </Text>
+              )}
+              <TouchableOpacity
+                style={[
+                  paymentModalStyles.payButton,
+                  { backgroundColor: '#059669' },
+                  isProcessingPayment && { opacity: 0.5 }
+                ]}
+                onPress={() => processPayment('cash')}
+                disabled={isProcessingPayment}
+              >
+                {isProcessingPayment ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={paymentModalStyles.payButtonText}>
+                    {language === 'ar' ? 'دفع نقداً' : 'Pay with Cash'}
+                  </Text>
+                )}
               </TouchableOpacity>
             </View>
 
-            {selectedOrder && (
-              <ScrollView style={paymentModalStyles.content}>
-                {/* Order Total */}
-                <View style={paymentModalStyles.totalSection}>
-                  <Text style={paymentModalStyles.totalLabel}>
-                    {language === 'ar' ? 'الإجمالي المستحق' : 'Total Due'}
+            {/* Card Payment Section */}
+            <View style={paymentModalStyles.paymentSection}>
+              <Text style={paymentModalStyles.sectionTitle}>
+                {language === 'ar' ? 'الدفع بالبطاقة' : 'Card Payment'}
+              </Text>
+              <TextInput
+                style={paymentModalStyles.input}
+                placeholder={language === 'ar' ? 'رقم المعاملة' : 'Transaction Number'}
+                placeholderTextColor={colors.mutedForeground}
+                value={transactionNumber}
+                onChangeText={setTransactionNumber}
+              />
+              <TouchableOpacity
+                style={[
+                  paymentModalStyles.payButton,
+                  { backgroundColor: '#2563eb' },
+                  isProcessingPayment && { opacity: 0.5 }
+                ]}
+                onPress={() => processPayment('card')}
+                disabled={isProcessingPayment}
+              >
+                {isProcessingPayment ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={paymentModalStyles.payButtonText}>
+                    {language === 'ar' ? 'دفع بالبطاقة' : 'Pay with Card'}
                   </Text>
-                  <Text style={paymentModalStyles.totalAmount}>
-                    {formatCurrency(selectedOrder.total_amount)}
-                  </Text>
-                </View>
-
-                {/* Cash Payment Section */}
-                <View style={paymentModalStyles.paymentSection}>
-                  <Text style={paymentModalStyles.sectionTitle}>
-                    {language === 'ar' ? 'الدفع نقداً' : 'Cash Payment'}
-                  </Text>
-                  <TextInput
-                    style={paymentModalStyles.input}
-                    placeholder={language === 'ar' ? 'المبلغ المدفوع' : 'Amount Received'}
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                    value={customerPaidAmount}
-                    onChangeText={setCustomerPaidAmount}
-                  />
-                  {customerPaidAmount && parseFloat(customerPaidAmount) >= selectedOrder.total_amount && (
-                    <Text style={paymentModalStyles.changeText}>
-                      {language === 'ar' ? 'الباقي: ' : 'Change: '}
-                      {formatCurrency(parseFloat(customerPaidAmount) - selectedOrder.total_amount)}
-                    </Text>
-                  )}
-                  <TouchableOpacity
-                    style={[
-                      paymentModalStyles.payButton,
-                      { backgroundColor: '#059669' },
-                      isProcessingPayment && { opacity: 0.5 }
-                    ]}
-                    onPress={() => processPayment('cash')}
-                    disabled={isProcessingPayment}
-                  >
-                    {isProcessingPayment ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text style={paymentModalStyles.payButtonText}>
-                        {language === 'ar' ? 'دفع نقداً' : 'Pay with Cash'}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {/* Card Payment Section */}
-                <View style={paymentModalStyles.paymentSection}>
-                  <Text style={paymentModalStyles.sectionTitle}>
-                    {language === 'ar' ? 'الدفع بالبطاقة' : 'Card Payment'}
-                  </Text>
-                  <TextInput
-                    style={paymentModalStyles.input}
-                    placeholder={language === 'ar' ? 'رقم المعاملة' : 'Transaction Number'}
-                    placeholderTextColor={colors.mutedForeground}
-                    value={transactionNumber}
-                    onChangeText={setTransactionNumber}
-                  />
-                  <TouchableOpacity
-                    style={[
-                      paymentModalStyles.payButton,
-                      { backgroundColor: '#2563eb' },
-                      isProcessingPayment && { opacity: 0.5 }
-                    ]}
-                    onPress={() => processPayment('card')}
-                    disabled={isProcessingPayment}
-                  >
-                    {isProcessingPayment ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text style={paymentModalStyles.payButtonText}>
-                        {language === 'ar' ? 'دفع بالبطاقة' : 'Pay with Card'}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              </ScrollView>
-            )}
-          </View>
-        </View>
-      </Modal>
+                )}
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+      </BaseModal>
     </View>
   );
 }
@@ -1403,26 +1375,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  scannerContainer: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  scannerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
-    paddingBottom: 16,
-    backgroundColor: colors.card,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  scannerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
+  // scannerContainer, scannerHeader, scannerTitle removed - now handled by BaseModal
   camera: {
     flex: 1,
   },
@@ -1467,18 +1420,10 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.primaryForeground,
   },
   scannerFooter: {
-    padding: 20,
-    backgroundColor: colors.card,
+    padding: 16,
     alignItems: 'center',
   },
-  scannerFrame: {
-    width: 200,
-    height: 200,
-    borderWidth: 2,
-    borderColor: colors.primary,
-    borderRadius: 12,
-    marginBottom: 16,
-  },
+  // scannerFrame removed - not used with BaseModal layout
   scannerInstructions: {
     fontSize: 14,
     color: colors.mutedForeground,
@@ -1487,39 +1432,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
 });
 
 const createModalStyles = (colors: ThemeColors) => StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 40,
-  },
-  container: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    maxHeight: '100%',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: colors.mutedForeground,
-    marginTop: 2,
-  },
-  content: {
-    padding: 20,
-  },
+  // Note: overlay, container, header, title, subtitle, content removed - now handled by BaseModal
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1602,34 +1515,7 @@ const createModalStyles = (colors: ThemeColors) => StyleSheet.create({
 });
 
 const createPaymentModalStyles = (colors: ThemeColors) => StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 40,
-  },
-  container: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    maxHeight: '80%',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  content: {
-    padding: 20,
-  },
+  // Note: overlay, container, header, title, content removed - now handled by BaseModal
   totalSection: {
     alignItems: 'center',
     marginBottom: 24,

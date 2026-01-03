@@ -45,6 +45,7 @@ import {
   Camera,
   ImagePlus
 } from 'lucide-react-native';
+import { BaseModal } from '../components/BaseModal';
 
 const { width } = Dimensions.get('window');
 
@@ -888,18 +889,13 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-            <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-              {editingItem ? t('editItem') : t('addItem')}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingItem ? t('editItem') : t('addItem')}
+      height="75%"
+      scrollable={false}
+    >
           <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
             {/* Name */}
             <View style={modalStyles.field}>
@@ -1060,17 +1056,15 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
             <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
               <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
+            <TouchableOpacity
+              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
               onPress={handleSave}
               disabled={saving}
             >
               <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
@@ -1220,18 +1214,13 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-            <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-              {editingItem ? t('editCompositeItem') : t('addCompositeItem')}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingItem ? t('editCompositeItem') : t('addCompositeItem')}
+      height="75%"
+      scrollable={false}
+    >
           <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
             {/* Name */}
             <View style={modalStyles.field}>
@@ -1384,17 +1373,15 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
             <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
               <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
-              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
+            <TouchableOpacity
+              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
               onPress={handleSave}
               disabled={saving}
             >
               <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
@@ -2009,20 +1996,13 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={modalStyles.overlay}>
-          <View style={[modalStyles.container, { maxHeight: '95%' }]}>
-            {/* Header */}
-            <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-              <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-                {editingProduct ? t('editProduct') : t('addProduct')}
-              </Text>
-              <TouchableOpacity onPress={onClose}>
-                <X size={24} color={colors.foreground} />
-              </TouchableOpacity>
-            </View>
-
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingProduct ? t('editProduct') : t('addProduct')}
+      height="90%"
+      scrollable={false}
+    >
             {/* Error Banner */}
             {error && (
               <View style={{ backgroundColor: `${colors.destructive}15`, padding: 12, marginHorizontal: 20, marginTop: 12, borderRadius: 10 }}>
@@ -2641,10 +2621,7 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
                 </Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+    </BaseModal>
   );
 }
 
@@ -2936,27 +2913,14 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t, colors, styl
   });
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={barcodeModalStyles.overlay}>
-        <View style={barcodeModalStyles.container}>
-          {/* Header */}
-          <View style={barcodeModalStyles.header}>
-            <View style={barcodeModalStyles.headerIcon}>
-              <Barcode size={22} color={colors.primary} />
-            </View>
-            <View style={barcodeModalStyles.headerTextContainer}>
-              <Text style={barcodeModalStyles.title}>
-                {language === 'ar' ? 'الباركود' : 'Barcode'}
-              </Text>
-              <Text style={barcodeModalStyles.subtitle} numberOfLines={1}>
-                {itemName}
-              </Text>
-            </View>
-            <TouchableOpacity style={barcodeModalStyles.closeButton} onPress={onClose}>
-              <X size={22} color={colors.mutedForeground} />
-            </TouchableOpacity>
-          </View>
-
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={language === 'ar' ? 'الباركود' : 'Barcode'}
+      subtitle={itemName}
+      height="auto"
+      scrollable={false}
+    >
           {/* Content */}
           <View style={barcodeModalStyles.content}>
             {loading ? (
@@ -3055,9 +3019,7 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t, colors, styl
               </Text>
             </TouchableOpacity>
           </View>
-        </View>
-      </View>
-    </Modal>
+    </BaseModal>
   );
 }
 

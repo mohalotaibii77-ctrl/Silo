@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, RefreshControl, Animated } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
@@ -350,148 +351,136 @@ export default function OwnerDashboardScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       {/* Business Picker Modal */}
-      <Modal
+      <BaseModal
         visible={showBusinessPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowBusinessPicker(false)}
+        onClose={() => setShowBusinessPicker(false)}
+        title={t('selectWorkspace')}
+        height="75%"
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowBusinessPicker(false)}
-        >
-          <View style={styles.modalContent}>
-            <Text style={[styles.modalTitle, isRTL && styles.rtlText]}>{t('selectWorkspace')}</Text>
-
-            {/* All Workspaces Option */}
-            {businesses.length > 1 && (
-              <TouchableOpacity
-                style={[
-                  styles.businessOption,
-                  isAllWorkspaces && styles.businessOptionActive,
-                  isRTL && styles.rtlRow
-                ]}
-                onPress={() => switchBusiness(null)}
-              >
-                <Layers size={20} color={isAllWorkspaces ? colors.primary : colors.mutedForeground} />
-                <Text style={[
-                  styles.businessOptionText,
-                  isAllWorkspaces && styles.businessOptionTextActive,
-                  isRTL && styles.rtlText
-                ]}>
-                  {t('allWorkspaces')}
-                </Text>
-                {isAllWorkspaces && (
-                  <Check size={18} color={colors.primary} />
-                )}
-              </TouchableOpacity>
+        {/* All Workspaces Option */}
+        {businesses.length > 1 && (
+          <TouchableOpacity
+            style={[
+              styles.businessOption,
+              isAllWorkspaces && styles.businessOptionActive,
+              isRTL && styles.rtlRow
+            ]}
+            onPress={() => switchBusiness(null)}
+          >
+            <Layers size={20} color={isAllWorkspaces ? colors.primary : colors.mutedForeground} />
+            <Text style={[
+              styles.businessOptionText,
+              isAllWorkspaces && styles.businessOptionTextActive,
+              isRTL && styles.rtlText
+            ]}>
+              {t('allWorkspaces')}
+            </Text>
+            {isAllWorkspaces && (
+              <Check size={18} color={colors.primary} />
             )}
+          </TouchableOpacity>
+        )}
 
-            {/* Individual Businesses with Branches */}
-            <ScrollView style={styles.businessList} showsVerticalScrollIndicator={false}>
-              {businesses.map((business) => (
-                <View key={business.id}>
-                  {/* Business Header - Click to expand */}
-                  <TouchableOpacity
-                    style={[
-                      styles.businessOption,
-                      !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.businessOptionActive
-                    ]}
-                    onPress={() => {
-                      if (business.branches && business.branches.length > 0) {
-                        toggleBusinessExpand(business.id);
-                      } else {
-                        switchBusiness(business, null, true);
-                      }
-                    }}
-                    onLongPress={() => switchBusiness(business, null, true)}
-                  >
-                    <Building2 size={20} color={!isAllWorkspaces && currentBusiness?.id === business.id ? colors.primary : colors.mutedForeground} />
-                    <Text style={[
-                      styles.businessOptionText,
-                      !isAllWorkspaces && currentBusiness?.id === business.id && styles.businessOptionTextActive
-                    ]}>
-                      {business.name}
-                    </Text>
-                    {business.branches && business.branches.length > 0 && (
-                      <View style={styles.expandIcon}>
-                        {expandedBusinessId === business.id ? (
-                          <ChevronDown size={18} color={colors.mutedForeground} />
-                        ) : (
-                          <ChevronRight size={18} color={colors.mutedForeground} />
-                        )}
-                      </View>
-                    )}
-                    {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
-                      <Check size={18} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Expanded Branches */}
-                  {expandedBusinessId === business.id && business.branches && (
-                    <View style={styles.branchesContainer}>
-                      {/* All Branches Option */}
-                      <TouchableOpacity
-                        style={[
-                          styles.branchOption,
-                          !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionActive,
-                          isRTL && styles.rtlRow
-                        ]}
-                        onPress={() => switchBusiness(business, null, true)}
-                      >
-                        <Layers size={16} color={!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches ? colors.primary : colors.mutedForeground} />
-                        <Text style={[
-                          styles.branchOptionText,
-                          !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionTextActive,
-                          isRTL && styles.rtlText
-                        ]}>
-                          {t('allBranches')}
-                        </Text>
-                        {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
-                          <Check size={16} color={colors.primary} />
-                        )}
-                      </TouchableOpacity>
-
-                      {/* Individual Branches */}
-                      {business.branches.filter(b => b.is_active).map((branch) => (
-                        <TouchableOpacity
-                          key={branch.id}
-                          style={[
-                            styles.branchOption,
-                            !isAllWorkspaces && currentBusiness?.id === business.id && currentBranch?.id === branch.id && styles.branchOptionActive,
-                            isRTL && styles.rtlRow
-                          ]}
-                          onPress={() => switchBusiness(business, branch, false)}
-                        >
-                          <MapPin size={16} color={currentBranch?.id === branch.id ? colors.primary : colors.mutedForeground} />
-                          <View style={[styles.branchTextContainer, isRTL && { alignItems: 'flex-end' }]}>
-                            <Text style={[
-                              styles.branchOptionText,
-                              currentBranch?.id === branch.id && styles.branchOptionTextActive,
-                              isRTL && styles.rtlText
-                            ]}>
-                              {branch.name}
-                            </Text>
-                            {branch.is_main && (
-                              <View style={styles.mainBadge}>
-                                <Text style={styles.mainBadgeText}>{t('mainBranch')}</Text>
-                              </View>
-                            )}
-                          </View>
-                          {!isAllWorkspaces && currentBranch?.id === branch.id && (
-                            <Check size={16} color={colors.primary} />
-                          )}
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+        {/* Individual Businesses with Branches */}
+        {businesses.map((business) => (
+          <View key={business.id}>
+            {/* Business Header - Click to expand */}
+            <TouchableOpacity
+              style={[
+                styles.businessOption,
+                !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.businessOptionActive
+              ]}
+              onPress={() => {
+                if (business.branches && business.branches.length > 0) {
+                  toggleBusinessExpand(business.id);
+                } else {
+                  switchBusiness(business, null, true);
+                }
+              }}
+              onLongPress={() => switchBusiness(business, null, true)}
+            >
+              <Building2 size={20} color={!isAllWorkspaces && currentBusiness?.id === business.id ? colors.primary : colors.mutedForeground} />
+              <Text style={[
+                styles.businessOptionText,
+                !isAllWorkspaces && currentBusiness?.id === business.id && styles.businessOptionTextActive
+              ]}>
+                {business.name}
+              </Text>
+              {business.branches && business.branches.length > 0 && (
+                <View style={styles.expandIcon}>
+                  {expandedBusinessId === business.id ? (
+                    <ChevronDown size={18} color={colors.mutedForeground} />
+                  ) : (
+                    <ChevronRight size={18} color={colors.mutedForeground} />
                   )}
                 </View>
-              ))}
-            </ScrollView>
+              )}
+              {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
+                <Check size={18} color={colors.primary} />
+              )}
+            </TouchableOpacity>
+
+            {/* Expanded Branches */}
+            {expandedBusinessId === business.id && business.branches && (
+              <View style={styles.branchesContainer}>
+                {/* All Branches Option */}
+                <TouchableOpacity
+                  style={[
+                    styles.branchOption,
+                    !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionActive,
+                    isRTL && styles.rtlRow
+                  ]}
+                  onPress={() => switchBusiness(business, null, true)}
+                >
+                  <Layers size={16} color={!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches ? colors.primary : colors.mutedForeground} />
+                  <Text style={[
+                    styles.branchOptionText,
+                    !isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && styles.branchOptionTextActive,
+                    isRTL && styles.rtlText
+                  ]}>
+                    {t('allBranches')}
+                  </Text>
+                  {!isAllWorkspaces && currentBusiness?.id === business.id && isAllBranches && (
+                    <Check size={16} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+
+                {/* Individual Branches */}
+                {business.branches.filter(b => b.is_active).map((branch) => (
+                  <TouchableOpacity
+                    key={branch.id}
+                    style={[
+                      styles.branchOption,
+                      !isAllWorkspaces && currentBusiness?.id === business.id && currentBranch?.id === branch.id && styles.branchOptionActive,
+                      isRTL && styles.rtlRow
+                    ]}
+                    onPress={() => switchBusiness(business, branch, false)}
+                  >
+                    <MapPin size={16} color={currentBranch?.id === branch.id ? colors.primary : colors.mutedForeground} />
+                    <View style={[styles.branchTextContainer, isRTL && { alignItems: 'flex-end' }]}>
+                      <Text style={[
+                        styles.branchOptionText,
+                        currentBranch?.id === branch.id && styles.branchOptionTextActive,
+                        isRTL && styles.rtlText
+                      ]}>
+                        {branch.name}
+                      </Text>
+                      {branch.is_main && (
+                        <View style={styles.mainBadge}>
+                          <Text style={styles.mainBadgeText}>{t('mainBranch')}</Text>
+                        </View>
+                      )}
+                    </View>
+                    {!isAllWorkspaces && currentBranch?.id === branch.id && (
+                      <Check size={16} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
-        </TouchableOpacity>
-      </Modal>
+        ))}
+      </BaseModal>
 
       <ScrollView
         style={styles.scrollView}
@@ -1074,28 +1063,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     color: colors.mutedForeground,
     opacity: 0.5,
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalContent: {
-    backgroundColor: colors.card,
-    borderRadius: 20,
-    padding: 20,
-    width: '100%',
-    maxWidth: 320,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-    marginBottom: 16,
-    textAlign: 'center',
-  },
+  // Business picker styles
   businessOption: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1119,9 +1087,6 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
   businessOptionTextActive: {
     color: colors.primary,
     fontWeight: '600',
-  },
-  businessList: {
-    maxHeight: 350,
   },
   expandIcon: {
     marginLeft: 'auto',

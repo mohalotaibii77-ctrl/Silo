@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
@@ -508,144 +508,126 @@ export default function DriversScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Add/Edit Modal */}
-      <Modal
+      <BaseModal
         visible={isModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCloseModal}
+        onClose={handleCloseModal}
+        title={editingDriver ? t('editDriver', 'Edit Driver') : t('addDriver', 'Add Driver')}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-              <Text style={styles.modalTitle}>
-                {editingDriver ? t('editDriver', 'Edit Driver') : t('addDriver', 'Add Driver')}
-              </Text>
-              <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
-            {/* Modal Body */}
-            <ScrollView style={styles.modalBody}>
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('nameEnglish', 'Name (English)')} *
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={name}
+            onChangeText={setName}
+            placeholder={t('driverName', 'Driver name')}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('nameEnglish', 'Name (English)')} *
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder={t('driverName', 'Driver name')}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('nameArabic', 'Name (Arabic)')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, { textAlign: 'right' }]}
+            value={nameAr}
+            onChangeText={setNameAr}
+            placeholder={t('arabicName', 'Arabic name')}
+            placeholderTextColor={colors.mutedForeground}
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('nameArabic', 'Name (Arabic)')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, { textAlign: 'right' }]}
-                  value={nameAr}
-                  onChangeText={setNameAr}
-                  placeholder={t('arabicName', 'Arabic name')}
-                  placeholderTextColor={colors.mutedForeground}
-                />
-              </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('phoneNumber', 'Phone Number')}
+          </Text>
+          <TextInput
+            style={styles.formInput}
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="+965 XXXX XXXX"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="phone-pad"
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('phoneNumber', 'Phone Number')}
-                </Text>
-                <TextInput
-                  style={styles.formInput}
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="+965 XXXX XXXX"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="phone-pad"
-                />
-              </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('email', 'Email')}
+          </Text>
+          <TextInput
+            style={styles.formInput}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="driver@example.com"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+        </View>
 
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('email', 'Email')}
-                </Text>
-                <TextInput
-                  style={styles.formInput}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="driver@example.com"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('vehicleType', 'Vehicle Type')}
-                </Text>
-                <View style={[styles.vehicleButtons, isRTL && styles.vehicleButtonsRTL]}>
-                  {vehicleTypes.map((v) => (
-                    <TouchableOpacity
-                      key={v.id}
-                      style={[styles.vehicleButton, vehicleType === v.id && styles.vehicleButtonActive]}
-                      onPress={() => setVehicleType(vehicleType === v.id ? '' : v.id)}
-                    >
-                      <Text style={[styles.vehicleButtonText, vehicleType === v.id && styles.vehicleButtonTextActive]}>
-                        {v.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('vehicleNumber', 'Vehicle Number')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={vehicleNumber}
-                  onChangeText={setVehicleNumber}
-                  placeholder={t('licensePlate', 'License plate')}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-            </ScrollView>
-
-            {/* Modal Footer */}
-            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-              <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
-                <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('vehicleType', 'Vehicle Type')}
+          </Text>
+          <View style={[styles.vehicleButtons, isRTL && styles.vehicleButtonsRTL]}>
+            {vehicleTypes.map((v) => (
+              <TouchableOpacity
+                key={v.id}
+                style={[styles.vehicleButton, vehicleType === v.id && styles.vehicleButtonActive]}
+                onPress={() => setVehicleType(vehicleType === v.id ? '' : v.id)}
               >
-                <Text style={styles.submitButtonText}>
-                  {isSubmitting 
-                    ? t('saving', 'Saving...') 
-                    : editingDriver 
-                      ? t('update', 'Update')
-                      : t('create', 'Create')}
+                <Text style={[styles.vehicleButtonText, vehicleType === v.id && styles.vehicleButtonTextActive]}>
+                  {v.name}
                 </Text>
               </TouchableOpacity>
-            </View>
+            ))}
           </View>
         </View>
-      </Modal>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('vehicleNumber', 'Vehicle Number')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={vehicleNumber}
+            onChangeText={setVehicleNumber}
+            placeholder={t('licensePlate', 'License plate')}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
+        </View>
+
+        {/* Modal Footer */}
+        <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
+            <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.submitButtonText}>
+              {isSubmitting
+                ? t('saving', 'Saving...')
+                : editingDriver
+                  ? t('update', 'Update')
+                  : t('create', 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -921,49 +903,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '85%',
-  },
-  modalContentRTL: {},
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalHeaderRTL: {
-    flexDirection: 'row-reverse',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
+  // Form styles (used in BaseModal content)
   errorBanner: {
     backgroundColor: colors.destructive + '20',
     borderRadius: 10,

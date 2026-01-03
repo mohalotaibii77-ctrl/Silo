@@ -1,24 +1,24 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
 import { SectionSkeleton } from '../components/SkeletonLoader';
-import { 
+import {
   ArrowLeft,
   ArrowRight,
   Search,
@@ -426,99 +426,81 @@ export default function CategoriesScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Add/Edit Modal */}
-      <Modal
+      <BaseModal
         visible={isModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCloseModal}
+        onClose={handleCloseModal}
+        title={editingCategory ? t('editCategory', 'Edit Category') : t('addCategory', 'Add Category')}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-              <Text style={styles.modalTitle}>
-                {editingCategory ? t('editCategory', 'Edit Category') : t('addCategory', 'Add Category')}
-              </Text>
-              <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Modal Body */}
-            <ScrollView style={styles.modalBody}>
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('categoryName', 'Category Name')} *
-                </Text>
-                <TextInput
-                  style={[styles.formInput, isRTL && styles.textRTL]}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder={t('egSignatureDishes', 'e.g., Signature Dishes')}
-                  placeholderTextColor={colors.mutedForeground}
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('arabicName', 'Arabic Name')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, { textAlign: 'right' }]}
-                  value={nameAr}
-                  onChangeText={setNameAr}
-                  placeholder={t('enterArabicName', 'Enter Arabic name')}
-                  placeholderTextColor={colors.mutedForeground}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('description', 'Description')}
-                </Text>
-                <TextInput
-                  style={[styles.formInput, styles.formTextarea, isRTL && styles.textRTL]}
-                  value={description}
-                  onChangeText={setDescription}
-                  placeholder={t('optionalDescription', 'Optional description...')}
-                  placeholderTextColor={colors.mutedForeground}
-                  multiline
-                  numberOfLines={3}
-                  textAlign={isRTL ? 'right' : 'left'}
-                  textAlignVertical="top"
-                />
-              </View>
-            </ScrollView>
-
-            {/* Modal Footer */}
-            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-              <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
-                <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitButtonText}>
-                  {isSubmitting 
-                    ? t('saving', 'Saving...') 
-                    : editingCategory 
-                      ? t('update', 'Update')
-                      : t('create', 'Create')}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
           </View>
+        )}
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('categoryName', 'Category Name')} *
+          </Text>
+          <TextInput
+            style={[styles.formInput, isRTL && styles.textRTL]}
+            value={name}
+            onChangeText={setName}
+            placeholder={t('egSignatureDishes', 'e.g., Signature Dishes')}
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
         </View>
-      </Modal>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('arabicName', 'Arabic Name')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, { textAlign: 'right' }]}
+            value={nameAr}
+            onChangeText={setNameAr}
+            placeholder={t('enterArabicName', 'Enter Arabic name')}
+            placeholderTextColor={colors.mutedForeground}
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('description', 'Description')}
+          </Text>
+          <TextInput
+            style={[styles.formInput, styles.formTextarea, isRTL && styles.textRTL]}
+            value={description}
+            onChangeText={setDescription}
+            placeholder={t('optionalDescription', 'Optional description...')}
+            placeholderTextColor={colors.mutedForeground}
+            multiline
+            numberOfLines={3}
+            textAlign={isRTL ? 'right' : 'left'}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {/* Modal Footer */}
+        <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
+            <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.submitButtonText}>
+              {isSubmitting
+                ? t('saving', 'Saving...')
+                : editingCategory
+                  ? t('update', 'Update')
+                  : t('create', 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -773,49 +755,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '80%',
-  },
-  modalContentRTL: {},
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalHeaderRTL: {
-    flexDirection: 'row-reverse',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
+  // Form styles (used in BaseModal content)
   errorBanner: {
     backgroundColor: colors.destructive + '20',
     borderRadius: 10,

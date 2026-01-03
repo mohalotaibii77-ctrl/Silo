@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Modal,
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { CameraView, useCameraPermissions, BarcodeScanningResult } from 'expo-camera';
 import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
@@ -593,41 +594,45 @@ export default function POCountingScreen({ navigation, route }: any) {
       </Modal>
 
       {/* Unknown Barcode Modal */}
-      <Modal visible={unknownBarcodeModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{t('Unknown Barcode', 'باركود غير معروف')}</Text>
-            <Text style={styles.modalText}>
-              {t('This barcode is not associated with any item. Would you like to associate it with the current item?',
-                'هذا الباركود غير مرتبط بأي صنف. هل تريد ربطه بالصنف الحالي؟')}
-            </Text>
-            <Text style={styles.barcodeDisplay}>{unknownBarcode}</Text>
-            
-            <View style={[styles.modalButtons, isRTL && styles.rtlRow]}>
-              <TouchableOpacity
-                style={styles.modalCancelButton}
-                onPress={() => {
-                  setUnknownBarcodeModal(false);
-                  setUnknownBarcode('');
-                }}
-              >
-                <Text style={styles.modalCancelText}>{t('Cancel', 'إلغاء')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalConfirmButton, associatingBarcode && styles.buttonDisabled]}
-                onPress={associateBarcodeWithItem}
-                disabled={associatingBarcode}
-              >
-                {associatingBarcode ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Text style={styles.modalConfirmText}>{t('Associate', 'ربط')}</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+      <BaseModal
+        visible={unknownBarcodeModal}
+        onClose={() => {
+          setUnknownBarcodeModal(false);
+          setUnknownBarcode('');
+        }}
+        title={t('Unknown Barcode', 'باركود غير معروف')}
+        height="auto"
+        scrollable={false}
+      >
+        <Text style={styles.modalText}>
+          {t('This barcode is not associated with any item. Would you like to associate it with the current item?',
+            'هذا الباركود غير مرتبط بأي صنف. هل تريد ربطه بالصنف الحالي؟')}
+        </Text>
+        <Text style={styles.barcodeDisplay}>{unknownBarcode}</Text>
+
+        <View style={[styles.modalButtons, isRTL && styles.rtlRow]}>
+          <TouchableOpacity
+            style={styles.modalCancelButton}
+            onPress={() => {
+              setUnknownBarcodeModal(false);
+              setUnknownBarcode('');
+            }}
+          >
+            <Text style={styles.modalCancelText}>{t('Cancel', 'إلغاء')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modalConfirmButton, associatingBarcode && styles.buttonDisabled]}
+            onPress={associateBarcodeWithItem}
+            disabled={associatingBarcode}
+          >
+            {associatingBarcode ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.modalConfirmText}>{t('Associate', 'ربط')}</Text>
+            )}
+          </TouchableOpacity>
         </View>
-      </Modal>
+      </BaseModal>
     </View>
   );
 }
@@ -950,27 +955,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     textAlign: 'center',
   },
   // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: colors.card,
-    borderRadius: 16,
-    padding: 20,
-    width: '100%',
-    maxWidth: 340,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: colors.foreground,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
   modalText: {
     fontSize: 14,
     color: colors.mutedForeground,

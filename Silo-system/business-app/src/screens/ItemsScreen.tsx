@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
-  Modal, 
-  Alert, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
+  Alert,
   TextInput,
   RefreshControl,
   Animated,
   Dimensions
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
@@ -1115,33 +1115,25 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
     return cat;
   };
 
-  if (!visible) return null;
-
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-            <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-              {editingItem ? t('editItem') : t('addItem')}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
-            {/* Name */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('itemName')}</Text>
-              <TextInput
-                style={[modalStyles.input, isRTL && styles.rtlText]}
-                value={name}
-                onChangeText={setName}
-                placeholder="Enter name"
-                placeholderTextColor={colors.mutedForeground}
-                textAlign={isRTL ? 'right' : 'left'}
-              />
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingItem ? t('editItem') : t('addItem')}
+      scrollable={false}
+    >
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Name */}
+        <View style={modalStyles.field}>
+          <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('itemName')}</Text>
+          <TextInput
+            style={[modalStyles.input, isRTL && styles.rtlText]}
+            value={name}
+            onChangeText={setName}
+            placeholder="Enter name"
+            placeholderTextColor={colors.mutedForeground}
+            textAlign={isRTL ? 'right' : 'left'}
+          />
             </View>
 
             {/* Name Arabic */}
@@ -1271,36 +1263,34 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
             {/* Cost */}
             <View style={modalStyles.field}>
               <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('costPerUnit')} ({currency})</Text>
-              <View style={[modalStyles.inputWithPrefix, isRTL && styles.rtlRow]}>
-                <Text style={modalStyles.inputPrefix}>{currency}</Text>
-                <TextInput
-                  style={[modalStyles.inputNoBorder, isRTL && styles.rtlText, { flex: 1 }]}
-                  value={costPerUnit}
-                  onChangeText={setCostPerUnit}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="decimal-pad"
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
+            <View style={[modalStyles.inputWithPrefix, isRTL && styles.rtlRow]}>
+              <Text style={modalStyles.inputPrefix}>{currency}</Text>
+              <TextInput
+                style={[modalStyles.inputNoBorder, isRTL && styles.rtlText, { flex: 1 }]}
+                value={costPerUnit}
+                onChangeText={setCostPerUnit}
+                placeholder="0.00"
+                placeholderTextColor={colors.mutedForeground}
+                keyboardType="decimal-pad"
+                textAlign={isRTL ? 'right' : 'left'}
+              />
             </View>
-          </ScrollView>
-
-          <View style={modalStyles.footer}>
-            <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
-              <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
-            </TouchableOpacity>
           </View>
+        </ScrollView>
+
+        <View style={modalStyles.footer}>
+          <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
+            <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
+            onPress={handleSave}
+            disabled={saving}
+          >
+            <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-    </Modal>
+      </BaseModal>
   );
 }
 
@@ -1457,31 +1447,23 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
     return cat;
   };
 
-  if (!visible) return null;
-
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-            <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-              {editingItem ? t('editCompositeItem') : t('addCompositeItem')}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
-            {/* Name */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('itemName')}</Text>
-              <TextInput
-                style={[modalStyles.input, isRTL && styles.rtlText]}
-                value={name}
-                onChangeText={setName}
-                placeholder="Enter name"
-                placeholderTextColor={colors.mutedForeground}
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingItem ? t('editCompositeItem') : t('addCompositeItem')}
+      scrollable={false}
+    >
+      <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Name */}
+        <View style={modalStyles.field}>
+          <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('itemName')}</Text>
+          <TextInput
+            style={[modalStyles.input, isRTL && styles.rtlText]}
+            value={name}
+            onChangeText={setName}
+            placeholder="Enter name"
+            placeholderTextColor={colors.mutedForeground}
                 textAlign={isRTL ? 'right' : 'left'}
               />
             </View>
@@ -1611,27 +1593,25 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
                         <Text style={modalStyles.itemPickerOptionUnit}>{item.unit}</Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
-                </View>
+                </ScrollView>
               </View>
-            )}
-          </ScrollView>
+            </View>
+          )}
+        </ScrollView>
 
-          <View style={modalStyles.footer}>
-            <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
-              <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
-            </TouchableOpacity>
-          </View>
+        <View style={modalStyles.footer}>
+          <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
+            <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
+            onPress={handleSave}
+            disabled={saving}
+          >
+            <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-    </Modal>
+      </BaseModal>
   );
 }
 
@@ -1661,41 +1641,20 @@ function ViewItemModal({
   const styles = createStyles(colors);
   const viewModalStyles = createViewModalStyles(colors);
 
-  if (!visible || !item) return null;
+  if (!item) return null;
 
   const hasCustomPrice = item.business_price !== null && item.business_price !== undefined;
   const isSystemItem = !item.business_id;
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={viewModalStyles.overlay}>
-        <View style={viewModalStyles.container}>
-          {/* Header */}
-          <View style={[viewModalStyles.header, isRTL && styles.rtlRow]}>
-            <View style={[viewModalStyles.headerLeft, isRTL && styles.rtlRow]}>
-              <View style={[viewModalStyles.iconContainer, { backgroundColor: item.is_composite ? '#8b5cf615' : '#3b82f615' }]}>
-                {item.is_composite ? (
-                  <Layers size={24} color="#8b5cf6" />
-                ) : (
-                  <Package size={24} color="#3b82f6" />
-                )}
-              </View>
-              <View>
-                <Text style={[viewModalStyles.title, isRTL && styles.rtlText]}>
-                  {language === 'ar' && item.name_ar ? item.name_ar : item.name}
-                </Text>
-                <Text style={[viewModalStyles.subtitle, isRTL && styles.rtlText]}>
-                  {item.is_composite ? t('compositeItem') : t('rawItem')}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity onPress={onClose} style={viewModalStyles.closeButton}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Content */}
-          <ScrollView style={viewModalStyles.content} showsVerticalScrollIndicator={false}>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={language === 'ar' && item.name_ar ? item.name_ar : item.name}
+      subtitle={item.is_composite ? t('compositeItem') : t('rawItem')}
+      scrollable={false}
+    >
+      <ScrollView showsVerticalScrollIndicator={false}>
             {/* Badges Row */}
             <View style={[viewModalStyles.badgesRow, isRTL && styles.rtlRow]}>
               {isSystemItem && (
@@ -1773,28 +1732,26 @@ function ViewItemModal({
               </View>
             )}
 
-            {/* SKU */}
-            {item.sku && (
-              <View style={[viewModalStyles.skuRow, isRTL && styles.rtlRow]}>
-                <Text style={viewModalStyles.skuLabel}>{t('sku')}</Text>
-                <Text style={viewModalStyles.skuValue}>{item.sku}</Text>
-              </View>
-            )}
-          </ScrollView>
-
-          {/* Footer */}
-          <View style={viewModalStyles.footer}>
-            <TouchableOpacity style={viewModalStyles.closeBtn} onPress={onClose}>
-              <Text style={viewModalStyles.closeBtnText}>{t('close')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={viewModalStyles.editBtn} onPress={onEdit}>
-              <Edit2 size={18} color={colors.primaryForeground} />
-              <Text style={viewModalStyles.editBtnText}>{t('edit')}</Text>
-            </TouchableOpacity>
+        {/* SKU */}
+        {item.sku && (
+          <View style={[viewModalStyles.skuRow, isRTL && styles.rtlRow]}>
+            <Text style={viewModalStyles.skuLabel}>{t('sku')}</Text>
+            <Text style={viewModalStyles.skuValue}>{item.sku}</Text>
           </View>
-        </View>
+        )}
+      </ScrollView>
+
+      {/* Footer */}
+      <View style={viewModalStyles.footer}>
+        <TouchableOpacity style={viewModalStyles.closeBtn} onPress={onClose}>
+          <Text style={viewModalStyles.closeBtnText}>{t('close')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={viewModalStyles.editBtn} onPress={onEdit}>
+          <Edit2 size={18} color={colors.primaryForeground} />
+          <Text style={viewModalStyles.editBtnText}>{t('edit')}</Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
@@ -2084,29 +2041,15 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
   });
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          {/* Header */}
-          <View style={modalStyles.header}>
-            <View style={modalStyles.headerIcon}>
-              <Barcode size={22} color={colors.primary} />
-            </View>
-            <View style={modalStyles.headerTextContainer}>
-              <Text style={modalStyles.title}>
-                {language === 'ar' ? 'الباركود' : 'Barcode'}
-              </Text>
-              <Text style={modalStyles.subtitle} numberOfLines={1}>
-                {itemName}
-              </Text>
-            </View>
-            <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
-              <X size={22} color={colors.mutedForeground} />
-            </TouchableOpacity>
-          </View>
-
-          {/* Content */}
-          <View style={modalStyles.content}>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={language === 'ar' ? 'الباركود' : 'Barcode'}
+      subtitle={itemName}
+      height="auto"
+      scrollable={false}
+    >
+      <View style={modalStyles.content}>
             {loading ? (
               <View style={modalStyles.loadingContainer}>
                 <Loader2 size={32} color={colors.mutedForeground} />
@@ -2191,21 +2134,19 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
                     ? 'هذه المادة ليس لديها باركود مرتبط بها. يمكنك مسح باركود أثناء جرد طلب الشراء لربط باركود.'
                     : 'This item does not have a barcode associated with it. You can scan a barcode during PO counting to associate one.'}
                 </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Footer */}
-          <View style={modalStyles.footer}>
-            <TouchableOpacity style={modalStyles.closeFooterButton} onPress={onClose}>
-              <Text style={modalStyles.closeFooterButtonText}>
-                {language === 'ar' ? 'إغلاق' : 'Close'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
+          )}
         </View>
-      </View>
-    </Modal>
+
+        {/* Footer */}
+        <View style={modalStyles.footer}>
+          <TouchableOpacity style={modalStyles.closeFooterButton} onPress={onClose}>
+            <Text style={modalStyles.closeFooterButtonText}>
+              {language === 'ar' ? 'إغلاق' : 'Close'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
   );
 }
 

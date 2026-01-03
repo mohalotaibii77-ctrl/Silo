@@ -8,10 +8,10 @@ import {
   Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL } from '../services/CacheManager';
@@ -1274,172 +1274,153 @@ export default function InventoryScreen({ navigation }: any) {
       </ScrollView>
 
       {/* Adjustment Modal */}
-      <Modal
+      <BaseModal
         visible={showAdjustmentModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowAdjustmentModal(false)}
+        onClose={() => setShowAdjustmentModal(false)}
+        title={language === 'ar' ? 'تعديل المخزون' : 'Adjust Stock'}
+        subtitle={language === 'ar' && adjustmentStock?.item?.name_ar
+          ? adjustmentStock.item.name_ar
+          : adjustmentStock?.item?.name}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.rtlRow]}>
-              <View>
-                <Text style={[styles.modalTitle, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'تعديل المخزون' : 'Adjust Stock'}
-                </Text>
-                <Text style={[styles.modalSubtitle, isRTL && styles.rtlText]} numberOfLines={1}>
-                  {language === 'ar' && adjustmentStock?.item?.name_ar
-                    ? adjustmentStock.item.name_ar
-                    : adjustmentStock?.item?.name}
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowAdjustmentModal(false)}>
-                <X size={24} color={colors.foreground} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Current Stock */}
-            <View style={styles.currentStockBox}>
-              <Text style={styles.currentStockLabel}>
-                {language === 'ar' ? 'المخزون الحالي' : 'Current Stock'}
-              </Text>
-              <Text style={styles.currentStockValue}>
-                {adjustmentStock?.quantity || 0} {adjustmentStock?.item?.storage_unit || adjustmentStock?.item?.unit}
-              </Text>
-            </View>
-
-            {/* Type Tabs */}
-            <View style={styles.adjustmentTypeTabs}>
-              <TouchableOpacity
-                style={[
-                  styles.adjustmentTypeTab,
-                  adjustmentType === 'add' && styles.adjustmentTypeTabAdd
-                ]}
-                onPress={() => { setAdjustmentType('add'); setAdjustmentReason(null); }}
-              >
-                <Plus size={18} color={adjustmentType === 'add' ? colors.primaryForeground : colors.mutedForeground} />
-                <Text style={[
-                  styles.adjustmentTypeText,
-                  adjustmentType === 'add' && styles.adjustmentTypeTextActive
-                ]}>
-                  {language === 'ar' ? 'إضافة' : 'Add'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.adjustmentTypeTab,
-                  adjustmentType === 'deduct' && styles.adjustmentTypeTabDeduct
-                ]}
-                onPress={() => setAdjustmentType('deduct')}
-              >
-                <Minus size={18} color={adjustmentType === 'deduct' ? colors.primaryForeground : colors.mutedForeground} />
-                <Text style={[
-                  styles.adjustmentTypeText,
-                  adjustmentType === 'deduct' && styles.adjustmentTypeTextActive
-                ]}>
-                  {language === 'ar' ? 'خصم' : 'Deduct'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Quantity Input */}
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
-                {language === 'ar' ? 'الكمية' : 'Quantity'} ({adjustmentStock?.item?.storage_unit || adjustmentStock?.item?.unit})
-              </Text>
-              <TextInput
-                style={[styles.textInput, isRTL && styles.rtlText]}
-                value={adjustmentQuantity}
-                onChangeText={setAdjustmentQuantity}
-                keyboardType="decimal-pad"
-                placeholder="0"
-                placeholderTextColor={colors.mutedForeground}
-              />
-            </View>
-
-            {/* Deduction Reasons */}
-            {adjustmentType === 'deduct' && (
-              <View style={styles.inputGroup}>
-                <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
-                  {language === 'ar' ? 'السبب' : 'Reason'}
-                </Text>
-                <View style={styles.reasonButtons}>
-                  {(['expired', 'damaged', 'spoiled', 'others'] as DeductionReason[]).map((reason) => (
-                    <TouchableOpacity
-                      key={reason}
-                      style={[
-                        styles.reasonButton,
-                        adjustmentReason === reason && styles.reasonButtonActive
-                      ]}
-                      onPress={() => setAdjustmentReason(reason)}
-                    >
-                      <Text style={styles.reasonIcon}>
-                        {reason === 'expired' ? 'EXP' : reason === 'damaged' ? 'DMG' : reason === 'spoiled' ? 'SPL' : 'OTH'}
-                      </Text>
-                      <Text style={[
-                        styles.reasonText,
-                        adjustmentReason === reason && styles.reasonTextActive
-                      ]}>
-                        {getReasonLabel(reason)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-            )}
-
-            {/* Notes */}
-            <View style={styles.inputGroup}>
-              <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
-                {adjustmentType === 'add' || adjustmentReason === 'others'
-                  ? (language === 'ar' ? 'الملاحظات (مطلوب)' : 'Notes (Required)')
-                  : (language === 'ar' ? 'الملاحظات (اختياري)' : 'Notes (Optional)')}
-              </Text>
-              <TextInput
-                style={[styles.textInput, styles.textArea, isRTL && styles.rtlText]}
-                value={adjustmentNotes}
-                onChangeText={setAdjustmentNotes}
-                placeholder={language === 'ar' ? 'أدخل ملاحظات...' : 'Enter notes...'}
-                placeholderTextColor={colors.mutedForeground}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-            </View>
-
-            {/* Submit Button */}
-            <TouchableOpacity
-              style={[
-                styles.submitButton,
-                { backgroundColor: adjustmentType === 'add' ? '#10b981' : '#ef4444' },
-                adjustmentLoading && styles.submitButtonDisabled
-              ]}
-              onPress={handleSubmitAdjustment}
-              disabled={adjustmentLoading}
-            >
-              {adjustmentLoading ? (
-                <Text style={styles.submitButtonText}>
-                  {language === 'ar' ? 'جاري المعالجة...' : 'Processing...'}
-                </Text>
-              ) : (
-                <>
-                  {adjustmentType === 'add' ? (
-                    <Plus size={20} color={colors.primaryForeground} />
-                  ) : (
-                    <Minus size={20} color={colors.primaryForeground} />
-                  )}
-                  <Text style={styles.submitButtonText}>
-                    {adjustmentType === 'add'
-                      ? (language === 'ar' ? 'إضافة المخزون' : 'Add Stock')
-                      : (language === 'ar' ? 'خصم المخزون' : 'Deduct Stock')}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </View>
+        {/* Current Stock */}
+        <View style={styles.currentStockBox}>
+          <Text style={styles.currentStockLabel}>
+            {language === 'ar' ? 'المخزون الحالي' : 'Current Stock'}
+          </Text>
+          <Text style={styles.currentStockValue}>
+            {adjustmentStock?.quantity || 0} {adjustmentStock?.item?.storage_unit || adjustmentStock?.item?.unit}
+          </Text>
         </View>
-      </Modal>
+
+        {/* Type Tabs */}
+        <View style={styles.adjustmentTypeTabs}>
+          <TouchableOpacity
+            style={[
+              styles.adjustmentTypeTab,
+              adjustmentType === 'add' && styles.adjustmentTypeTabAdd
+            ]}
+            onPress={() => { setAdjustmentType('add'); setAdjustmentReason(null); }}
+          >
+            <Plus size={18} color={adjustmentType === 'add' ? colors.primaryForeground : colors.mutedForeground} />
+            <Text style={[
+              styles.adjustmentTypeText,
+              adjustmentType === 'add' && styles.adjustmentTypeTextActive
+            ]}>
+              {language === 'ar' ? 'إضافة' : 'Add'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.adjustmentTypeTab,
+              adjustmentType === 'deduct' && styles.adjustmentTypeTabDeduct
+            ]}
+            onPress={() => setAdjustmentType('deduct')}
+          >
+            <Minus size={18} color={adjustmentType === 'deduct' ? colors.primaryForeground : colors.mutedForeground} />
+            <Text style={[
+              styles.adjustmentTypeText,
+              adjustmentType === 'deduct' && styles.adjustmentTypeTextActive
+            ]}>
+              {language === 'ar' ? 'خصم' : 'Deduct'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Quantity Input */}
+        <View style={styles.inputGroup}>
+          <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
+            {language === 'ar' ? 'الكمية' : 'Quantity'} ({adjustmentStock?.item?.storage_unit || adjustmentStock?.item?.unit})
+          </Text>
+          <TextInput
+            style={[styles.textInput, isRTL && styles.rtlText]}
+            value={adjustmentQuantity}
+            onChangeText={setAdjustmentQuantity}
+            keyboardType="decimal-pad"
+            placeholder="0"
+            placeholderTextColor={colors.mutedForeground}
+          />
+        </View>
+
+        {/* Deduction Reasons */}
+        {adjustmentType === 'deduct' && (
+          <View style={styles.inputGroup}>
+            <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
+              {language === 'ar' ? 'السبب' : 'Reason'}
+            </Text>
+            <View style={styles.reasonButtons}>
+              {(['expired', 'damaged', 'spoiled', 'others'] as DeductionReason[]).map((reason) => (
+                <TouchableOpacity
+                  key={reason}
+                  style={[
+                    styles.reasonButton,
+                    adjustmentReason === reason && styles.reasonButtonActive
+                  ]}
+                  onPress={() => setAdjustmentReason(reason)}
+                >
+                  <Text style={styles.reasonIcon}>
+                    {reason === 'expired' ? 'EXP' : reason === 'damaged' ? 'DMG' : reason === 'spoiled' ? 'SPL' : 'OTH'}
+                  </Text>
+                  <Text style={[
+                    styles.reasonText,
+                    adjustmentReason === reason && styles.reasonTextActive
+                  ]}>
+                    {getReasonLabel(reason)}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Notes */}
+        <View style={styles.inputGroup}>
+          <Text style={[styles.inputLabel, isRTL && styles.rtlText]}>
+            {adjustmentType === 'add' || adjustmentReason === 'others'
+              ? (language === 'ar' ? 'الملاحظات (مطلوب)' : 'Notes (Required)')
+              : (language === 'ar' ? 'الملاحظات (اختياري)' : 'Notes (Optional)')}
+          </Text>
+          <TextInput
+            style={[styles.textInput, styles.textArea, isRTL && styles.rtlText]}
+            value={adjustmentNotes}
+            onChangeText={setAdjustmentNotes}
+            placeholder={language === 'ar' ? 'أدخل ملاحظات...' : 'Enter notes...'}
+            placeholderTextColor={colors.mutedForeground}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+        </View>
+
+        {/* Submit Button */}
+        <TouchableOpacity
+          style={[
+            styles.submitButton,
+            { backgroundColor: adjustmentType === 'add' ? '#10b981' : '#ef4444' },
+            adjustmentLoading && styles.submitButtonDisabled
+          ]}
+          onPress={handleSubmitAdjustment}
+          disabled={adjustmentLoading}
+        >
+          {adjustmentLoading ? (
+            <Text style={styles.submitButtonText}>
+              {language === 'ar' ? 'جاري المعالجة...' : 'Processing...'}
+            </Text>
+          ) : (
+            <>
+              {adjustmentType === 'add' ? (
+                <Plus size={20} color={colors.primaryForeground} />
+              ) : (
+                <Minus size={20} color={colors.primaryForeground} />
+              )}
+              <Text style={styles.submitButtonText}>
+                {adjustmentType === 'add'
+                  ? (language === 'ar' ? 'إضافة المخزون' : 'Add Stock')
+                  : (language === 'ar' ? 'خصم المخزون' : 'Deduct Stock')}
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+      </BaseModal>
     </View>
   );
 }
@@ -1843,35 +1824,7 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     fontSize: 11,
     color: colors.mutedForeground,
   },
-  // Adjustment Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: '90%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalSubtitle: {
-    fontSize: 13,
-    color: colors.mutedForeground,
-    marginTop: 2,
-  },
+  // Adjustment Modal content styles (header handled by BaseModal)
   currentStockBox: {
     backgroundColor: colors.secondary,
     borderRadius: 12,

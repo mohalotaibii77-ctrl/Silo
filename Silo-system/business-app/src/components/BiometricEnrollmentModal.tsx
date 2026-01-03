@@ -11,16 +11,13 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Modal,
-  Dimensions,
   ActivityIndicator,
 } from 'react-native';
-import { ScanFace, Fingerprint, Shield, X } from 'lucide-react-native';
+import { ScanFace, Fingerprint, Shield } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
 import { biometricAuth, BiometricType } from '../services/BiometricAuthService';
-
-const { width } = Dimensions.get('window');
+import { BaseModal } from './BaseModal';
 
 interface BiometricEnrollmentModalProps {
   visible: boolean;
@@ -91,108 +88,75 @@ export function BiometricEnrollmentModal({
   };
 
   return (
-    <Modal
+    <BaseModal
       visible={visible}
-      transparent={true}
-      animationType="fade"
-      statusBarTranslucent
+      onClose={onSkip}
+      title={getTitle()}
+      subtitle={getDescription()}
+      height="75%"
+      scrollable={false}
     >
-      <View style={styles.overlay}>
-        <View style={[styles.container, { backgroundColor: colors.background }]}>
-          {/* Close button */}
-          <TouchableOpacity
-            style={[styles.closeButton, isRTL && { left: 16, right: 'auto' }]}
-            onPress={onSkip}
-          >
-            <X size={24} color={colors.mutedForeground} />
-          </TouchableOpacity>
-
-          {/* Icon */}
-          <View style={[styles.iconContainer, { backgroundColor: colors.primary + '15' }]}>
-            {renderIcon()}
-          </View>
-
-          {/* Title */}
-          <Text style={[styles.title, { color: colors.foreground }]}>
-            {getTitle()}
-          </Text>
-
-          {/* Description */}
-          <Text style={[styles.description, { color: colors.mutedForeground }]}>
-            {getDescription()}
-          </Text>
-
-          {/* Security badge */}
-          <View style={[styles.securityBadge, { backgroundColor: colors.muted }]}>
-            <Shield size={16} color={colors.primary} />
-            <Text style={[styles.securityText, { color: colors.mutedForeground }]}>
-              {t('Secured with device encryption', 'مؤمن بتشفير الجهاز')}
-            </Text>
-          </View>
-
-          {/* Enable button */}
-          <TouchableOpacity
-            style={[styles.enableButton, { backgroundColor: colors.primary }]}
-            onPress={handleEnable}
-            disabled={isEnabling}
-          >
-            {isEnabling ? (
-              <ActivityIndicator size="small" color={colors.primaryForeground} />
-            ) : (
-              <>
-                {renderIcon()}
-                <Text style={[styles.enableButtonText, { color: colors.primaryForeground }]}>
-                  {t(`Enable ${getBiometricName()}`, `تفعيل ${getBiometricName()}`)}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-
-          {/* Skip button */}
-          <TouchableOpacity
-            style={[styles.skipButton, { borderColor: colors.border }]}
-            onPress={onSkip}
-            disabled={isEnabling}
-          >
-            <Text style={[styles.skipButtonText, { color: colors.foreground }]}>
-              {t('Not Now', 'ليس الآن')}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Don't ask again link */}
-          <TouchableOpacity
-            style={styles.dontAskButton}
-            onPress={onDontAskAgain}
-            disabled={isEnabling}
-          >
-            <Text style={[styles.dontAskText, { color: colors.mutedForeground }]}>
-              {t("Don't ask again", 'لا تسألني مرة أخرى')}
-            </Text>
-          </TouchableOpacity>
+      <View style={styles.container}>
+        {/* Icon */}
+        <View style={[styles.iconContainer, { backgroundColor: colors.primary + '15' }]}>
+          {renderIcon()}
         </View>
+
+        {/* Security badge */}
+        <View style={[styles.securityBadge, { backgroundColor: colors.muted }]}>
+          <Shield size={16} color={colors.primary} />
+          <Text style={[styles.securityText, { color: colors.mutedForeground }]}>
+            {t('Secured with device encryption', 'مؤمن بتشفير الجهاز')}
+          </Text>
+        </View>
+
+        {/* Enable button */}
+        <TouchableOpacity
+          style={[styles.enableButton, { backgroundColor: colors.primary }]}
+          onPress={handleEnable}
+          disabled={isEnabling}
+        >
+          {isEnabling ? (
+            <ActivityIndicator size="small" color={colors.primaryForeground} />
+          ) : (
+            <>
+              {renderIcon()}
+              <Text style={[styles.enableButtonText, { color: colors.primaryForeground }]}>
+                {t(`Enable ${getBiometricName()}`, `تفعيل ${getBiometricName()}`)}
+              </Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* Skip button */}
+        <TouchableOpacity
+          style={[styles.skipButton, { borderColor: colors.border }]}
+          onPress={onSkip}
+          disabled={isEnabling}
+        >
+          <Text style={[styles.skipButtonText, { color: colors.foreground }]}>
+            {t('Not Now', 'ليس الآن')}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Don't ask again link */}
+        <TouchableOpacity
+          style={styles.dontAskButton}
+          onPress={onDontAskAgain}
+          disabled={isEnabling}
+        >
+          <Text style={[styles.dontAskText, { color: colors.mutedForeground }]}>
+            {t("Don't ask again", 'لا تسألني مرة أخرى')}
+          </Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
   container: {
-    width: Math.min(380, width - 40),
-    borderRadius: 24,
-    padding: 32,
     alignItems: 'center',
-  },
-  closeButton: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    padding: 4,
   },
   iconContainer: {
     width: 88,
@@ -201,19 +165,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  description: {
-    fontSize: 14,
-    lineHeight: 20,
-    textAlign: 'center',
-    marginBottom: 20,
-    paddingHorizontal: 8,
   },
   securityBadge: {
     flexDirection: 'row',

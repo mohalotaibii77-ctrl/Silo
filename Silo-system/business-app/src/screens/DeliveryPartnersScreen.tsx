@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert
 } from 'react-native';
@@ -18,7 +17,8 @@ import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
 import { ListSkeleton } from '../components/SkeletonLoader';
-import { 
+import { BaseModal } from '../components/BaseModal';
+import {
   ArrowLeft,
   ArrowRight,
   Search,
@@ -29,7 +29,6 @@ import {
   Truck,
   User,
   Phone,
-  Mail,
   Percent,
   Coins,
   Clock,
@@ -474,196 +473,178 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Add/Edit Modal */}
-      <Modal
+      <BaseModal
         visible={isModalOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={handleCloseModal}
+        onClose={handleCloseModal}
+        title={editingPartner ? t('editPartner', 'Edit Partner') : t('addPartner', 'Add Partner')}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-            {/* Modal Header */}
-            <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-              <Text style={styles.modalTitle}>
-                {editingPartner ? t('editPartner', 'Edit Partner') : t('addPartner', 'Add Partner')}
-              </Text>
-              <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.mutedForeground} />
-              </TouchableOpacity>
-            </View>
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        )}
 
-            {/* Modal Body */}
-            <ScrollView style={styles.modalBody}>
-              {error && (
-                <View style={styles.errorBanner}>
-                  <Text style={styles.errorText}>{error}</Text>
-                </View>
-              )}
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('partnerName', 'Partner Name')} *
-                  </Text>
-                  <TextInput
-                    style={[styles.formInput, isRTL && styles.textRTL]}
-                    value={name}
-                    onChangeText={setName}
-                    placeholder={t('egTalabat', 'e.g., Talabat, Deliveroo')}
-                    placeholderTextColor={colors.mutedForeground}
-                    textAlign={isRTL ? 'right' : 'left'}
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('arabicName', 'Arabic Name')}
-                  </Text>
-                  <TextInput
-                    style={[styles.formInput, { textAlign: 'right' }]}
-                    value={nameAr}
-                    onChangeText={setNameAr}
-                    placeholder="طلبات"
-                    placeholderTextColor={colors.mutedForeground}
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('contactPerson', 'Contact Person')}
-                  </Text>
-                  <TextInput
-                    style={[styles.formInput, isRTL && styles.textRTL]}
-                    value={contactPerson}
-                    onChangeText={setContactPerson}
-                    placeholder={t('contactName', 'Contact name')}
-                    placeholderTextColor={colors.mutedForeground}
-                    textAlign={isRTL ? 'right' : 'left'}
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('phone', 'Phone')}
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={phone}
-                    onChangeText={setPhone}
-                    placeholder="+965 XXXX XXXX"
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="phone-pad"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('email', 'Email')}
-                </Text>
-                <TextInput
-                  style={styles.formInput}
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="partner@example.com"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('commissionType', 'Commission Type')} *
-                </Text>
-                <View style={[styles.commissionButtons, isRTL && styles.commissionButtonsRTL]}>
-                  <TouchableOpacity
-                    style={[styles.commissionButton, commissionType === 'percentage' && styles.commissionButtonActive]}
-                    onPress={() => setCommissionType('percentage')}
-                  >
-                    <Percent size={16} color={commissionType === 'percentage' ? colors.background : colors.mutedForeground} />
-                    <Text style={[styles.commissionButtonText, commissionType === 'percentage' && styles.commissionButtonTextActive]}>
-                      {t('percentage', 'Percentage')}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.commissionButton, commissionType === 'fixed' && styles.commissionButtonActive]}
-                    onPress={() => setCommissionType('fixed')}
-                  >
-                    <Coins size={16} color={commissionType === 'fixed' ? colors.background : colors.mutedForeground} />
-                    <Text style={[styles.commissionButtonText, commissionType === 'fixed' && styles.commissionButtonTextActive]}>
-                      {t('fixedAmount', 'Fixed Amount')}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={styles.formRow}>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('commissionValue', 'Commission Value')} *
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={commissionValue}
-                    onChangeText={setCommissionValue}
-                    placeholder={commissionType === 'percentage' ? '15' : '2.000'}
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-                <View style={styles.formGroupHalf}>
-                  <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                    {t('deliveryFee', 'Delivery Fee')}
-                  </Text>
-                  <TextInput
-                    style={styles.formInput}
-                    value={deliveryFee}
-                    onChangeText={setDeliveryFee}
-                    placeholder="1.000"
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="decimal-pad"
-                  />
-                </View>
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
-                  {t('estimatedTimeMin', 'Estimated Time (min)')}
-                </Text>
-                <TextInput
-                  style={styles.formInput}
-                  value={estimatedTime}
-                  onChangeText={setEstimatedTime}
-                  placeholder="30"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="numeric"
-                />
-              </View>
-            </ScrollView>
-
-            {/* Modal Footer */}
-            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-              <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
-                <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-                onPress={handleSubmit}
-                disabled={isSubmitting}
-              >
-                <Text style={styles.submitButtonText}>
-                  {isSubmitting 
-                    ? t('saving', 'Saving...') 
-                    : editingPartner 
-                      ? t('update', 'Update')
-                      : t('create', 'Create')}
-                </Text>
-              </TouchableOpacity>
-            </View>
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('partnerName', 'Partner Name')} *
+            </Text>
+            <TextInput
+              style={[styles.formInput, isRTL && styles.textRTL]}
+              value={name}
+              onChangeText={setName}
+              placeholder={t('egTalabat', 'e.g., Talabat, Deliveroo')}
+              placeholderTextColor={colors.mutedForeground}
+              textAlign={isRTL ? 'right' : 'left'}
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('arabicName', 'Arabic Name')}
+            </Text>
+            <TextInput
+              style={[styles.formInput, { textAlign: 'right' }]}
+              value={nameAr}
+              onChangeText={setNameAr}
+              placeholder="طلبات"
+              placeholderTextColor={colors.mutedForeground}
+            />
           </View>
         </View>
-      </Modal>
+
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('contactPerson', 'Contact Person')}
+            </Text>
+            <TextInput
+              style={[styles.formInput, isRTL && styles.textRTL]}
+              value={contactPerson}
+              onChangeText={setContactPerson}
+              placeholder={t('contactName', 'Contact name')}
+              placeholderTextColor={colors.mutedForeground}
+              textAlign={isRTL ? 'right' : 'left'}
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('phone', 'Phone')}
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="+965 XXXX XXXX"
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="phone-pad"
+            />
+          </View>
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('email', 'Email')}
+          </Text>
+          <TextInput
+            style={styles.formInput}
+            value={email}
+            onChangeText={setEmail}
+            placeholder="partner@example.com"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('commissionType', 'Commission Type')} *
+          </Text>
+          <View style={[styles.commissionButtons, isRTL && styles.commissionButtonsRTL]}>
+            <TouchableOpacity
+              style={[styles.commissionButton, commissionType === 'percentage' && styles.commissionButtonActive]}
+              onPress={() => setCommissionType('percentage')}
+            >
+              <Percent size={16} color={commissionType === 'percentage' ? colors.background : colors.mutedForeground} />
+              <Text style={[styles.commissionButtonText, commissionType === 'percentage' && styles.commissionButtonTextActive]}>
+                {t('percentage', 'Percentage')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.commissionButton, commissionType === 'fixed' && styles.commissionButtonActive]}
+              onPress={() => setCommissionType('fixed')}
+            >
+              <Coins size={16} color={commissionType === 'fixed' ? colors.background : colors.mutedForeground} />
+              <Text style={[styles.commissionButtonText, commissionType === 'fixed' && styles.commissionButtonTextActive]}>
+                {t('fixedAmount', 'Fixed Amount')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        <View style={styles.formRow}>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('commissionValue', 'Commission Value')} *
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={commissionValue}
+              onChangeText={setCommissionValue}
+              placeholder={commissionType === 'percentage' ? '15' : '2.000'}
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="decimal-pad"
+            />
+          </View>
+          <View style={styles.formGroupHalf}>
+            <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+              {t('deliveryFee', 'Delivery Fee')}
+            </Text>
+            <TextInput
+              style={styles.formInput}
+              value={deliveryFee}
+              onChangeText={setDeliveryFee}
+              placeholder="1.000"
+              placeholderTextColor={colors.mutedForeground}
+              keyboardType="decimal-pad"
+            />
+          </View>
+        </View>
+
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, isRTL && styles.textRTL]}>
+            {t('estimatedTimeMin', 'Estimated Time (min)')}
+          </Text>
+          <TextInput
+            style={styles.formInput}
+            value={estimatedTime}
+            onChangeText={setEstimatedTime}
+            placeholder="30"
+            placeholderTextColor={colors.mutedForeground}
+            keyboardType="numeric"
+          />
+        </View>
+
+        {/* Modal Footer */}
+        <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+          <TouchableOpacity style={styles.cancelButton} onPress={handleCloseModal}>
+            <Text style={styles.cancelButtonText}>{t('cancel', 'Cancel')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+            onPress={handleSubmit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.submitButtonText}>
+              {isSubmitting
+                ? t('saving', 'Saving...')
+                : editingPartner
+                  ? t('update', 'Update')
+                  : t('create', 'Create')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </BaseModal>
     </View>
   );
 }
@@ -943,49 +924,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 420,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '85%',
-  },
-  modalContentRTL: {},
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  modalHeaderRTL: {
-    flexDirection: 'row-reverse',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
+  // Form styles
   errorBanner: {
     backgroundColor: colors.destructive + '20',
     borderRadius: 10,

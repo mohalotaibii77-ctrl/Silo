@@ -1,14 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
-  Modal,
   TextInput,
   Alert,
   Image
@@ -19,17 +18,15 @@ import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
 import { ListSkeleton } from '../components/SkeletonLoader';
-import { 
+import { BaseModal } from '../components/BaseModal';
+import {
   ArrowLeft,
   ArrowRight,
   Search,
   X,
-  Plus,
-  Edit2,
   Trash2,
   Boxes,
-  Package,
-  Eye
+  Package
 } from 'lucide-react-native';
 
 // Types
@@ -345,143 +342,121 @@ export default function BundlesScreen({ navigation }: any) {
       </Animated.View>
 
       {/* Bundle Detail Modal */}
-      <Modal
+      <BaseModal
         visible={!!selectedBundle}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSelectedBundle(null)}
+        onClose={() => setSelectedBundle(null)}
+        title={selectedBundle ? (isRTL ? selectedBundle.name_ar || selectedBundle.name : selectedBundle.name) : ''}
+        subtitle={selectedBundle ? `${selectedBundle.items?.length || 0} ${t('products', 'products')}` : ''}
       >
         {selectedBundle && (
-          <View style={styles.modalOverlay}>
-            <View style={[styles.modalContent, isRTL && styles.modalContentRTL]}>
-              {/* Modal Image */}
-              <View style={styles.modalImageContainer}>
-                {selectedBundle.image_url ? (
-                  <Image source={{ uri: selectedBundle.image_url }} style={styles.modalImage} />
-                ) : (
-                  <View style={styles.modalImagePlaceholder}>
-                    <Boxes size={48} color={colors.border} />
-                  </View>
-                )}
-                <TouchableOpacity 
-                  style={[styles.modalCloseButton, isRTL ? { left: 16 } : { right: 16 }]}
-                  onPress={() => setSelectedBundle(null)}
-                >
-                  <X size={20} color={colors.mutedForeground} />
-                </TouchableOpacity>
+          <>
+            {/* Bundle Image */}
+            <View style={styles.modalImageContainer}>
+              {selectedBundle.image_url ? (
+                <Image source={{ uri: selectedBundle.image_url }} style={styles.modalImage} />
+              ) : (
+                <View style={styles.modalImagePlaceholder}>
+                  <Boxes size={48} color={colors.border} />
+                </View>
+              )}
+            </View>
+
+            {/* Price Row */}
+            <View style={[styles.priceRow, isRTL && styles.priceRowRTL]}>
+              <Text style={styles.modalPrice}>{formatCurrency(selectedBundle.price)}</Text>
+              {((selectedBundle as any).original_price || 0) > selectedBundle.price && (
+                <Text style={styles.modalOriginalPrice}>
+                  {formatCurrency((selectedBundle as any).original_price || 0)}
+                </Text>
+              )}
+            </View>
+
+            {/* Stats Row */}
+            <View style={styles.statsRow}>
+              <View style={styles.statsItem}>
+                <Text style={styles.statsValue}>{bundleStats[selectedBundle.id]?.sold || 0}</Text>
+                <Text style={styles.statsLabel}>{t('sold', 'Sold')}</Text>
               </View>
-
-              {/* Modal Content */}
-              <ScrollView style={styles.modalBody}>
-                <View style={[styles.modalHeader, isRTL && styles.modalHeaderRTL]}>
-                  <View style={styles.modalTitleContainer}>
-                    <Text style={[styles.modalTitle, isRTL && styles.textRTL]}>
-                      {isRTL ? selectedBundle.name_ar || selectedBundle.name : selectedBundle.name}
-                    </Text>
-                    <Text style={[styles.modalSubtitle, isRTL && styles.textRTL]}>
-                      {selectedBundle.items?.length || 0} {t('products', 'products')}
-                    </Text>
-                  </View>
-                  <View style={[styles.modalPriceContainer, isRTL && { alignItems: 'flex-start' }]}>
-                    <Text style={styles.modalPrice}>{formatCurrency(selectedBundle.price)}</Text>
-                    {/* Use original_price from backend API */}
-                    {((selectedBundle as any).original_price || 0) > selectedBundle.price && (
-                      <Text style={styles.modalOriginalPrice}>
-                        {formatCurrency((selectedBundle as any).original_price || 0)}
+              <View style={styles.statsItemDivider} />
+              <View style={styles.statsItem}>
+                {(() => {
+                  const stats = bundleStats[selectedBundle.id];
+                  const margin = stats?.margin_percent ?? 0;
+                  return (
+                    <>
+                      <Text style={[
+                        styles.statsValue,
+                        margin >= 30 ? styles.marginGood : margin >= 15 ? styles.marginOk : styles.marginLow
+                      ]}>
+                        {margin.toFixed(1)}%
                       </Text>
-                    )}
-                  </View>
-                </View>
-
-                {/* Stats Row */}
-                <View style={styles.statsRow}>
-                  <View style={styles.statsItem}>
-                    <Text style={styles.statsValue}>{bundleStats[selectedBundle.id]?.sold || 0}</Text>
-                    <Text style={styles.statsLabel}>{t('sold', 'Sold')}</Text>
-                  </View>
-                  <View style={styles.statsItemDivider} />
-                  <View style={styles.statsItem}>
-                    {(() => {
-                      const stats = bundleStats[selectedBundle.id];
-                      // margin_percent comes from backend bundleStats
-                      const margin = stats?.margin_percent ?? 0; // Backend provides margin, default to 0 if unavailable
-                      return (
-                        <>
-                          <Text style={[
-                            styles.statsValue,
-                            margin >= 30 ? styles.marginGood : margin >= 15 ? styles.marginOk : styles.marginLow
-                          ]}>
-                            {margin.toFixed(1)}%
-                          </Text>
-                          <Text style={styles.statsLabel}>{t('margin', 'Margin')}</Text>
-                        </>
-                      );
-                    })()}
-                  </View>
-                  <View style={styles.statsItemDivider} />
-                  <View style={styles.statsItem}>
-                    <Text style={styles.statsValue}>
-                      {formatCurrency(bundleStats[selectedBundle.id]?.total_cost || 0)}
-                    </Text>
-                    <Text style={styles.statsLabel}>{t('cost', 'Cost')}</Text>
-                  </View>
-                </View>
-
-                {/* Products in Bundle */}
-                <View style={styles.productsSection}>
-                  <View style={[styles.productsSectionHeader, isRTL && styles.productsSectionHeaderRTL]}>
-                    <Package size={16} color={colors.mutedForeground} />
-                    <Text style={styles.productsSectionTitle}>{t('productsInBundle', 'Products in Bundle')}</Text>
-                  </View>
-
-                  {selectedBundle.items && selectedBundle.items.length > 0 ? (
-                    <View style={styles.productsList}>
-                      {selectedBundle.items.map((item) => (
-                        <View key={item.id} style={[styles.productItem, isRTL && styles.productItemRTL]}>
-                          <View style={[styles.productItemLeft, isRTL && styles.productItemLeftRTL]}>
-                            <View style={styles.productImage}>
-                              {item.product?.image_url ? (
-                                <Image source={{ uri: item.product.image_url }} style={styles.productImageImg} />
-                              ) : (
-                                <Package size={20} color={colors.border} />
-                              )}
-                            </View>
-                            <View style={[styles.productItemInfo, isRTL && { alignItems: 'flex-end' }]}>
-                              <Text style={[styles.productItemName, isRTL && styles.textRTL]}>
-                                {isRTL ? item.product?.name_ar || item.product?.name : item.product?.name}
-                              </Text>
-                              <Text style={styles.productItemPrice}>
-                                {formatCurrency(item.product?.price || 0)} × {item.quantity}
-                              </Text>
-                            </View>
-                          </View>
-                          <Text style={styles.productItemTotal}>
-                            {formatCurrency((item.product?.price || 0) * item.quantity)}
-                          </Text>
-                        </View>
-                      ))}
-                    </View>
-                  ) : (
-                    <Text style={styles.noProductsText}>
-                      {t('noProductsInBundle', 'No products in this bundle')}
-                    </Text>
-                  )}
-                </View>
-              </ScrollView>
-
-              {/* Modal Footer */}
-              <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
-                <TouchableOpacity 
-                  style={styles.deleteButton}
-                  onPress={() => handleDelete(selectedBundle)}
-                >
-                  <Trash2 size={18} color={colors.destructive} />
-                </TouchableOpacity>
+                      <Text style={styles.statsLabel}>{t('margin', 'Margin')}</Text>
+                    </>
+                  );
+                })()}
+              </View>
+              <View style={styles.statsItemDivider} />
+              <View style={styles.statsItem}>
+                <Text style={styles.statsValue}>
+                  {formatCurrency(bundleStats[selectedBundle.id]?.total_cost || 0)}
+                </Text>
+                <Text style={styles.statsLabel}>{t('cost', 'Cost')}</Text>
               </View>
             </View>
-          </View>
+
+            {/* Products in Bundle */}
+            <View style={styles.productsSection}>
+              <View style={[styles.productsSectionHeader, isRTL && styles.productsSectionHeaderRTL]}>
+                <Package size={16} color={colors.mutedForeground} />
+                <Text style={styles.productsSectionTitle}>{t('productsInBundle', 'Products in Bundle')}</Text>
+              </View>
+
+              {selectedBundle.items && selectedBundle.items.length > 0 ? (
+                <View style={styles.productsList}>
+                  {selectedBundle.items.map((item) => (
+                    <View key={item.id} style={[styles.productItem, isRTL && styles.productItemRTL]}>
+                      <View style={[styles.productItemLeft, isRTL && styles.productItemLeftRTL]}>
+                        <View style={styles.productImage}>
+                          {item.product?.image_url ? (
+                            <Image source={{ uri: item.product.image_url }} style={styles.productImageImg} />
+                          ) : (
+                            <Package size={20} color={colors.border} />
+                          )}
+                        </View>
+                        <View style={[styles.productItemInfo, isRTL && { alignItems: 'flex-end' }]}>
+                          <Text style={[styles.productItemName, isRTL && styles.textRTL]}>
+                            {isRTL ? item.product?.name_ar || item.product?.name : item.product?.name}
+                          </Text>
+                          <Text style={styles.productItemPrice}>
+                            {formatCurrency(item.product?.price || 0)} x {item.quantity}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.productItemTotal}>
+                        {formatCurrency((item.product?.price || 0) * item.quantity)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <Text style={styles.noProductsText}>
+                  {t('noProductsInBundle', 'No products in this bundle')}
+                </Text>
+              )}
+            </View>
+
+            {/* Modal Footer */}
+            <View style={[styles.modalFooter, isRTL && styles.modalFooterRTL]}>
+              <TouchableOpacity
+                style={styles.deleteButton}
+                onPress={() => handleDelete(selectedBundle)}
+              >
+                <Trash2 size={18} color={colors.destructive} />
+              </TouchableOpacity>
+            </View>
+          </>
         )}
-      </Modal>
+      </BaseModal>
     </View>
   );
 }
@@ -719,27 +694,13 @@ const createStyles = (colors: any) => StyleSheet.create({
   textRTL: {
     textAlign: 'right',
   },
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    width: '100%',
-    maxWidth: 400,
-    backgroundColor: colors.background,
-    borderRadius: 20,
-    maxHeight: '85%',
-    overflow: 'hidden',
-  },
-  modalContentRTL: {},
+  // Modal content styles
   modalImageContainer: {
-    height: 180,
+    height: 160,
     backgroundColor: colors.surface,
-    position: 'relative',
+    borderRadius: 12,
+    marginBottom: 16,
+    overflow: 'hidden',
   },
   modalImage: {
     width: '100%',
@@ -752,43 +713,14 @@ const createStyles = (colors: any) => StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalCloseButton: {
-    position: 'absolute',
-    top: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.background + 'E0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalBody: {
-    padding: 20,
-  },
-  modalHeader: {
+  priceRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    gap: 12,
     marginBottom: 16,
   },
-  modalHeaderRTL: {
+  priceRowRTL: {
     flexDirection: 'row-reverse',
-  },
-  modalTitleContainer: {
-    flex: 1,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: colors.mutedForeground,
-    marginTop: 4,
-  },
-  modalPriceContainer: {
-    alignItems: 'flex-end',
   },
   modalPrice: {
     fontSize: 20,

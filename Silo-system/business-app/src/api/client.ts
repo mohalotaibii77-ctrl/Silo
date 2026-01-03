@@ -24,7 +24,7 @@ const SECURE_TOKEN_KEY = 'auth_token';
  */
 const getApiBase = () => {
   // Hardcoded LAN IP for development
-  return 'http://192.168.0.244:9000';
+  return 'http://192.168.50.152:9000';
 };
 
 const API_BASE = getApiBase();

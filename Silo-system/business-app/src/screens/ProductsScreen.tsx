@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   FlatList,
   Platform,
-  Modal,
   Alert,
   TextInput,
   Animated,
@@ -15,8 +14,8 @@ import {
   ScrollView,
   Image,
   Switch,
-  KeyboardAvoidingView
 } from 'react-native';
+import { BaseModal } from '../components/BaseModal';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
@@ -1163,28 +1162,21 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <View style={modalStyles.overlay}>
-          <View style={[modalStyles.container, { maxHeight: '95%' }]}>
-            {/* Header */}
-            <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-              <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-                {editingProduct ? t('editProduct') : t('addProduct')}
-              </Text>
-              <TouchableOpacity onPress={onClose}>
-                <X size={24} color={colors.foreground} />
-              </TouchableOpacity>
-            </View>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={editingProduct ? t('editProduct') : t('addProduct')}
+      height="90%"
+      scrollable={false}
+    >
+      {/* Error Banner */}
+      {error && (
+        <View style={{ backgroundColor: `${colors.destructive}15`, padding: 12, marginBottom: 12, borderRadius: 10 }}>
+          <Text style={{ color: colors.destructive, fontSize: 13 }}>{error}</Text>
+        </View>
+      )}
 
-            {/* Error Banner */}
-            {error && (
-              <View style={{ backgroundColor: `${colors.destructive}15`, padding: 12, marginHorizontal: 20, marginTop: 12, borderRadius: 10 }}>
-                <Text style={{ color: colors.destructive, fontSize: 13 }}>{error}</Text>
-              </View>
-            )}
-
-            <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
                 {/* Image Picker */}
                 <View style={{ alignItems: 'center', marginBottom: 20 }}>
                   <View style={{ width: 100, height: 100, borderRadius: 16, backgroundColor: colors.secondary, justifyContent: 'center', alignItems: 'center', marginBottom: 12, overflow: 'hidden', borderWidth: 2, borderStyle: 'dashed', borderColor: colors.border }}>
@@ -1432,21 +1424,18 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
                     )}
                   </View>
                 </View>
-            </ScrollView>
+      </ScrollView>
 
-            {/* Footer */}
-            <View style={modalStyles.footer}>
-              <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
-                <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving}>
-                <Text style={modalStyles.saveButtonText}>{saving ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...') : t('save')}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+      {/* Footer */}
+      <View style={modalStyles.footer}>
+        <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
+          <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} onPress={handleSave} disabled={saving}>
+          <Text style={modalStyles.saveButtonText}>{saving ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...') : t('save')}</Text>
+        </TouchableOpacity>
+      </View>
+    </BaseModal>
   );
 }
 
@@ -1471,80 +1460,70 @@ function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRT
   const margin = (product as any).margin_percent ?? 0; // Backend provides margin, default to 0 if unavailable
 
   return (
-    <Modal visible={visible} transparent animationType="fade">
-      <TouchableOpacity 
-        style={modalStyles.overlay} 
-        activeOpacity={1} 
-        onPress={onClose}
-      >
-        <View style={modalStyles.detailsContainer} onStartShouldSetResponder={() => true}>
-          {/* Image */}
-          <View style={modalStyles.detailsImageContainer}>
-            {product.image_url ? (
-              <Image 
-                source={{ uri: product.image_url }} 
-                style={modalStyles.detailsImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <View style={modalStyles.detailsImagePlaceholder}>
-                <ImageIcon size={48} color={colors.border} />
-              </View>
-            )}
-            <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
-              <X size={20} color={colors.foreground} />
-            </TouchableOpacity>
+    <BaseModal
+      visible={visible}
+      onClose={onClose}
+      title={language === 'ar' && product.name_ar ? product.name_ar : product.name}
+      height="75%"
+    >
+      {/* Image */}
+      <View style={modalStyles.detailsImageContainer}>
+        {product.image_url ? (
+          <Image
+            source={{ uri: product.image_url }}
+            style={modalStyles.detailsImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View style={modalStyles.detailsImagePlaceholder}>
+            <ImageIcon size={48} color={colors.border} />
           </View>
+        )}
+      </View>
 
-          {/* Content */}
-          <View style={modalStyles.detailsContent}>
-            <Text style={[modalStyles.detailsName, isRTL && styles.rtlText]}>
-              {language === 'ar' && product.name_ar ? product.name_ar : product.name}
-            </Text>
-            
-            {product.category && (
-              <View style={modalStyles.categoryBadge}>
-                <Text style={modalStyles.categoryBadgeText}>{product.category}</Text>
-              </View>
-            )}
+      {/* Content */}
+      <View style={modalStyles.detailsContent}>
+        {product.category && (
+          <View style={modalStyles.categoryBadge}>
+            <Text style={modalStyles.categoryBadgeText}>{product.category}</Text>
+          </View>
+        )}
 
-            {product.description && (
-              <Text style={[modalStyles.detailsDescription, isRTL && styles.rtlText]}>
-                {product.description}
+        {product.description && (
+          <Text style={[modalStyles.detailsDescription, isRTL && styles.rtlText]}>
+            {product.description}
+          </Text>
+        )}
+
+        <View style={[modalStyles.priceRow, isRTL && styles.rtlRow]}>
+          <View>
+            <Text style={modalStyles.priceLabel}>{t('price')}</Text>
+            <Text style={modalStyles.priceValue}>{formatCurrency(product.price)}</Text>
+          </View>
+          {product.cost && (
+            <View style={isRTL ? { alignItems: 'flex-start' } : { alignItems: 'flex-end' }}>
+              <Text style={modalStyles.priceLabel}>{t('margin')}</Text>
+              <Text style={[modalStyles.marginValue, {
+                color: margin >= 30 ? '#22c55e' : margin >= 15 ? '#f59e0b' : '#ef4444'
+              }]}>
+                {margin.toFixed(1)}%
               </Text>
-            )}
-
-            <View style={[modalStyles.priceRow, isRTL && styles.rtlRow]}>
-              <View>
-                <Text style={modalStyles.priceLabel}>{t('price')}</Text>
-                <Text style={modalStyles.priceValue}>{formatCurrency(product.price)}</Text>
-              </View>
-              {product.cost && (
-                <View style={isRTL ? { alignItems: 'flex-start' } : { alignItems: 'flex-end' }}>
-                  <Text style={modalStyles.priceLabel}>{t('margin')}</Text>
-                  <Text style={[modalStyles.marginValue, { 
-                    color: margin >= 30 ? '#22c55e' : margin >= 15 ? '#f59e0b' : '#ef4444' 
-                  }]}>
-                    {margin.toFixed(1)}%
-                  </Text>
-                </View>
-              )}
             </View>
-
-            {/* Actions */}
-            <View style={modalStyles.actionsRow}>
-              <TouchableOpacity style={modalStyles.editButton} onPress={onEdit}>
-                <Edit2 size={18} color={colors.primaryForeground} />
-                <Text style={modalStyles.editButtonText}>{t('editProduct')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={modalStyles.deleteButton} onPress={onDelete}>
-                <Trash2 size={18} color={colors.destructive} />
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
         </View>
-      </TouchableOpacity>
-    </Modal>
+
+        {/* Actions */}
+        <View style={modalStyles.actionsRow}>
+          <TouchableOpacity style={modalStyles.editButton} onPress={onEdit}>
+            <Edit2 size={18} color={colors.primaryForeground} />
+            <Text style={modalStyles.editButtonText}>{t('editProduct')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={modalStyles.deleteButton} onPress={onDelete}>
+            <Trash2 size={18} color={colors.destructive} />
+          </TouchableOpacity>
+        </View>
+      </View>
+    </BaseModal>
   );
 }
 
@@ -1776,34 +1755,7 @@ const createStyles = (colors: any) => StyleSheet.create({
 });
 
 const createModalStyles = (colors: any) => StyleSheet.create({
-  overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 40,
-  },
-  container: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    maxHeight: '100%',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
-  content: {
-    padding: 20,
-  },
+  // Note: overlay, container, header, title, content removed - now handled by BaseModal
   field: {
     marginBottom: 20,
   },
@@ -1926,17 +1878,13 @@ const createModalStyles = (colors: any) => StyleSheet.create({
     fontWeight: '600',
     color: colors.primaryForeground,
   },
-  // Details modal styles
-  detailsContainer: {
-    backgroundColor: colors.card,
-    borderRadius: 24,
-    overflow: 'hidden',
-    maxHeight: '90%',
-  },
+  // Details modal styles - detailsContainer removed, now handled by BaseModal
   detailsImageContainer: {
-    height: 200,
+    height: 180,
     backgroundColor: colors.secondary,
-    position: 'relative',
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
   },
   detailsImage: {
     width: '100%',
@@ -1948,25 +1896,11 @@ const createModalStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  closeButton: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  // closeButton removed - now handled by BaseModal
   detailsContent: {
-    padding: 20,
+    // padding removed - BaseModal handles padding
   },
-  detailsName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: colors.foreground,
-  },
+  // detailsName removed - BaseModal title handles this
   categoryBadge: {
     alignSelf: 'flex-start',
     backgroundColor: colors.secondary,

@@ -1,9 +1,9 @@
 /**
  * POS Lock Screen Component
- * 
+ *
  * Displays a PIN pad overlay when the POS screen becomes idle.
  * Any employee with POS access can unlock by entering their PIN.
- * 
+ *
  * Flow:
  * 1. Device is logged in (has business token)
  * 2. Screen locks after 5 minutes of inactivity
@@ -19,9 +19,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Modal,
   ActivityIndicator,
-  Dimensions,
   Vibration,
   Platform,
 } from 'react-native';
@@ -31,8 +29,7 @@ import { useLocalization } from '../localization/LocalizationContext';
 import { API_URL } from '../api/client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { biometricAuth, BiometricType } from '../services/BiometricAuthService';
-
-const { width } = Dimensions.get('window');
+import { BaseModal } from './BaseModal';
 
 interface POSLockScreenProps {
   visible: boolean;
@@ -266,118 +263,99 @@ export function POSLockScreen({ visible, onUnlock, currentEmployeeName }: POSLoc
     ));
   };
 
+  const getSubtitle = () => {
+    return currentEmployeeName
+      ? t(`Last: ${currentEmployeeName}`, `السابق: ${currentEmployeeName}`)
+      : t('Enter your PIN to unlock', 'أدخل رمز PIN للفتح');
+  };
+
   return (
-    <Modal
+    <BaseModal
       visible={visible}
-      transparent={true}
-      animationType="fade"
-      statusBarTranslucent
+      onClose={() => {}} // Lock screen cannot be dismissed
+      title={t('Screen Locked', 'الشاشة مقفلة')}
+      subtitle={getSubtitle()}
+      height="90%"
+      scrollable={false}
+      showCloseButton={false}
     >
-      <View style={[styles.overlay, { backgroundColor: 'rgba(0, 0, 0, 0.85)' }]}>
-        <View 
-          style={[
-            styles.container, 
-            { backgroundColor: colors.background },
-            shake && styles.shake,
-          ]}
-        >
-          {/* Lock Icon */}
-          <View style={[styles.lockIconContainer, { backgroundColor: colors.primary + '20' }]}>
-            <Lock size={40} color={colors.primary} />
-          </View>
+      <View style={[styles.container, shake && styles.shake]}>
+        {/* Lock Icon */}
+        <View style={[styles.lockIconContainer, { backgroundColor: colors.primary + '20' }]}>
+          <Lock size={40} color={colors.primary} />
+        </View>
 
-          {/* Title */}
-          <Text style={[styles.title, { color: colors.foreground }]}>
-            {t('Screen Locked', 'الشاشة مقفلة')}
-          </Text>
-
-          {/* Subtitle with previous employee name */}
-          <Text style={[styles.subtitle, { color: colors.mutedForeground }]}>
-            {currentEmployeeName 
-              ? t(`Last: ${currentEmployeeName}`, `السابق: ${currentEmployeeName}`)
-              : t('Enter your PIN to unlock', 'أدخل رمز PIN للفتح')}
-          </Text>
-
-          {/* Error message */}
-          {error && (
-            <View style={[styles.errorContainer, { backgroundColor: colors.destructive + '20' }]}>
-              <Text style={[styles.errorText, { color: colors.destructive }]}>
-                {error}
-              </Text>
-            </View>
-          )}
-
-          {/* PIN Dots */}
-          <View style={[styles.pinDotsContainer, isRTL && { flexDirection: 'row-reverse' }]}>
-            {renderPinDots()}
-          </View>
-
-          {/* Loading indicator */}
-          {isLoading && (
-            <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
-          )}
-
-          {/* Keypad */}
-          <View style={styles.keypad}>
-            {renderKeypad()}
-          </View>
-
-          {/* Biometric unlock button */}
-          {biometricAvailable && (
-            <TouchableOpacity
-              style={[
-                styles.biometricButton,
-                {
-                  backgroundColor: colors.primary + '15',
-                  borderColor: colors.primary + '30',
-                },
-              ]}
-              onPress={handleBiometricUnlock}
-              disabled={biometricLoading || isLoading}
-            >
-              {biometricLoading ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <>
-                  {biometricType === 'face' ? (
-                    <ScanFace size={24} color={colors.primary} />
-                  ) : (
-                    <Fingerprint size={24} color={colors.primary} />
-                  )}
-                  <Text style={[styles.biometricButtonText, { color: colors.primary }]}>
-                    {t(
-                      `Use ${biometricAuth.getBiometricTypeName(biometricType, 'en')}`,
-                      `استخدم ${biometricAuth.getBiometricTypeName(biometricType, 'ar')}`
-                    )}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
-
-          {/* Hint */}
-          <View style={[styles.hintContainer, { backgroundColor: colors.muted }]}>
-            <User size={16} color={colors.mutedForeground} />
-            <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
-              {t('Any employee with POS access can unlock', 'أي موظف لديه صلاحية نقطة البيع يمكنه الفتح')}
+        {/* Error message */}
+        {error && (
+          <View style={[styles.errorContainer, { backgroundColor: colors.destructive + '20' }]}>
+            <Text style={[styles.errorText, { color: colors.destructive }]}>
+              {error}
             </Text>
           </View>
+        )}
+
+        {/* PIN Dots */}
+        <View style={[styles.pinDotsContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+          {renderPinDots()}
+        </View>
+
+        {/* Loading indicator */}
+        {isLoading && (
+          <ActivityIndicator size="small" color={colors.primary} style={styles.loader} />
+        )}
+
+        {/* Keypad */}
+        <View style={styles.keypad}>
+          {renderKeypad()}
+        </View>
+
+        {/* Biometric unlock button */}
+        {biometricAvailable && (
+          <TouchableOpacity
+            style={[
+              styles.biometricButton,
+              {
+                backgroundColor: colors.primary + '15',
+                borderColor: colors.primary + '30',
+              },
+            ]}
+            onPress={handleBiometricUnlock}
+            disabled={biometricLoading || isLoading}
+          >
+            {biometricLoading ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <>
+                {biometricType === 'face' ? (
+                  <ScanFace size={24} color={colors.primary} />
+                ) : (
+                  <Fingerprint size={24} color={colors.primary} />
+                )}
+                <Text style={[styles.biometricButtonText, { color: colors.primary }]}>
+                  {t(
+                    `Use ${biometricAuth.getBiometricTypeName(biometricType, 'en')}`,
+                    `استخدم ${biometricAuth.getBiometricTypeName(biometricType, 'ar')}`
+                  )}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {/* Hint */}
+        <View style={[styles.hintContainer, { backgroundColor: colors.muted }]}>
+          <User size={16} color={colors.mutedForeground} />
+          <Text style={[styles.hintText, { color: colors.mutedForeground }]}>
+            {t('Any employee with POS access can unlock', 'أي موظف لديه صلاحية نقطة البيع يمكنه الفتح')}
+          </Text>
         </View>
       </View>
-    </Modal>
+    </BaseModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
   container: {
-    width: Math.min(400, width - 40),
-    borderRadius: 24,
-    padding: 32,
     alignItems: 'center',
   },
   shake: {
@@ -390,16 +368,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    marginBottom: 24,
-    textAlign: 'center',
   },
   errorContainer: {
     paddingHorizontal: 16,

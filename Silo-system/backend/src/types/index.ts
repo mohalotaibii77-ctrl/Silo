@@ -606,6 +606,10 @@ export interface GeofenceSettings {
   working_days: string[];  // e.g., ["sunday", "monday", "tuesday", ...]
   opening_time: string;    // HH:MM format
   closing_time: string;    // HH:MM format
+  // Checkout restrictions
+  min_shift_hours: number;              // Minimum hours before checkout allowed
+  checkout_buffer_minutes_before: number; // Minutes before closing that checkout is allowed
+  require_checkout_restrictions: boolean; // Whether checkout restrictions are enforced
 }
 
 // Attendance status types

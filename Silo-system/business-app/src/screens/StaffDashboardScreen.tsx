@@ -316,7 +316,7 @@ export default function StaffDashboardScreen({ navigation }: any) {
           </View>
 
           {isClockedIn ? (
-            <View style={[styles.clockedInContainer, isRTL && styles.rtlRow]}>
+            <View style={styles.clockedInContainer}>
               <View style={[styles.clockedInInfo, isRTL && { alignItems: 'flex-end' }]}>
                 <View style={[styles.statusBadge, isRTL && styles.rtlRow]}>
                   <View style={[
@@ -696,12 +696,11 @@ const createStyles = (colors: ThemeColors) => StyleSheet.create({
     marginLeft: 10,
   },
   clockedInContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
+    gap: 16,
   },
   clockedInInfo: {
-    flex: 1,
+    flexDirection: 'column',
   },
   statusBadge: {
     flexDirection: 'row',

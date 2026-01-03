@@ -1087,6 +1087,34 @@ router.put('/geofence', authenticateBusinessToken, async (req: AuthenticatedRequ
 });
 
 // ============================================
+// BRANCH MANAGEMENT ENDPOINTS
+// ============================================
+
+// Get all branches for the authenticated user's business
+router.get('/branches', authenticateBusinessToken, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const businessId = req.businessUser?.business_id;
+
+    const { data, error } = await supabase
+      .from('branches')
+      .select('id, name, branch_code, address, phone, is_main, latitude, longitude')
+      .eq('business_id', businessId)
+      .order('is_main', { ascending: false })
+      .order('name');
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      data: data || []
+    });
+  } catch (error: any) {
+    console.error('Error fetching branches:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
 // BRANCH GEOFENCE ENDPOINTS
 // ============================================
 

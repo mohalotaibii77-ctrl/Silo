@@ -49,6 +49,10 @@ interface OperationalSettings {
   checkin_buffer_minutes_before: number;
   checkin_buffer_minutes_after: number;
   gps_accuracy_threshold_meters: number;
+  // Checkout restriction settings
+  require_checkout_restrictions: boolean;
+  min_shift_hours: number;
+  checkout_buffer_minutes_before: number;
 }
 
 const defaultSettings: OperationalSettings = {
@@ -73,6 +77,10 @@ const defaultSettings: OperationalSettings = {
   checkin_buffer_minutes_before: 15,
   checkin_buffer_minutes_after: 30,
   gps_accuracy_threshold_meters: 50,
+  // Checkout restriction settings
+  require_checkout_restrictions: true,
+  min_shift_hours: 4,
+  checkout_buffer_minutes_before: 30,
 };
 
 interface POSUser {
@@ -1134,22 +1142,90 @@ export default function OperationalSettingsPage() {
                   )}
                 </>
               )}
-            </div>
 
-            {/* Employee Schedule Overrides */}
-            {settings.require_gps_checkin && employees.length > 0 && (
-              <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">
-                <div className="flex items-center gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
-                  <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                    <UserCog className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
-                  </div>
+              {/* Checkout Restrictions - inside GPS Check-in Settings */}
+              <div className="pt-4 border-t border-zinc-200 dark:border-zinc-700 space-y-4">
+                <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="font-semibold text-zinc-900 dark:text-white">{t('Employee Schedule Overrides', 'جداول الموظفين المخصصة')}</h2>
-                    <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set custom working hours/days for specific employees', 'تعيين ساعات/أيام عمل مخصصة لموظفين محددين')}</p>
+                    <p className="font-medium text-zinc-900 dark:text-white">{t('Checkout Restrictions', 'قيود تسجيل الخروج')}</p>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Employees must meet requirements to check out', 'يجب على الموظفين استيفاء المتطلبات لتسجيل الخروج')}</p>
                   </div>
+                  <button
+                    onClick={() => updateSetting('require_checkout_restrictions', !settings.require_checkout_restrictions)}
+                    className={`relative w-12 h-7 rounded-full transition-colors ${
+                      settings.require_checkout_restrictions ? 'bg-green-500' : 'bg-zinc-300 dark:bg-zinc-600'
+                    }`}
+                  >
+                    <span className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                      settings.require_checkout_restrictions ? (isRTL ? 'right-6' : 'left-6') : (isRTL ? 'right-1' : 'left-1')
+                    }`} />
+                  </button>
                 </div>
 
-                <div className="space-y-3">
+                {settings.require_checkout_restrictions && (
+                  <>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                          {t('Minimum Shift Hours', 'الحد الأدنى لساعات العمل')}
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={settings.min_shift_hours}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                              updateSetting('min_shift_hours', val === '' ? 4 : parseFloat(val));
+                            }
+                          }}
+                          className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                        />
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          {t('Must work at least this many hours', 'يجب العمل على الأقل هذا العدد من الساعات')}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                          {t('Checkout Buffer (minutes)', 'مهلة الخروج (دقائق)')}
+                        </label>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={settings.checkout_buffer_minutes_before}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (val === '' || /^\d+$/.test(val)) {
+                              updateSetting('checkout_buffer_minutes_before', val === '' ? 30 : parseInt(val));
+                            }
+                          }}
+                          className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                        />
+                        <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          {t('Can checkout this many minutes before closing', 'يمكن الخروج قبل الإغلاق بهذا العدد من الدقائق')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                      <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                        <strong>{t('How it works:', 'كيف يعمل:')}</strong>{' '}
+                        {t('Employees must work at least', 'يجب على الموظفين العمل على الأقل')} <strong>{settings.min_shift_hours}</strong> {t('hours AND can only check out starting', 'ساعات ويمكنهم تسجيل الخروج فقط بدءًا من')} <strong>{settings.checkout_buffer_minutes_before}</strong> {t('minutes before closing time.', 'دقيقة قبل وقت الإغلاق.')}
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Employee Schedule Overrides - inside GPS Check-in Settings */}
+              {employees.length > 0 && (
+                <div className="pt-4 border-t border-zinc-200 dark:border-zinc-700 space-y-4">
+                  <div>
+                    <p className="font-medium text-zinc-900 dark:text-white">{t('Employee Schedule Overrides', 'جداول الموظفين المخصصة')}</p>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set custom working hours/days for specific employees', 'تعيين ساعات/أيام عمل مخصصة لموظفين محددين')}</p>
+                  </div>
+
+                  <div className="space-y-3">
                   {employees.map((employee) => {
                     const override = getOverrideForEmployee(employee.id);
                     const isEditing = editingEmployeeId === employee.id;
@@ -1301,9 +1377,10 @@ export default function OperationalSettingsPage() {
                       </div>
                     );
                   })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Notifications */}
             <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">

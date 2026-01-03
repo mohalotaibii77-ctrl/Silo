@@ -171,6 +171,15 @@ export default function HRScreen({ navigation }: any) {
           icon: Coffee,
         };
       case 'checked_in':
+        // Show late status if checked in late
+        if (lateMinutes > 0) {
+          return {
+            label: language === 'ar' ? `متأخر ${lateMinutes}د` : `Late ${lateMinutes}m`,
+            color: '#d97706',
+            bgColor: '#fef3c7',
+            icon: AlertCircle,
+          };
+        }
         return {
           label: language === 'ar' ? 'مسجل دخول' : 'Checked In',
           color: '#2563eb',
@@ -189,7 +198,17 @@ export default function HRScreen({ navigation }: any) {
 
   const formatTime = (timeStr: string | null) => {
     if (!timeStr) return '--:--';
+    // Backend already formats time as "HH:MM AM/PM", so check if it's already formatted
+    // If it looks like a time string (contains AM/PM or is short), return as-is
+    if (timeStr.includes('AM') || timeStr.includes('PM') || timeStr.length <= 8) {
+      return timeStr;
+    }
+    // Otherwise try to parse as ISO timestamp
     const date = new Date(timeStr);
+    if (isNaN(date.getTime())) {
+      // Invalid date, return as-is (already formatted)
+      return timeStr;
+    }
     return date.toLocaleTimeString(language === 'ar' ? 'ar-KW' : 'en-US', {
       hour: '2-digit',
       minute: '2-digit',

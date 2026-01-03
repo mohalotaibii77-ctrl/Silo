@@ -143,6 +143,11 @@ export default function SettingsScreen({ navigation }: any) {
   const [checkinBufferMinutesBefore, setCheckinBufferMinutesBefore] = useState('15');
   const [checkinBufferMinutesAfter, setCheckinBufferMinutesAfter] = useState('30');
 
+  // Checkout Restriction Settings
+  const [requireCheckoutRestrictions, setRequireCheckoutRestrictions] = useState(true);
+  const [minShiftHours, setMinShiftHours] = useState('4');
+  const [checkoutBufferMinutesBefore, setCheckoutBufferMinutesBefore] = useState('30');
+
   // POS Session Access Control
   const [posSessionAllowedUserIds, setPosSessionAllowedUserIds] = useState<number[]>([]);
   const [posUsers, setPosUsers] = useState<Array<{id: number; username: string; name: string; role: string}>>([]);
@@ -331,6 +336,10 @@ export default function SettingsScreen({ navigation }: any) {
         setGpsAccuracyThresholdMeters(String(settings.gps_accuracy_threshold_meters || 50));
         setCheckinBufferMinutesBefore(String(settings.checkin_buffer_minutes_before || 15));
         setCheckinBufferMinutesAfter(String(settings.checkin_buffer_minutes_after || 30));
+        // Checkout restriction settings
+        setRequireCheckoutRestrictions(settings.require_checkout_restrictions !== false);
+        setMinShiftHours(String(settings.min_shift_hours || 4));
+        setCheckoutBufferMinutesBefore(String(settings.checkout_buffer_minutes_before || 30));
         // POS session access control
         setPosSessionAllowedUserIds(settings.pos_session_allowed_user_ids || []);
       }
@@ -495,6 +504,10 @@ export default function SettingsScreen({ navigation }: any) {
           gps_accuracy_threshold_meters: parseInt(gpsAccuracyThresholdMeters) || 50,
           checkin_buffer_minutes_before: parseInt(checkinBufferMinutesBefore) || 15,
           checkin_buffer_minutes_after: parseInt(checkinBufferMinutesAfter) || 30,
+          // Checkout restriction settings
+          require_checkout_restrictions: requireCheckoutRestrictions,
+          min_shift_hours: parseFloat(minShiftHours) || 4,
+          checkout_buffer_minutes_before: parseInt(checkoutBufferMinutesBefore) || 30,
           // POS session access control
           pos_session_allowed_user_ids: posSessionAllowedUserIds,
         };
@@ -1624,24 +1637,85 @@ export default function SettingsScreen({ navigation }: any) {
                   })()}
                 </>
               )}
-            </View>
 
-            {/* Employee Schedule Overrides Section - Only shown when GPS check-in is enabled */}
-            {requireGpsCheckin && employees.length > 0 && (
-              <View style={styles.formSection}>
-                <View style={[styles.sectionHeader, isRTL && { flexDirection: 'row-reverse' }]}>
-                  <View style={styles.sectionIconContainer}>
-                    <UserCog size={20} color={colors.mutedForeground} />
+              {/* Checkout Restrictions - inside GPS Check-in Settings */}
+              <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <View style={[styles.switchRow, isRTL && { flexDirection: 'row-reverse' }]}>
+                  <View style={[{ flex: 1 }, isRTL && { alignItems: 'flex-end' }]}>
+                    <Text style={[styles.switchLabel, isRTL && { textAlign: 'right' }]}>
+                      {language === 'ar' ? 'قيود تسجيل الخروج' : 'Checkout Restrictions'}
+                    </Text>
+                    <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
+                      {language === 'ar' ? 'يجب على الموظفين استيفاء المتطلبات للخروج' : 'Employees must meet requirements to check out'}
+                    </Text>
                   </View>
-                  <View style={[styles.sectionHeaderText, isRTL && { alignItems: 'flex-end' }]}>
-                    <Text style={[styles.sectionTitle, isRTL && { textAlign: 'right' }]}>
+                  <Switch
+                    value={requireCheckoutRestrictions}
+                    onValueChange={setRequireCheckoutRestrictions}
+                    trackColor={{ false: colors.border, true: colors.foreground }}
+                    thumbColor={colors.background}
+                  />
+                </View>
+
+                {requireCheckoutRestrictions && (
+                  <>
+                    <View style={{ marginTop: 12, marginBottom: 12 }}>
+                      <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                        {language === 'ar' ? 'الحد الأدنى لساعات العمل' : 'Minimum Shift Hours'}
+                      </Text>
+                      <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                        <TextInput
+                          style={[styles.input, isRTL && { textAlign: 'right' }]}
+                          value={minShiftHours}
+                          onChangeText={setMinShiftHours}
+                          placeholder="4"
+                          placeholderTextColor={colors.mutedForeground}
+                          keyboardType="decimal-pad"
+                        />
+                      </View>
+                    </View>
+
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={[styles.inputLabel, isRTL && { textAlign: 'right' }]}>
+                        {language === 'ar' ? 'مهلة الخروج (دقائق)' : 'Checkout Buffer (minutes)'}
+                      </Text>
+                      <View style={[styles.inputContainer, isRTL && { flexDirection: 'row-reverse' }]}>
+                        <TextInput
+                          style={[styles.input, isRTL && { textAlign: 'right' }]}
+                          value={checkoutBufferMinutesBefore}
+                          onChangeText={setCheckoutBufferMinutesBefore}
+                          placeholder="30"
+                          placeholderTextColor={colors.mutedForeground}
+                          keyboardType="number-pad"
+                        />
+                      </View>
+                    </View>
+
+                    <View style={styles.infoBox}>
+                      <Text style={[styles.infoBoxText, isRTL && { textAlign: 'right' }]}>
+                        <Text style={{ fontWeight: '600' }}>
+                          {language === 'ar' ? 'كيف يعمل: ' : 'How it works: '}
+                        </Text>
+                        {language === 'ar'
+                          ? `يجب على الموظفين العمل على الأقل ${minShiftHours} ساعات ويمكنهم تسجيل الخروج فقط بدءًا من ${checkoutBufferMinutesBefore} دقيقة قبل وقت الإغلاق.`
+                          : `Employees must work at least ${minShiftHours} hours AND can only check out starting ${checkoutBufferMinutesBefore} minutes before closing time.`}
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </View>
+
+              {/* Employee Schedule Overrides - inside GPS Check-in Settings */}
+              {employees.length > 0 && (
+                <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: colors.border }}>
+                  <View style={[{ marginBottom: 12 }, isRTL && { alignItems: 'flex-end' }]}>
+                    <Text style={[styles.inputLabel, { fontSize: 15, fontWeight: '600', marginBottom: 2 }, isRTL && { textAlign: 'right' }]}>
                       {language === 'ar' ? 'جداول الموظفين المخصصة' : 'Employee Schedule Overrides'}
                     </Text>
-                    <Text style={[styles.sectionSubtitle, isRTL && { textAlign: 'right' }]}>
+                    <Text style={[styles.switchDescription, isRTL && { textAlign: 'right' }]}>
                       {language === 'ar' ? 'تعيين ساعات/أيام عمل مخصصة لموظفين محددين' : 'Set custom working hours/days for specific employees'}
                     </Text>
                   </View>
-                </View>
 
                 {employees.map((employee) => {
                   const override = getOverrideForEmployee(employee.id);
@@ -1815,6 +1889,7 @@ export default function SettingsScreen({ navigation }: any) {
                 </View>
               </View>
             )}
+            </View>
 
             {/* Notifications Section */}
             <View style={styles.formSection}>

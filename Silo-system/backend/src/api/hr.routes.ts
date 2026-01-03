@@ -278,6 +278,46 @@ router.get('/attendance/history', authenticateUser, async (req: AuthenticatedReq
 });
 
 /**
+ * GET /hr/attendance/employees
+ * Get attendance records for all employees (owner/manager view)
+ * Query params: start_date, end_date, branch_id (optional)
+ */
+router.get('/attendance/employees', authenticateManager, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const user = req.businessUser!;
+    const { start_date, end_date, branch_id } = req.query;
+
+    // Default to last 7 days
+    const endDate = end_date as string || new Date().toISOString().split('T')[0];
+    const startDate = start_date as string || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      return d.toISOString().split('T')[0];
+    })();
+
+    const branchIdNum = branch_id ? parseInt(branch_id as string) : null;
+
+    const result = await hrService.getEmployeesAttendance(
+      user.business_id,
+      branchIdNum,
+      startDate,
+      endDate
+    );
+
+    return res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Get employees attendance error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to get employees attendance',
+    });
+  }
+});
+
+/**
  * GET /hr/attendance/summary/:employeeId
  * Get attendance summary for a specific employee (manager view)
  */

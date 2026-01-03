@@ -371,8 +371,9 @@ export function usePaginatedProducts(options?: Partial<UsePaginatedListOptions<a
   return usePaginatedList({
     endpoint: '/store-products',
     pageSize: 30,
-    // Include margin fields and delivery_margins for stats display
-    fields: ['id', 'name', 'name_ar', 'price', 'cost', 'category', 'category_id', 'is_active', 'has_variants', 'image_url', 'thumbnail_url', 'margin_percent', 'delivery_margins', 'variants'],
+    // Include all fields needed for list display and editing
+    // ingredients, modifiers needed for edit modal to load instantly
+    fields: ['id', 'name', 'name_ar', 'description', 'price', 'cost', 'category', 'category_id', 'is_active', 'has_variants', 'image_url', 'thumbnail_url', 'margin_percent', 'delivery_margins', 'variants', 'ingredients', 'modifiers'],
     dataKey: 'data',
     ...options,
   });

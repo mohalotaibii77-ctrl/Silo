@@ -4,13 +4,13 @@ import { useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-  Package, 
-  ShoppingBag, 
+import {
+  Package,
+  ShoppingBag,
   Boxes,
   FolderTree,
   Warehouse,
-  Percent, 
+  Percent,
   UserCog,
   Settings,
   ChevronLeft,
@@ -26,7 +26,8 @@ import {
   PackageCheck,
   Armchair,
   Car,
-  Receipt
+  Receipt,
+  Clock
 } from 'lucide-react';
 import { useLanguage } from '@/lib/language-context';
 
@@ -90,6 +91,7 @@ const navItems: NavItem[] = [
   { name: 'Drivers', nameAr: 'السائقين', href: '/drivers', icon: Car },
   { name: 'Discounts', nameAr: 'الخصومات', href: '/discounts', icon: Percent },
   { name: 'Users-Roles', nameAr: 'المستخدمين', href: '/users-roles', icon: UserCog },
+  { name: 'Attendance', nameAr: 'الحضور', href: '/attendance', icon: Clock },
   { name: 'Requests', nameAr: 'طلبات الدعم', href: '/requests', icon: MessageSquareMore },
   { name: 'Settings', nameAr: 'الإعدادات', href: '/settings', icon: Settings },
 ];

@@ -33,6 +33,7 @@ import PODetailScreen from '../screens/PODetailScreen';
 import POCountingScreen from '../screens/POCountingScreen';
 import POReceivingScreen from '../screens/POReceivingScreen';
 import HRScreen from '../screens/HRScreen';
+import OwnerAttendanceScreen from '../screens/OwnerAttendanceScreen';
 
 import { dataPreloader } from '../services/DataPreloader';
 import { idleTimeout } from '../services/IdleTimeout';
@@ -186,6 +187,7 @@ export default function AppNavigator() {
           
           {/* Staff & Settings */}
           <Stack.Screen name="StaffManagement" component={StaffManagementScreen} />
+          <Stack.Screen name="OwnerAttendance" component={OwnerAttendanceScreen} />
           <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Requests" component={RequestsScreen} />
           <Stack.Screen name="HR" component={HRScreen} />

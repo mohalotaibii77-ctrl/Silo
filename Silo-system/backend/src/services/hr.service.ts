@@ -173,6 +173,10 @@ export class HRService {
         working_days: DAY_NAMES, // All days are working days by default
         opening_time: '00:00', // 24/7 by default
         closing_time: '23:59',
+        // Checkout restrictions - defaults
+        min_shift_hours: 4,
+        checkout_buffer_minutes_before: 30,
+        require_checkout_restrictions: true,
       };
     }
 
@@ -185,6 +189,10 @@ export class HRService {
       working_days: data.working_days || DAY_NAMES,
       opening_time: data.opening_time || '09:00',
       closing_time: data.closing_time || '22:00',
+      // Checkout restrictions
+      min_shift_hours: data.min_shift_hours ?? 4,
+      checkout_buffer_minutes_before: data.checkout_buffer_minutes_before ?? 30,
+      require_checkout_restrictions: data.require_checkout_restrictions ?? true,
     };
   }
 
@@ -402,6 +410,23 @@ export class HRService {
   }
 
   /**
+   * Check if current time is within checkout window (before closing time)
+   */
+  isWithinCheckoutWindow(
+    currentTime: Date,
+    closingTime: string,
+    bufferMinutesBefore: number
+  ): boolean {
+    const [closeHour, closeMin] = closingTime.split(':').map(Number);
+    const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+    const closingMinutes = closeHour * 60 + closeMin;
+    const earliestCheckoutMinutes = closingMinutes - bufferMinutesBefore;
+
+    // Can checkout if current time is >= (closing - buffer)
+    return currentMinutes >= earliestCheckoutMinutes;
+  }
+
+  /**
    * Employee check-out with GPS
    */
   async checkOut(
@@ -430,9 +455,41 @@ export class HRService {
         };
       }
 
-      // Calculate total hours
+      // Calculate total hours worked
       const checkinTime = new Date(record.checkin_time);
       const totalHours = (now.getTime() - checkinTime.getTime()) / (1000 * 60 * 60);
+
+      // Get checkout restriction settings
+      const settings = await this.getGeofenceSettings(businessId);
+      const schedule = await this.getEffectiveSchedule(userId, businessId);
+
+      // Validate checkout restrictions if enabled
+      if (settings.require_checkout_restrictions) {
+        // Check 1: Minimum shift hours
+        if (totalHours < settings.min_shift_hours) {
+          const remainingMinutes = Math.ceil((settings.min_shift_hours - totalHours) * 60);
+          return {
+            success: false,
+            error: `You must work at least ${settings.min_shift_hours} hours before checking out. ${remainingMinutes} minutes remaining.`,
+            error_code: 'MIN_HOURS_NOT_MET',
+          };
+        }
+
+        // Check 2: Within checkout window (near closing time)
+        if (!this.isWithinCheckoutWindow(now, schedule.closing_time, settings.checkout_buffer_minutes_before)) {
+          const [closeHour, closeMin] = schedule.closing_time.split(':').map(Number);
+          const earliestCheckoutMinutes = (closeHour * 60 + closeMin) - settings.checkout_buffer_minutes_before;
+          const earliestHour = Math.floor(earliestCheckoutMinutes / 60);
+          const earliestMin = earliestCheckoutMinutes % 60;
+          const earliestTimeStr = `${earliestHour.toString().padStart(2, '0')}:${earliestMin.toString().padStart(2, '0')}`;
+
+          return {
+            success: false,
+            error: `Checkout is only allowed ${settings.checkout_buffer_minutes_before} minutes before closing time. You can checkout after ${earliestTimeStr}.`,
+            error_code: 'OUTSIDE_CHECKOUT_WINDOW',
+          };
+        }
+      }
 
       // Determine final status based on late_minutes
       const finalStatus: AttendanceStatusType = record.late_minutes > 0 ? 'late' : 'on_time';
@@ -506,6 +563,129 @@ export class HRService {
 
     if (error || !data) return null;
     return data as AttendanceRecord;
+  }
+
+  /**
+   * Get attendance records for all employees in a business (owner/manager view)
+   */
+  async getEmployeesAttendance(
+    businessId: number,
+    branchId: number | null,
+    startDate: string,
+    endDate: string
+  ): Promise<{
+    records: Array<{
+      id: number;
+      employee_id: number;
+      employee_name: string;
+      employee_role: string;
+      date: string;
+      day_name: string;
+      checkin_time: string | null;
+      checkout_time: string | null;
+      total_hours: number | null;
+      status: AttendanceStatusType;
+      late_minutes: number;
+      branch_name: string | null;
+    }>;
+    summary: {
+      total_records: number;
+      on_time: number;
+      late: number;
+      absent: number;
+      checked_in: number;
+    };
+  }> {
+    // Build query for attendance records
+    let query = supabaseAdmin
+      .from('attendance_records')
+      .select(`
+        id,
+        employee_id,
+        date,
+        checkin_time,
+        checkout_time,
+        total_hours,
+        status,
+        late_minutes,
+        branch_id,
+        branches(name)
+      `)
+      .eq('business_id', businessId)
+      .gte('date', startDate)
+      .lte('date', endDate)
+      .order('date', { ascending: false })
+      .order('checkin_time', { ascending: false });
+
+    // Filter by branch if specified
+    if (branchId) {
+      query = query.eq('branch_id', branchId);
+    }
+
+    const { data: records, error } = await query;
+
+    if (error) throw error;
+
+    // Get all employees for the business to include their names
+    let employeesQuery = supabaseAdmin
+      .from('business_users')
+      .select('id, first_name, last_name, role')
+      .eq('business_id', businessId)
+      .in('role', ['employee', 'manager', 'operations_manager']);
+
+    if (branchId) {
+      employeesQuery = employeesQuery.eq('branch_id', branchId);
+    }
+
+    const { data: employees } = await employeesQuery;
+
+    // Create employee map for quick lookup
+    const employeeMap = new Map(
+      (employees || []).map(e => [
+        e.id,
+        {
+          name: `${e.first_name || ''} ${e.last_name || ''}`.trim() || 'Unknown',
+          role: e.role,
+        },
+      ])
+    );
+
+    // Transform records with employee info
+    const transformedRecords = (records || []).map(record => {
+      const employee = employeeMap.get(record.employee_id);
+      const recordDate = new Date(record.date);
+      const dayName = DAY_DISPLAY_NAMES[recordDate.getDay()];
+
+      return {
+        id: record.id,
+        employee_id: record.employee_id,
+        employee_name: employee?.name || 'Unknown',
+        employee_role: employee?.role || 'unknown',
+        date: record.date,
+        day_name: dayName,
+        checkin_time: record.checkin_time
+          ? new Date(record.checkin_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+          : null,
+        checkout_time: record.checkout_time
+          ? new Date(record.checkout_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+          : null,
+        total_hours: record.total_hours,
+        status: record.status as AttendanceStatusType,
+        late_minutes: record.late_minutes || 0,
+        branch_name: (record.branches as any)?.name || null,
+      };
+    });
+
+    // Calculate summary
+    const summary = {
+      total_records: transformedRecords.length,
+      on_time: transformedRecords.filter(r => r.status === 'on_time').length,
+      late: transformedRecords.filter(r => r.status === 'late').length,
+      absent: transformedRecords.filter(r => r.status === 'absent').length,
+      checked_in: transformedRecords.filter(r => r.status === 'checked_in').length,
+    };
+
+    return { records: transformedRecords, summary };
   }
 
   /**

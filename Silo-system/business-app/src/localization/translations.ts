@@ -484,6 +484,22 @@ export const translations = {
     certifications: 'Certifications',
     viewCertificates: 'View your certificates',
 
+    // Attendance Records (Owner view)
+    attendanceRecords: 'Attendance Records',
+    viewEmployeeAttendance: 'View employee attendance',
+    failedToLoadAttendance: 'Failed to load attendance records',
+    onTime: 'On Time',
+    late: 'Late',
+    absent: 'Absent',
+    checkedIn: 'Checked In',
+    checkedOut: 'Checked Out',
+    currentlyIn: 'Currently In',
+    searchEmployee: 'Search employee...',
+    noAttendanceRecords: 'No attendance records found',
+    totalHours: 'Total hours',
+    opsManager: 'Ops Manager',
+    retry: 'Retry',
+
     // Order Timeline
     orderTimeline: 'Order Timeline',
     orderStatus: 'Order Status',
@@ -502,6 +518,43 @@ export const translations = {
     timelineProductAdded: 'Product added',
     timelineProductRemoved: 'Product removed',
     timelineProductModified: 'Product modified',
+
+    // Product Ingredients & Variants
+    ingredients: 'Ingredients',
+    addIngredient: 'Add Ingredient',
+    removable: 'Removable',
+    enableVariants: 'Enable Variants',
+    addVariant: 'Add Variant',
+    variantName: 'Variant Name',
+    priceAdjustment: 'Price Adjustment',
+
+    // Modifiers
+    modifiers: 'Modifiers (Add-ons)',
+    addModifier: 'Add Modifier',
+    extraPrice: 'Extra Price',
+
+    // Accessories
+    accessories: 'Accessories (Packaging)',
+    addAccessory: 'Add Accessory',
+    orderTypes: 'Apply to Order Types',
+    always: 'Always',
+
+    // Product Image
+    productImage: 'Product Image',
+    takePhoto: 'Take Photo',
+    chooseFromGallery: 'Choose from Gallery',
+    removeImage: 'Remove Image',
+    imageSizeError: 'Image must be less than 5MB',
+
+    // Product Form
+    taxRate: 'Tax Rate (%)',
+    selectItem: 'Select Item',
+    noItemSelected: 'No item selected',
+    noIngredientsYet: 'No ingredients added yet',
+    noModifiersYet: 'No modifiers added yet',
+    noAccessoriesYet: 'No accessories added yet',
+    noVariantsYet: 'No variants added yet',
+    descriptionAr: 'Description (Arabic)',
   },
   ar: {
     // Common
@@ -987,6 +1040,22 @@ export const translations = {
     certifications: 'الشهادات',
     viewCertificates: 'عرض شهاداتك',
 
+    // Attendance Records (Owner view)
+    attendanceRecords: 'سجلات الحضور',
+    viewEmployeeAttendance: 'عرض حضور الموظفين',
+    failedToLoadAttendance: 'فشل في تحميل سجلات الحضور',
+    onTime: 'في الوقت',
+    late: 'متأخر',
+    absent: 'غائب',
+    checkedIn: 'مسجل دخول',
+    checkedOut: 'مسجل خروج',
+    currentlyIn: 'حاليا في العمل',
+    searchEmployee: 'بحث عن موظف...',
+    noAttendanceRecords: 'لم يتم العثور على سجلات حضور',
+    totalHours: 'إجمالي الساعات',
+    opsManager: 'مدير عمليات',
+    retry: 'إعادة المحاولة',
+
     // Order Timeline
     orderTimeline: 'الجدول الزمني للطلب',
     orderStatus: 'حالة الطلب',
@@ -1005,6 +1074,43 @@ export const translations = {
     timelineProductAdded: 'تمت إضافة منتج',
     timelineProductRemoved: 'تمت إزالة منتج',
     timelineProductModified: 'تم تعديل منتج',
+
+    // Product Ingredients & Variants
+    ingredients: 'المكونات',
+    addIngredient: 'إضافة مكون',
+    removable: 'قابل للإزالة',
+    enableVariants: 'تفعيل الأحجام',
+    addVariant: 'إضافة حجم',
+    variantName: 'اسم الحجم',
+    priceAdjustment: 'تعديل السعر',
+
+    // Modifiers
+    modifiers: 'الإضافات',
+    addModifier: 'إضافة إضافة',
+    extraPrice: 'السعر الإضافي',
+
+    // Accessories
+    accessories: 'مستلزمات التعبئة',
+    addAccessory: 'إضافة مستلزم',
+    orderTypes: 'تطبق على نوع الطلب',
+    always: 'دائماً',
+
+    // Product Image
+    productImage: 'صورة المنتج',
+    takePhoto: 'التقاط صورة',
+    chooseFromGallery: 'اختيار من المعرض',
+    removeImage: 'إزالة الصورة',
+    imageSizeError: 'يجب أن تكون الصورة أقل من 5 ميجابايت',
+
+    // Product Form
+    taxRate: 'نسبة الضريبة (%)',
+    selectItem: 'اختر مادة',
+    noItemSelected: 'لم يتم اختيار مادة',
+    noIngredientsYet: 'لم تتم إضافة مكونات بعد',
+    noModifiersYet: 'لم تتم إضافة إضافات بعد',
+    noAccessoriesYet: 'لم تتم إضافة مستلزمات بعد',
+    noVariantsYet: 'لم تتم إضافة أحجام بعد',
+    descriptionAr: 'الوصف (عربي)',
   }
 };
 

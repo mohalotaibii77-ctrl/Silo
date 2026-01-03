@@ -751,6 +751,8 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('staffAndSettings')}</Text>
           <View style={styles.card}>
+            <MenuItem icon={Clock} title={t('attendanceRecords')} subtitle={t('viewEmployeeAttendance')} onPress={() => navigation.navigate('OwnerAttendance')} />
+            <View style={styles.divider} />
             <MenuItem icon={Users} title={t('staffManagement')} subtitle={t('rolesPermissions')} onPress={() => navigation.navigate('StaffManagement')} />
             <View style={styles.divider} />
             <MenuItem icon={Settings} title={t('systemSettings')} subtitle={t('configureYourBusiness')} onPress={() => navigation.navigate('Settings')} />

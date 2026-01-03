@@ -486,13 +486,18 @@ export class StoreProductsService {
   }
 
   /**
-   * Get single product with variants
+   * Get single product with variants, ingredients, modifiers - properly formatted
    */
-  async getProduct(productId: number, businessId: number): Promise<StoreProduct | null> {
+  async getProduct(productId: number, businessId: number): Promise<any | null> {
     const { data: product, error } = await supabaseAdmin
       .from('products')
       .select(`
         *,
+        product_categories (
+          id,
+          name,
+          name_ar
+        ),
         product_variants (
           id,
           name,
@@ -510,7 +515,8 @@ export class StoreProductsService {
             id,
             name,
             name_ar,
-            unit
+            unit,
+            cost_per_unit
           )
         )
       `)
@@ -519,23 +525,135 @@ export class StoreProductsService {
       .single();
 
     if (error || !product) return null;
-    
+
     // Fetch modifiers separately (table might be new)
+    let modifiers: any[] = [];
     try {
-      const { data: modifiers } = await supabaseAdmin
+      const { data: modifiersData } = await supabaseAdmin
         .from('product_modifiers')
         .select('id, item_id, name, name_ar, removable, addable, quantity, extra_price, sort_order')
         .eq('product_id', productId)
         .order('sort_order');
-      
-      if (modifiers) {
-        (product as any).modifiers = modifiers;
+
+      if (modifiersData) {
+        modifiers = modifiersData;
       }
     } catch (e) {
       // Table might not exist yet, ignore
     }
-    
-    return product;
+
+    // Collect all item IDs for cost lookup
+    const itemIds = new Set<number>();
+    (product.product_ingredients || []).forEach((ing: any) => {
+      if (ing.item_id) itemIds.add(ing.item_id);
+    });
+    modifiers.forEach((mod: any) => {
+      if (mod.item_id) itemIds.add(mod.item_id);
+    });
+
+    // Build cost map: item_id -> cost_per_unit
+    const costMap = new Map<number, number>();
+    if (itemIds.size > 0) {
+      // Fetch business-specific prices (override default costs)
+      const { data: businessPrices } = await supabaseAdmin
+        .from('business_item_prices')
+        .select('item_id, cost_per_unit')
+        .eq('business_id', businessId)
+        .in('item_id', Array.from(itemIds));
+
+      // Set default costs from items
+      (product.product_ingredients || []).forEach((ing: any) => {
+        if (ing.items?.cost_per_unit) {
+          costMap.set(ing.item_id, ing.items.cost_per_unit);
+        }
+      });
+
+      // Override with business-specific prices
+      if (businessPrices) {
+        businessPrices.forEach((bp: any) => {
+          costMap.set(bp.item_id, bp.cost_per_unit);
+        });
+      }
+    }
+
+    // Format ingredients (non-variant)
+    const ingredients = (product.product_ingredients || [])
+      .filter((ing: any) => !ing.variant_id)
+      .map((ing: any) => {
+        const itemCost = costMap.get(ing.item_id) || ing.items?.cost_per_unit || 0;
+        return {
+          id: ing.id,
+          item_id: ing.item_id,
+          item_name: ing.items?.name,
+          item_name_ar: ing.items?.name_ar,
+          quantity: ing.quantity,
+          removable: ing.removable || false,
+          unit: ing.items?.unit,
+          cost_per_unit: itemCost,
+        };
+      });
+
+    // Format variants with their ingredients
+    const variants = (product.product_variants || [])
+      .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0))
+      .map((v: any) => {
+        const variantIngredients = (product.product_ingredients || [])
+          .filter((ing: any) => ing.variant_id === v.id)
+          .map((ing: any) => {
+            const itemCost = costMap.get(ing.item_id) || ing.items?.cost_per_unit || 0;
+            return {
+              id: ing.id,
+              item_id: ing.item_id,
+              item_name: ing.items?.name,
+              item_name_ar: ing.items?.name_ar,
+              quantity: ing.quantity,
+              removable: ing.removable || false,
+              unit: ing.items?.unit,
+              cost_per_unit: itemCost,
+            };
+          });
+
+        return {
+          id: v.id,
+          name: v.name,
+          name_ar: v.name_ar,
+          price_adjustment: v.price_adjustment || 0,
+          ingredients: variantIngredients,
+        };
+      });
+
+    // Return formatted product
+    return {
+      id: product.id,
+      business_id: product.business_id,
+      name: product.name,
+      name_ar: product.name_ar,
+      description: product.description,
+      description_ar: product.description_ar,
+      sku: product.sku,
+      category_id: product.category_id,
+      category: product.product_categories?.name || null,
+      price: product.price,
+      tax_rate: product.tax_rate,
+      is_active: product.is_active,
+      has_variants: product.has_variants,
+      image_url: product.image_url,
+      created_at: product.created_at,
+      updated_at: product.updated_at,
+      // Formatted data
+      ingredients: !product.has_variants ? ingredients : [],
+      variants: product.has_variants ? variants : [],
+      modifiers: modifiers.map((m: any) => ({
+        id: m.id,
+        item_id: m.item_id,
+        name: m.name,
+        name_ar: m.name_ar,
+        extra_price: m.extra_price || 0,
+        quantity: m.quantity || 1,
+        removable: m.removable || false,
+        addable: m.addable ?? true,
+      })),
+    };
   }
 
   /**

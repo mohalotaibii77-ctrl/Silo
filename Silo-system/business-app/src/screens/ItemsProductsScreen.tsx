@@ -1,23 +1,27 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
-  Modal, 
-  Alert, 
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
+  Modal,
+  Alert,
   TextInput,
   RefreshControl,
   Animated,
-  Dimensions
+  Dimensions,
+  Image,
+  Switch,
+  KeyboardAvoidingView
 } from 'react-native';
 import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { useLocalization } from '../localization/LocalizationContext';
 import { useConfig } from '../context/ConfigContext';
 import { safeGoBack } from '../utils/navigationHelpers';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Package,
   Layers,
@@ -30,13 +34,16 @@ import {
   Trash2,
   X,
   ChevronDown,
+  ChevronUp,
   Check,
   DollarSign,
   Box,
   Barcode,
   CheckCircle2,
   XCircle,
-  Loader2
+  Loader2,
+  Camera,
+  ImagePlus
 } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
@@ -81,13 +88,90 @@ interface Product {
   name: string;
   name_ar?: string;
   description?: string;
+  description_ar?: string;
   price: number;
   cost?: number;
+  tax_rate?: number;
   category?: string;
   category_id?: number;
   is_active: boolean;
   has_variants: boolean;
   image_url?: string;
+  variants?: ProductVariant[];
+  ingredients?: ProductIngredient[];
+  modifiers?: ProductModifier[];
+}
+
+interface ProductVariant {
+  id?: number;
+  name: string;
+  name_ar?: string;
+  price_adjustment: number;
+  ingredients: ProductIngredient[];
+}
+
+interface ProductIngredient {
+  id?: number;
+  item_id: number;
+  item_name?: string;
+  item_name_ar?: string;
+  quantity: number;
+  unit?: string;
+  cost_per_unit?: number;
+  removable?: boolean;
+}
+
+interface ProductModifier {
+  id?: number;
+  item_id?: number;
+  name: string;
+  name_ar?: string;
+  quantity?: number;
+  extra_price: number;
+}
+
+interface ProductAccessory {
+  id?: number;
+  item_id: number;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
+  item?: Item;
+}
+
+type AccessoryOrderType = 'always' | 'dine_in' | 'takeaway' | 'delivery';
+
+// Local state interfaces for form management
+interface IngredientEntry {
+  id: string;
+  item_id: number | null;
+  item?: Item;
+  quantity: number;
+  removable: boolean;
+}
+
+interface VariantEntry {
+  id: string;
+  name: string;
+  name_ar: string;
+  price_adjustment: number;
+  ingredients: IngredientEntry[];
+  isExpanded: boolean;
+}
+
+interface ModifierEntry {
+  id: string;
+  item_id: number | null;
+  item?: Item;
+  quantity: number;
+  extra_price: number;
+}
+
+interface AccessoryEntry {
+  id: string;
+  item_id: number | null;
+  item?: Item;
+  quantity: number;
+  applicable_order_types: AccessoryOrderType[];
 }
 
 interface Category {
@@ -133,18 +217,21 @@ const ItemSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) 
   </View>
 );
 
-export default function ItemsProductsScreen({ navigation }: any) {
+export default function ItemsProductsScreen({ navigation, route }: any) {
   const { colors } = useTheme();
   const styles = createStyles(colors);
   const modalStyles = createModalStyles(colors);
   const { t, isRTL, language, formatCurrency, currency } = useLocalization();
   const { config, getCategoryLabel } = useConfig();
-  
+
+  // Get initial tab from navigation params
+  const initialTab = route?.params?.initialTab as TabType | undefined;
+
   // Get categories and units from config (with fallbacks)
   const itemCategories = config?.itemCategories || [];
   const servingUnits = config?.servingUnits || [];
-  
-  const [activeTab, setActiveTab] = useState<TabType>('items');
+
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab || 'items');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   
@@ -169,6 +256,13 @@ export default function ItemsProductsScreen({ navigation }: any) {
   const [editingItem, setEditingItem] = useState<Item | null>(null);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [barcodeItem, setBarcodeItem] = useState<Item | null>(null);
+
+  // Handle initial tab from navigation params
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   useEffect(() => {
     loadData();
@@ -1304,7 +1398,7 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
   );
 }
 
-// Add Product Modal Component
+// Add Product Modal Component - Enhanced with ingredients, variants, modifiers, accessories
 function AddProductModal({ visible, onClose, onSave, editingProduct, categories, items, isRTL, language, t, currency, colors, styles, modalStyles }: {
   visible: boolean;
   onClose: () => void;
@@ -1320,200 +1414,1236 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   styles: any;
   modalStyles: any;
 }) {
+  // Basic product info state
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
   const [description, setDescription] = useState('');
+  const [descriptionAr, setDescriptionAr] = useState('');
   const [price, setPrice] = useState('');
+  const [taxRate, setTaxRate] = useState('0');
   const [categoryId, setCategoryId] = useState<number | null>(null);
-  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
 
+  // Ingredients, variants, modifiers, accessories state
+  const [hasVariants, setHasVariants] = useState(false);
+  const [ingredients, setIngredients] = useState<IngredientEntry[]>([]);
+  const [variants, setVariants] = useState<VariantEntry[]>([]);
+  const [modifiers, setModifiers] = useState<ModifierEntry[]>([]);
+  const [accessories, setAccessories] = useState<AccessoryEntry[]>([]);
+
+  // UI state
+  const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [loadingIngredients, setLoadingIngredients] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filter items by type - food for ingredients/modifiers, non-food for accessories
+  const foodItems = useMemo(() =>
+    items.filter(item => !item.category || item.category !== 'non_food'),
+    [items]
+  );
+  const nonFoodItems = useMemo(() =>
+    items.filter(item => item.category === 'non_food'),
+    [items]
+  );
+
+  const generateId = () => Math.random().toString(36).substring(7);
+
+  // Reset form
+  const resetForm = () => {
+    setName('');
+    setNameAr('');
+    setDescription('');
+    setDescriptionAr('');
+    setPrice('');
+    setTaxRate('0');
+    setCategoryId(null);
+    setImageUrl(null);
+    setImagePreview(null);
+    setHasVariants(false);
+    setIngredients([]);
+    setVariants([]);
+    setModifiers([]);
+    setAccessories([]);
+    setError(null);
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  // Load product data when editing
   useEffect(() => {
-    if (editingProduct) {
-      setName(editingProduct.name);
-      setNameAr(editingProduct.name_ar || '');
-      setDescription(editingProduct.description || '');
-      setPrice(editingProduct.price.toString());
-      setCategoryId(editingProduct.category_id || null);
-    } else {
-      setName('');
-      setNameAr('');
-      setDescription('');
-      setPrice('');
-      setCategoryId(null);
+    if (visible) {
+      if (editingProduct) {
+        setName(editingProduct.name);
+        setNameAr(editingProduct.name_ar || '');
+        setDescription(editingProduct.description || '');
+        setDescriptionAr(editingProduct.description_ar || '');
+        setPrice(editingProduct.price.toString());
+        setTaxRate(editingProduct.tax_rate?.toString() || '0');
+        setCategoryId(editingProduct.category_id || null);
+        setImageUrl(editingProduct.image_url || null);
+        setImagePreview(editingProduct.image_url || null);
+        setHasVariants(editingProduct.has_variants || false);
+        loadProductIngredients(editingProduct.id);
+      } else {
+        resetForm();
+      }
     }
   }, [editingProduct, visible]);
 
+  // Load product ingredients when editing
+  const loadProductIngredients = async (productId: number) => {
+    setLoadingIngredients(true);
+    try {
+      const response = await api.get(`/inventory/products/${productId}/ingredients`);
+      const productData = response.data.data;
+      if (!productData) return;
+
+      // Map variants with their ingredients
+      if (productData.has_variants && productData.variants) {
+        const mappedVariants: VariantEntry[] = productData.variants.map((v: any) => ({
+          id: generateId(),
+          name: v.name,
+          name_ar: v.name_ar || '',
+          price_adjustment: v.price_adjustment || 0,
+          isExpanded: true,
+          ingredients: (v.ingredients || []).map((ing: any) => {
+            const item = items.find(i => i.id === ing.item_id);
+            return {
+              id: generateId(),
+              item_id: ing.item_id,
+              item: item || {
+                id: ing.item_id,
+                name: ing.item_name || '',
+                name_ar: ing.item_name_ar,
+                unit: ing.unit || '',
+                cost_per_unit: ing.cost_per_unit || 0,
+                category: 'other',
+              } as Item,
+              quantity: ing.quantity,
+              removable: ing.removable || false,
+            };
+          }),
+        }));
+        setVariants(mappedVariants);
+        setIngredients([]);
+      } else if (productData.ingredients) {
+        const mappedIngredients: IngredientEntry[] = productData.ingredients.map((ing: any) => {
+          const item = items.find(i => i.id === ing.item_id);
+          return {
+            id: generateId(),
+            item_id: ing.item_id,
+            item: item || {
+              id: ing.item_id,
+              name: ing.item_name || '',
+              name_ar: ing.item_name_ar,
+              unit: ing.unit || '',
+              cost_per_unit: ing.cost_per_unit || 0,
+              category: 'other',
+            } as Item,
+            quantity: ing.quantity,
+            removable: ing.removable || false,
+          };
+        });
+        setIngredients(mappedIngredients);
+        setVariants([]);
+      }
+
+      // Load modifiers
+      if (productData.modifiers && productData.modifiers.length > 0) {
+        const mappedModifiers: ModifierEntry[] = productData.modifiers.map((m: any) => {
+          const item = items.find(i => i.id === m.item_id);
+          return {
+            id: generateId(),
+            item_id: m.item_id,
+            item: item,
+            quantity: m.quantity || 1,
+            extra_price: m.extra_price || 0,
+          };
+        });
+        setModifiers(mappedModifiers);
+      } else {
+        setModifiers([]);
+      }
+
+      // Load accessories
+      try {
+        const accResponse = await api.get(`/inventory/products/${productId}/accessories`);
+        const accessoriesData = accResponse.data.data;
+        if (accessoriesData && accessoriesData.length > 0) {
+          const mappedAccessories: AccessoryEntry[] = accessoriesData.map((acc: any) => {
+            const item = items.find(i => i.id === acc.item_id);
+            return {
+              id: generateId(),
+              item_id: acc.item_id,
+              item: item || acc.item,
+              quantity: acc.quantity,
+              applicable_order_types: acc.applicable_order_types || ['always'],
+            };
+          });
+          setAccessories(mappedAccessories);
+        } else {
+          setAccessories([]);
+        }
+      } catch (err) {
+        console.error('Failed to load accessories:', err);
+        setAccessories([]);
+      }
+    } catch (err) {
+      console.error('Failed to load product ingredients:', err);
+    } finally {
+      setLoadingIngredients(false);
+    }
+  };
+
+  // Ingredient management functions
+  const addIngredient = () => {
+    setIngredients([...ingredients, { id: generateId(), item_id: null, quantity: 0, removable: false }]);
+  };
+
+  const removeIngredient = (id: string) => {
+    setIngredients(ingredients.filter(ing => ing.id !== id));
+  };
+
+  const updateIngredient = (id: string, updates: Partial<IngredientEntry>) => {
+    setIngredients(ingredients.map(ing =>
+      ing.id === id ? { ...ing, ...updates } : ing
+    ));
+  };
+
+  const selectItemForIngredient = (ingredientId: string, item: Item) => {
+    updateIngredient(ingredientId, { item_id: item.id, item });
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  // Variant management functions
+  const addVariant = () => {
+    setVariants([...variants, {
+      id: generateId(),
+      name: '',
+      name_ar: '',
+      price_adjustment: 0,
+      ingredients: [],
+      isExpanded: true,
+    }]);
+  };
+
+  const removeVariant = (id: string) => {
+    setVariants(variants.filter(v => v.id !== id));
+  };
+
+  const updateVariant = (id: string, updates: Partial<VariantEntry>) => {
+    setVariants(variants.map(v =>
+      v.id === id ? { ...v, ...updates } : v
+    ));
+  };
+
+  const addVariantIngredient = (variantId: string) => {
+    setVariants(variants.map(v => {
+      if (v.id === variantId) {
+        return { ...v, ingredients: [...v.ingredients, { id: generateId(), item_id: null, quantity: 0, removable: false }] };
+      }
+      return v;
+    }));
+  };
+
+  const removeVariantIngredient = (variantId: string, ingredientId: string) => {
+    setVariants(variants.map(v => {
+      if (v.id === variantId) {
+        return { ...v, ingredients: v.ingredients.filter(ing => ing.id !== ingredientId) };
+      }
+      return v;
+    }));
+  };
+
+  const updateVariantIngredient = (variantId: string, ingredientId: string, updates: Partial<IngredientEntry>) => {
+    setVariants(variants.map(v => {
+      if (v.id === variantId) {
+        return {
+          ...v,
+          ingredients: v.ingredients.map(ing =>
+            ing.id === ingredientId ? { ...ing, ...updates } : ing
+          )
+        };
+      }
+      return v;
+    }));
+  };
+
+  const selectItemForVariantIngredient = (variantId: string, ingredientId: string, item: Item) => {
+    updateVariantIngredient(variantId, ingredientId, { item_id: item.id, item });
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  // Modifier management functions
+  const addModifier = () => {
+    setModifiers([...modifiers, { id: generateId(), item_id: null, quantity: 1, extra_price: 0 }]);
+  };
+
+  const removeModifier = (id: string) => {
+    setModifiers(modifiers.filter(m => m.id !== id));
+  };
+
+  const updateModifier = (id: string, updates: Partial<ModifierEntry>) => {
+    setModifiers(modifiers.map(m =>
+      m.id === id ? { ...m, ...updates } : m
+    ));
+  };
+
+  const selectItemForModifier = (modifierId: string, item: Item) => {
+    updateModifier(modifierId, { item_id: item.id, item });
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  // Accessory management functions
+  const addAccessory = () => {
+    setAccessories([...accessories, { id: generateId(), item_id: null, quantity: 1, applicable_order_types: ['always'] }]);
+  };
+
+  const removeAccessory = (id: string) => {
+    setAccessories(accessories.filter(a => a.id !== id));
+  };
+
+  const updateAccessory = (id: string, updates: Partial<AccessoryEntry>) => {
+    setAccessories(accessories.map(a =>
+      a.id === id ? { ...a, ...updates } : a
+    ));
+  };
+
+  const selectItemForAccessory = (accessoryId: string, item: Item) => {
+    updateAccessory(accessoryId, { item_id: item.id, item });
+    setActiveDropdown(null);
+    setSearchQuery('');
+  };
+
+  const toggleOrderType = (accessoryId: string, orderType: AccessoryOrderType) => {
+    const accessory = accessories.find(a => a.id === accessoryId);
+    if (!accessory) return;
+
+    let newTypes = [...accessory.applicable_order_types];
+    if (orderType === 'always') {
+      newTypes = ['always'];
+    } else {
+      newTypes = newTypes.filter(t => t !== 'always');
+      if (newTypes.includes(orderType)) {
+        newTypes = newTypes.filter(t => t !== orderType);
+        if (newTypes.length === 0) newTypes = ['always'];
+      } else {
+        newTypes.push(orderType);
+      }
+    }
+    updateAccessory(accessoryId, { applicable_order_types: newTypes });
+  };
+
+  // Image picker functions
+  const pickImage = async (useCamera: boolean) => {
+    try {
+      const permission = useCamera
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (permission.status !== 'granted') {
+        Alert.alert(t('error'), language === 'ar' ? 'الإذن مطلوب' : 'Permission required');
+        return;
+      }
+
+      const result = useCamera
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+            base64: true,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            allowsEditing: true,
+            aspect: [1, 1],
+            quality: 0.8,
+            base64: true,
+          });
+
+      if (!result.canceled && result.assets[0].base64) {
+        const base64Size = result.assets[0].base64.length * 0.75;
+        if (base64Size > 5 * 1024 * 1024) {
+          Alert.alert(t('error'), language === 'ar' ? 'يجب أن تكون الصورة أقل من 5 ميجابايت' : 'Image must be less than 5MB');
+          return;
+        }
+        const dataUrl = `data:image/jpeg;base64,${result.assets[0].base64}`;
+        setImageUrl(dataUrl);
+        setImagePreview(dataUrl);
+      }
+    } catch (err) {
+      console.error('Image picker error:', err);
+    }
+  };
+
+  const removeImage = () => {
+    setImageUrl(null);
+    setImagePreview(null);
+  };
+
+  // Calculate cost preview
+  const calculateCost = (ings: IngredientEntry[]) => {
+    return ings.reduce((sum, ing) => {
+      if (!ing.item) return sum;
+      const itemPrice = (ing.item as any).effective_price || ing.item.cost_per_unit || 0;
+      return sum + (ing.quantity * itemPrice);
+    }, 0);
+  };
+
+  const getCategoryName = (id: number | null) => {
+    if (!id) return language === 'ar' ? 'اختر الفئة' : 'Select Category';
+    const cat = categories.find(c => c.id === id);
+    if (!cat) return 'Unknown';
+    return language === 'ar' && cat.name_ar ? cat.name_ar : cat.name;
+  };
+
+  // Handle save
   const handleSave = async () => {
+    setError(null);
+
+    // Validation
     if (!name.trim()) {
-      Alert.alert(t('error'), 'Please enter product name');
+      setError(language === 'ar' ? 'اسم المنتج مطلوب' : 'Product name is required');
       return;
     }
     if (!price || parseFloat(price) <= 0) {
-      Alert.alert(t('error'), 'Please enter a valid price');
+      setError(language === 'ar' ? 'السعر الصحيح مطلوب' : 'Valid price is required');
       return;
     }
 
+    if (hasVariants) {
+      if (variants.length === 0) {
+        setError(language === 'ar' ? 'أضف صنف واحد على الأقل' : 'Add at least one variant');
+        return;
+      }
+      for (const v of variants) {
+        if (!v.name.trim()) {
+          setError(language === 'ar' ? 'يجب أن يكون لكل صنف اسم' : 'All variants must have a name');
+          return;
+        }
+        const validIngredients = v.ingredients.filter(ing => ing.item_id && ing.quantity > 0);
+        if (validIngredients.length === 0) {
+          setError(language === 'ar' ? `الصنف "${v.name}" يجب أن يحتوي على مكون واحد على الأقل` : `Variant "${v.name}" must have at least one ingredient`);
+          return;
+        }
+      }
+    } else {
+      const validIngredients = ingredients.filter(ing => ing.item_id && ing.quantity > 0);
+      if (validIngredients.length === 0) {
+        setError(language === 'ar' ? 'أضف مكون واحد على الأقل مع الكمية' : 'Add at least one ingredient with quantity');
+        return;
+      }
+    }
+
     setSaving(true);
+
     try {
-      const data = {
+      const productData: any = {
         name: name.trim(),
         name_ar: nameAr.trim() || undefined,
         description: description.trim() || undefined,
-        price: parseFloat(price),
+        description_ar: descriptionAr.trim() || undefined,
         category_id: categoryId || undefined,
-        has_variants: false,
+        price: parseFloat(price),
+        tax_rate: parseFloat(taxRate) || 0,
+        has_variants: hasVariants,
+        image_url: imageUrl || undefined,
       };
 
+      let productId: number;
+
       if (editingProduct) {
-        await api.put(`/store-products/${editingProduct.id}`, data);
+        await api.put(`/store-products/${editingProduct.id}`, productData);
+        productId = editingProduct.id;
       } else {
-        await api.post('/store-products', data);
+        const response = await api.post('/store-products', productData);
+        productId = response.data.data.id;
       }
+
+      // Prepare ingredients/variants/modifiers data
+      const ingredientsPayload: any = {
+        has_variants: hasVariants,
+      };
+
+      if (hasVariants) {
+        ingredientsPayload.variants = variants.map(v => ({
+          name: v.name,
+          name_ar: v.name_ar || undefined,
+          price_adjustment: v.price_adjustment,
+          ingredients: v.ingredients
+            .filter(ing => ing.item_id)
+            .map(ing => ({ item_id: ing.item_id!, quantity: ing.quantity, removable: ing.removable })),
+        }));
+      } else {
+        ingredientsPayload.ingredients = ingredients
+          .filter(ing => ing.item_id)
+          .map(ing => ({ item_id: ing.item_id!, quantity: ing.quantity, removable: ing.removable }));
+      }
+
+      // Add modifiers
+      const validModifiers = modifiers.filter(m => m.item_id);
+      if (validModifiers.length > 0) {
+        ingredientsPayload.modifiers = validModifiers.map(m => ({
+          item_id: m.item_id!,
+          name: m.item?.name || '',
+          name_ar: m.item?.name_ar || undefined,
+          quantity: m.quantity || 1,
+          extra_price: m.extra_price || 0,
+        }));
+      }
+
+      // Update ingredients/variants/modifiers
+      await api.put(`/inventory/products/${productId}/ingredients`, ingredientsPayload);
+
+      // Update accessories
+      const validAccessories = accessories.filter(a => a.item_id && a.quantity > 0);
+      await api.put(`/inventory/products/${productId}/accessories`, {
+        accessories: validAccessories.map(a => ({
+          item_id: a.item_id!,
+          quantity: a.quantity,
+          applicable_order_types: a.applicable_order_types,
+        })),
+      });
 
       Alert.alert(t('success'), t('productSaved'));
       onSave();
-    } catch (error) {
-      console.error('Error saving product:', error);
-      Alert.alert(t('error'), 'Failed to save product');
+    } catch (err: any) {
+      console.error('Error saving product:', err);
+      setError(err.response?.data?.error || (language === 'ar' ? 'فشل في حفظ المنتج' : 'Failed to save product'));
     } finally {
       setSaving(false);
     }
   };
 
-  const getCategoryName = (id: number | null) => {
-    if (!id) return 'Select Category';
-    const cat = categories.find(c => c.id === id);
-    if (!cat) return 'Unknown';
-    return language === 'ar' && cat.name_ar ? cat.name_ar : cat.name;
+  // Item Dropdown Component
+  const ItemDropdown = ({
+    dropdownKey,
+    selectedItem,
+    onSelect,
+    itemsList,
+    placeholder,
+  }: {
+    dropdownKey: string;
+    selectedItem?: Item;
+    onSelect: (item: Item) => void;
+    itemsList: Item[];
+    placeholder?: string;
+  }) => {
+    const isOpen = activeDropdown === dropdownKey;
+    const searchedItems = itemsList.filter(item => {
+      const query = searchQuery.toLowerCase();
+      return item.name.toLowerCase().includes(query) ||
+             (item.name_ar && item.name_ar.includes(query));
+    });
+
+    return (
+      <View style={{ flex: 1 }}>
+        <TouchableOpacity
+          style={[modalStyles.picker, { paddingVertical: 10 }]}
+          onPress={() => {
+            setActiveDropdown(isOpen ? null : dropdownKey);
+            setSearchQuery('');
+          }}
+        >
+          <Text style={[modalStyles.pickerText, !selectedItem && { color: colors.mutedForeground }]} numberOfLines={1}>
+            {selectedItem
+              ? (language === 'ar' ? selectedItem.name_ar || selectedItem.name : selectedItem.name)
+              : (placeholder || (language === 'ar' ? 'اختر مادة' : 'Select item'))}
+          </Text>
+          <ChevronDown size={16} color={colors.mutedForeground} />
+        </TouchableOpacity>
+
+        {isOpen && (
+          <View style={[modalStyles.pickerOptions, { position: 'relative', zIndex: 100, maxHeight: 180 }]}>
+            <View style={{ padding: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+              <View style={[modalStyles.inputWithIcon, { paddingVertical: 0 }]}>
+                <Search size={16} color={colors.mutedForeground} />
+                <TextInput
+                  style={[modalStyles.inputNoBorder, { paddingVertical: 8, fontSize: 13 }]}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  placeholder={language === 'ar' ? 'بحث...' : 'Search...'}
+                  placeholderTextColor={colors.mutedForeground}
+                  autoFocus
+                />
+              </View>
+            </View>
+            <ScrollView nestedScrollEnabled showsVerticalScrollIndicator style={{ maxHeight: 140 }}>
+              {searchedItems.length === 0 ? (
+                <Text style={{ padding: 16, textAlign: 'center', color: colors.mutedForeground, fontSize: 13 }}>
+                  {language === 'ar' ? 'لم يتم العثور على عناصر' : 'No items found'}
+                </Text>
+              ) : (
+                searchedItems.map(item => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={[modalStyles.pickerOption, { paddingVertical: 10 }]}
+                    onPress={() => onSelect(item)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={modalStyles.pickerOptionText} numberOfLines={1}>
+                        {language === 'ar' ? item.name_ar || item.name : item.name}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: colors.mutedForeground }}>
+                        {((item as any).effective_price || item.cost_per_unit || 0).toFixed(3)} / {item.unit}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+    );
   };
 
   if (!visible) return null;
 
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
-          <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
-            <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
-              {editingProduct ? t('editProduct') : t('addProduct')}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <X size={24} color={colors.foreground} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false}>
-            {/* Name */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>Product Name</Text>
-              <TextInput
-                style={[modalStyles.input, isRTL && styles.rtlText]}
-                value={name}
-                onChangeText={setName}
-                placeholder="Enter product name"
-                placeholderTextColor={colors.mutedForeground}
-                textAlign={isRTL ? 'right' : 'left'}
-              />
-            </View>
-
-            {/* Name Arabic */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>Product Name (Arabic)</Text>
-              <TextInput
-                style={[modalStyles.input, { textAlign: 'right' }]}
-                value={nameAr}
-                onChangeText={setNameAr}
-                placeholder="أدخل اسم المنتج"
-                placeholderTextColor={colors.mutedForeground}
-              />
-            </View>
-
-            {/* Description */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>Description</Text>
-              <TextInput
-                style={[modalStyles.input, modalStyles.textArea, isRTL && styles.rtlText]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Enter description"
-                placeholderTextColor={colors.mutedForeground}
-                multiline
-                numberOfLines={3}
-                textAlign={isRTL ? 'right' : 'left'}
-              />
-            </View>
-
-            {/* Price */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('price')} ({currency})</Text>
-              <View style={[modalStyles.inputWithIcon, isRTL && styles.rtlRow]}>
-                <Text style={modalStyles.currencyPrefix}>{currency}</Text>
-                <TextInput
-                  style={[modalStyles.inputNoBorder, isRTL && styles.rtlText]}
-                  value={price}
-                  onChangeText={setPrice}
-                  placeholder="0.00"
-                  placeholderTextColor={colors.mutedForeground}
-                  keyboardType="decimal-pad"
-                  textAlign={isRTL ? 'right' : 'left'}
-                />
-              </View>
-            </View>
-
-            {/* Category */}
-            <View style={modalStyles.field}>
-              <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('category')}</Text>
-              <TouchableOpacity 
-                style={[modalStyles.picker, isRTL && styles.rtlRow]}
-                onPress={() => setShowCategoryPicker(!showCategoryPicker)}
-              >
-                <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
-                  {getCategoryName(categoryId)}
-                </Text>
-                <ChevronDown size={18} color={colors.mutedForeground} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={modalStyles.overlay}>
+          <View style={[modalStyles.container, { maxHeight: '95%' }]}>
+            {/* Header */}
+            <View style={[modalStyles.header, isRTL && styles.rtlRow]}>
+              <Text style={[modalStyles.title, isRTL && styles.rtlText]}>
+                {editingProduct ? t('editProduct') : t('addProduct')}
+              </Text>
+              <TouchableOpacity onPress={onClose}>
+                <X size={24} color={colors.foreground} />
               </TouchableOpacity>
-              {showCategoryPicker && (
-                <View style={modalStyles.pickerOptions}>
-                  <ScrollView nestedScrollEnabled showsVerticalScrollIndicator>
-                    {categories.map(cat => (
-                      <TouchableOpacity
-                        key={cat.id}
-                        style={[modalStyles.pickerOption, categoryId === cat.id && modalStyles.pickerOptionActive]}
-                        onPress={() => {
-                          setCategoryId(cat.id);
-                          setShowCategoryPicker(false);
-                        }}
-                      >
-                        <Text style={[
-                          modalStyles.pickerOptionText,
-                          categoryId === cat.id && modalStyles.pickerOptionTextActive
-                        ]}>
-                          {language === 'ar' && cat.name_ar ? cat.name_ar : cat.name}
-                        </Text>
-                        {categoryId === cat.id && <Check size={16} color={colors.primary} />}
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
             </View>
-          </ScrollView>
 
-          <View style={modalStyles.footer}>
-            <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
-              <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              style={[modalStyles.saveButton, saving && { opacity: 0.7 }]} 
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={modalStyles.saveButtonText}>{saving ? t('loading') : t('save')}</Text>
-            </TouchableOpacity>
+            {/* Error Banner */}
+            {error && (
+              <View style={{ backgroundColor: `${colors.destructive}15`, padding: 12, marginHorizontal: 20, marginTop: 12, borderRadius: 10 }}>
+                <Text style={{ color: colors.destructive, fontSize: 13 }}>{error}</Text>
+              </View>
+            )}
+
+            {loadingIngredients ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <Loader2 size={32} color={colors.mutedForeground} />
+                <Text style={{ marginTop: 12, color: colors.mutedForeground }}>
+                  {language === 'ar' ? 'جاري التحميل...' : 'Loading...'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={modalStyles.content} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                {/* Image Picker Section */}
+                <View style={{ alignItems: 'center', marginBottom: 20 }}>
+                  <View style={{
+                    width: 100,
+                    height: 100,
+                    borderRadius: 16,
+                    backgroundColor: colors.secondary,
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    marginBottom: 12,
+                    overflow: 'hidden',
+                    borderWidth: 2,
+                    borderStyle: 'dashed',
+                    borderColor: colors.border,
+                  }}>
+                    {imagePreview ? (
+                      <View style={{ width: '100%', height: '100%' }}>
+                        <Image source={{ uri: imagePreview }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                        <TouchableOpacity
+                          style={{
+                            position: 'absolute',
+                            top: 4,
+                            right: 4,
+                            width: 24,
+                            height: 24,
+                            borderRadius: 12,
+                            backgroundColor: colors.destructive,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                          onPress={removeImage}
+                        >
+                          <X size={14} color="#fff" />
+                        </TouchableOpacity>
+                      </View>
+                    ) : (
+                      <Camera size={32} color={colors.mutedForeground} />
+                    )}
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 10,
+                        backgroundColor: colors.secondary,
+                      }}
+                      onPress={() => pickImage(false)}
+                    >
+                      <ImagePlus size={16} color={colors.foreground} />
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground }}>
+                        {language === 'ar' ? 'معرض' : 'Gallery'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        borderRadius: 10,
+                        backgroundColor: colors.secondary,
+                      }}
+                      onPress={() => pickImage(true)}
+                    >
+                      <Camera size={16} color={colors.foreground} />
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: colors.foreground }}>
+                        {language === 'ar' ? 'كاميرا' : 'Camera'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Basic Info Section */}
+                <View style={modalStyles.field}>
+                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+                    {language === 'ar' ? 'اسم المنتج' : 'Product Name'} *
+                  </Text>
+                  <TextInput
+                    style={[modalStyles.input, isRTL && styles.rtlText]}
+                    value={name}
+                    onChangeText={setName}
+                    placeholder={language === 'ar' ? 'أدخل اسم المنتج' : 'Enter product name'}
+                    placeholderTextColor={colors.mutedForeground}
+                    textAlign={isRTL ? 'right' : 'left'}
+                  />
+                </View>
+
+                <View style={modalStyles.field}>
+                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+                    {language === 'ar' ? 'الاسم بالعربي' : 'Arabic Name'}
+                  </Text>
+                  <TextInput
+                    style={[modalStyles.input, { textAlign: 'right' }]}
+                    value={nameAr}
+                    onChangeText={setNameAr}
+                    placeholder="أدخل الاسم بالعربي"
+                    placeholderTextColor={colors.mutedForeground}
+                  />
+                </View>
+
+                <View style={modalStyles.field}>
+                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+                    {language === 'ar' ? 'الوصف' : 'Description'}
+                  </Text>
+                  <TextInput
+                    style={[modalStyles.input, modalStyles.textArea, isRTL && styles.rtlText]}
+                    value={description}
+                    onChangeText={setDescription}
+                    placeholder={language === 'ar' ? 'وصف المنتج...' : 'Product description...'}
+                    placeholderTextColor={colors.mutedForeground}
+                    multiline
+                    numberOfLines={2}
+                    textAlign={isRTL ? 'right' : 'left'}
+                  />
+                </View>
+
+                {/* Price, Tax Rate, Category Row */}
+                <View style={{ flexDirection: 'row', gap: 12, marginBottom: 20 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('price')} *</Text>
+                    <View style={modalStyles.inputWithIcon}>
+                      <Text style={modalStyles.currencyPrefix}>{currency}</Text>
+                      <TextInput
+                        style={[modalStyles.inputNoBorder, isRTL && styles.rtlText]}
+                        value={price}
+                        onChangeText={(val) => {
+                          if (val === '' || /^\d*\.?\d*$/.test(val)) setPrice(val);
+                        }}
+                        placeholder="0.00"
+                        placeholderTextColor={colors.mutedForeground}
+                        keyboardType="decimal-pad"
+                      />
+                    </View>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[modalStyles.label, isRTL && styles.rtlText]}>
+                      {language === 'ar' ? 'الضريبة %' : 'Tax %'}
+                    </Text>
+                    <TextInput
+                      style={modalStyles.input}
+                      value={taxRate}
+                      onChangeText={(val) => {
+                        if (val === '' || /^\d*\.?\d*$/.test(val)) setTaxRate(val);
+                      }}
+                      placeholder="0"
+                      placeholderTextColor={colors.mutedForeground}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+
+                <View style={modalStyles.field}>
+                  <Text style={[modalStyles.label, isRTL && styles.rtlText]}>{t('category')}</Text>
+                  <TouchableOpacity
+                    style={[modalStyles.picker, isRTL && styles.rtlRow]}
+                    onPress={() => setShowCategoryPicker(!showCategoryPicker)}
+                  >
+                    <Text style={[modalStyles.pickerText, isRTL && styles.rtlText]}>
+                      {getCategoryName(categoryId)}
+                    </Text>
+                    <ChevronDown size={18} color={colors.mutedForeground} />
+                  </TouchableOpacity>
+                  {showCategoryPicker && (
+                    <View style={modalStyles.pickerOptions}>
+                      <ScrollView nestedScrollEnabled showsVerticalScrollIndicator style={{ maxHeight: 150 }}>
+                        {categories.map(cat => (
+                          <TouchableOpacity
+                            key={cat.id}
+                            style={[modalStyles.pickerOption, categoryId === cat.id && modalStyles.pickerOptionActive]}
+                            onPress={() => {
+                              setCategoryId(cat.id);
+                              setShowCategoryPicker(false);
+                            }}
+                          >
+                            <Text style={[
+                              modalStyles.pickerOptionText,
+                              categoryId === cat.id && modalStyles.pickerOptionTextActive
+                            ]}>
+                              {language === 'ar' && cat.name_ar ? cat.name_ar : cat.name}
+                            </Text>
+                            {categoryId === cat.id && <Check size={16} color={colors.primary} />}
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+                </View>
+
+                {/* Variants Toggle */}
+                <View style={{
+                  flexDirection: isRTL ? 'row-reverse' : 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingVertical: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: colors.border,
+                  marginBottom: 12,
+                }}>
+                  <View style={{ flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', gap: 8 }}>
+                    <Layers size={18} color={colors.mutedForeground} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground }}>
+                      {language === 'ar' ? 'تفعيل الأحجام' : 'Enable Variants'}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={hasVariants}
+                    onValueChange={(val) => {
+                      setHasVariants(val);
+                      if (val && variants.length === 0) addVariant();
+                    }}
+                    trackColor={{ false: colors.secondary, true: colors.primary }}
+                    thumbColor={hasVariants ? colors.primaryForeground : colors.foreground}
+                  />
+                </View>
+
+                {/* Variants Section */}
+                {hasVariants && (
+                  <View style={{ marginBottom: 20, padding: 12, backgroundColor: colors.secondary, borderRadius: 12 }}>
+                    {variants.map((variant, vIndex) => (
+                      <View key={variant.id} style={{ backgroundColor: colors.card, borderRadius: 10, marginBottom: 10, borderWidth: 1, borderColor: colors.border }}>
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, backgroundColor: colors.muted, borderTopLeftRadius: 10, borderTopRightRadius: 10 }}
+                          onPress={() => updateVariant(variant.id, { isExpanded: !variant.isExpanded })}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: colors.foreground }}>
+                            {language === 'ar' ? 'صنف' : 'Variant'} {vIndex + 1}: {variant.name || (language === 'ar' ? 'بدون اسم' : 'Unnamed')}
+                          </Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            <TouchableOpacity onPress={() => removeVariant(variant.id)}>
+                              <Trash2 size={16} color={colors.destructive} />
+                            </TouchableOpacity>
+                            {variant.isExpanded ? <ChevronUp size={18} color={colors.mutedForeground} /> : <ChevronDown size={18} color={colors.mutedForeground} />}
+                          </View>
+                        </TouchableOpacity>
+                        {variant.isExpanded && (
+                          <View style={{ padding: 12 }}>
+                            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+                              <TextInput
+                                style={[modalStyles.input, { flex: 1, paddingVertical: 8 }]}
+                                value={variant.name}
+                                onChangeText={(val) => updateVariant(variant.id, { name: val })}
+                                placeholder={language === 'ar' ? 'الاسم (مثال: وسط)' : 'Name (e.g., Medium)'}
+                                placeholderTextColor={colors.mutedForeground}
+                              />
+                              <TextInput
+                                style={[modalStyles.input, { width: 70, paddingVertical: 8, textAlign: 'center' }]}
+                                value={variant.price_adjustment ? variant.price_adjustment.toString() : ''}
+                                onChangeText={(val) => {
+                                  if (val === '' || /^-?\d*\.?\d*$/.test(val)) {
+                                    updateVariant(variant.id, { price_adjustment: val === '' ? 0 : parseFloat(val) || 0 });
+                                  }
+                                }}
+                                placeholder="+/- 0"
+                                placeholderTextColor={colors.mutedForeground}
+                                keyboardType="decimal-pad"
+                              />
+                            </View>
+
+                            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.mutedForeground, marginBottom: 8 }}>
+                              {language === 'ar' ? 'المكونات' : 'INGREDIENTS'}
+                            </Text>
+
+                            {variant.ingredients.map((ing) => (
+                              <View key={ing.id} style={[modalStyles.componentRow, { alignItems: 'flex-start' }]}>
+                                <ItemDropdown
+                                  dropdownKey={`${variant.id}-${ing.id}`}
+                                  selectedItem={ing.item}
+                                  onSelect={(item) => selectItemForVariantIngredient(variant.id, ing.id, item)}
+                                  itemsList={foodItems}
+                                />
+                                <TextInput
+                                  style={[modalStyles.componentQty, { width: 50 }]}
+                                  value={ing.quantity ? ing.quantity.toString() : ''}
+                                  onChangeText={(val) => {
+                                    if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                      updateVariantIngredient(variant.id, ing.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                                    }
+                                  }}
+                                  placeholder="0"
+                                  placeholderTextColor={colors.mutedForeground}
+                                  keyboardType="decimal-pad"
+                                />
+                                {ing.item && <Text style={{ fontSize: 10, color: colors.mutedForeground, width: 30 }}>{ing.item.unit}</Text>}
+                                <TouchableOpacity
+                                  style={{ padding: 4 }}
+                                  onPress={() => updateVariantIngredient(variant.id, ing.id, { removable: !ing.removable })}
+                                >
+                                  <View style={{
+                                    width: 18,
+                                    height: 18,
+                                    borderRadius: 4,
+                                    borderWidth: 2,
+                                    borderColor: ing.removable ? colors.primary : colors.border,
+                                    backgroundColor: ing.removable ? colors.primary : 'transparent',
+                                    justifyContent: 'center',
+                                    alignItems: 'center',
+                                  }}>
+                                    {ing.removable && <Check size={12} color={colors.primaryForeground} />}
+                                  </View>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => removeVariantIngredient(variant.id, ing.id)}>
+                                  <Trash2 size={16} color={colors.destructive} />
+                                </TouchableOpacity>
+                              </View>
+                            ))}
+
+                            <TouchableOpacity
+                              style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 8, marginTop: 8 }}
+                              onPress={() => addVariantIngredient(variant.id)}
+                            >
+                              <Plus size={14} color={colors.primary} />
+                              <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '600' }}>
+                                {language === 'ar' ? 'إضافة مكون' : 'Add Ingredient'}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
+                      </View>
+                    ))}
+
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 10, marginTop: 4 }}
+                      onPress={addVariant}
+                    >
+                      <Plus size={16} color={colors.primary} />
+                      <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
+                        {language === 'ar' ? 'إضافة صنف' : 'Add Variant'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Ingredients Section (when no variants) */}
+                {!hasVariants && (
+                  <View style={{ marginBottom: 20 }}>
+                    <View style={{ flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                      <Package size={18} color={colors.mutedForeground} />
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground }}>
+                        {language === 'ar' ? 'المكونات (الوصفة)' : 'Ingredients (Recipe)'} *
+                      </Text>
+                    </View>
+
+                    <View style={{ padding: 12, backgroundColor: colors.secondary, borderRadius: 12 }}>
+                      {ingredients.length === 0 ? (
+                        <Text style={{ textAlign: 'center', color: colors.mutedForeground, paddingVertical: 20, fontSize: 13 }}>
+                          {language === 'ar' ? 'لم تتم إضافة مكونات بعد' : 'No ingredients added yet'}
+                        </Text>
+                      ) : (
+                        ingredients.map((ing) => (
+                          <View key={ing.id} style={[modalStyles.componentRow, { alignItems: 'flex-start' }]}>
+                            <ItemDropdown
+                              dropdownKey={ing.id}
+                              selectedItem={ing.item}
+                              onSelect={(item) => selectItemForIngredient(ing.id, item)}
+                              itemsList={foodItems}
+                            />
+                            <TextInput
+                              style={[modalStyles.componentQty]}
+                              value={ing.quantity ? ing.quantity.toString() : ''}
+                              onChangeText={(val) => {
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  updateIngredient(ing.id, { quantity: val === '' ? 0 : parseFloat(val) });
+                                }
+                              }}
+                              placeholder="0"
+                              placeholderTextColor={colors.mutedForeground}
+                              keyboardType="decimal-pad"
+                            />
+                            {ing.item && <Text style={{ fontSize: 11, color: colors.mutedForeground, width: 35 }}>{ing.item.unit}</Text>}
+                            <TouchableOpacity
+                              style={{ padding: 4 }}
+                              onPress={() => updateIngredient(ing.id, { removable: !ing.removable })}
+                            >
+                              <View style={{
+                                width: 20,
+                                height: 20,
+                                borderRadius: 4,
+                                borderWidth: 2,
+                                borderColor: ing.removable ? colors.primary : colors.border,
+                                backgroundColor: ing.removable ? colors.primary : 'transparent',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                              }}>
+                                {ing.removable && <Check size={14} color={colors.primaryForeground} />}
+                              </View>
+                            </TouchableOpacity>
+                            <TouchableOpacity onPress={() => removeIngredient(ing.id)}>
+                              <Trash2 size={18} color={colors.destructive} />
+                            </TouchableOpacity>
+                          </View>
+                        ))
+                      )}
+
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 10, marginTop: 8 }}
+                        onPress={addIngredient}
+                      >
+                        <Plus size={16} color={colors.primary} />
+                        <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
+                          {language === 'ar' ? 'إضافة مكون' : 'Add Ingredient'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {ingredients.length > 0 && (
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
+                          <Text style={{ fontSize: 12, color: colors.mutedForeground }}>
+                            {language === 'ar' ? 'التكلفة:' : 'Cost:'} <Text style={{ fontWeight: '600', color: colors.foreground }}>{currency} {calculateCost(ingredients).toFixed(3)}</Text>
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                )}
+
+                {/* Modifiers Section */}
+                <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 16 }}>
+                  <View style={{ flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <Plus size={18} color={colors.mutedForeground} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground }}>
+                      {language === 'ar' ? 'الإضافات' : 'Add-ons (Extras)'}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 12 }}>
+                    {language === 'ar' ? 'عناصر إضافية يمكن للعملاء إضافتها مقابل رسوم إضافية' : 'Extra items customers can add with additional charge'}
+                  </Text>
+
+                  <View style={{ padding: 12, backgroundColor: colors.secondary, borderRadius: 12 }}>
+                    {modifiers.length === 0 ? (
+                      <Text style={{ textAlign: 'center', color: colors.mutedForeground, paddingVertical: 16, fontSize: 13 }}>
+                        {language === 'ar' ? 'لم تتم إضافة إضافات بعد' : 'No add-ons configured'}
+                      </Text>
+                    ) : (
+                      modifiers.map((mod) => (
+                        <View key={mod.id} style={[modalStyles.componentRow, { alignItems: 'flex-start' }]}>
+                          <ItemDropdown
+                            dropdownKey={`mod-${mod.id}`}
+                            selectedItem={mod.item}
+                            onSelect={(item) => selectItemForModifier(mod.id, item)}
+                            itemsList={foodItems}
+                          />
+                          <TextInput
+                            style={[modalStyles.componentQty, { width: 45 }]}
+                            value={mod.quantity ? mod.quantity.toString() : ''}
+                            onChangeText={(val) => {
+                              if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                updateModifier(mod.id, { quantity: val === '' ? 1 : parseFloat(val) });
+                              }
+                            }}
+                            placeholder="1"
+                            placeholderTextColor={colors.mutedForeground}
+                            keyboardType="decimal-pad"
+                          />
+                          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={{ fontSize: 12, color: colors.mutedForeground }}>+</Text>
+                            <TextInput
+                              style={[modalStyles.componentQty, { width: 55, marginLeft: 4 }]}
+                              value={mod.extra_price ? mod.extra_price.toString() : ''}
+                              onChangeText={(val) => {
+                                if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                                  updateModifier(mod.id, { extra_price: val === '' ? 0 : parseFloat(val) });
+                                }
+                              }}
+                              placeholder="0.00"
+                              placeholderTextColor={colors.mutedForeground}
+                              keyboardType="decimal-pad"
+                            />
+                          </View>
+                          <TouchableOpacity onPress={() => removeModifier(mod.id)}>
+                            <Trash2 size={18} color={colors.destructive} />
+                          </TouchableOpacity>
+                        </View>
+                      ))
+                    )}
+
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: 10, marginTop: 8 }}
+                      onPress={addModifier}
+                    >
+                      <Plus size={16} color={colors.primary} />
+                      <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
+                        {language === 'ar' ? 'إضافة عنصر إضافي' : 'Add Extra Item'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Accessories Section */}
+                <View style={{ marginBottom: 20, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 16 }}>
+                  <View style={{ flexDirection: isRTL ? 'row-reverse' : 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <ShoppingBag size={18} color={colors.mutedForeground} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.foreground }}>
+                      {language === 'ar' ? 'مستلزمات التعبئة' : 'Accessories (Packaging)'}
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 11, color: colors.mutedForeground, marginBottom: 12 }}>
+                    {language === 'ar' ? 'مواد التعبئة التي يتم خصمها عند بيع المنتج' : 'Packaging items deducted from inventory when sold'}
+                  </Text>
+
+                  <View style={{ padding: 12, backgroundColor: `${colors.primary}10`, borderRadius: 12 }}>
+                    {nonFoodItems.length === 0 ? (
+                      <Text style={{ textAlign: 'center', color: colors.mutedForeground, paddingVertical: 16, fontSize: 13 }}>
+                        {language === 'ar' ? 'لا توجد مواد غير غذائية متاحة' : 'No non-food items available'}
+                      </Text>
+                    ) : accessories.length === 0 ? (
+                      <Text style={{ textAlign: 'center', color: colors.mutedForeground, paddingVertical: 16, fontSize: 13 }}>
+                        {language === 'ar' ? 'لم تتم إضافة مستلزمات بعد' : 'No accessories configured'}
+                      </Text>
+                    ) : (
+                      accessories.map((acc) => (
+                        <View key={acc.id} style={{ backgroundColor: colors.card, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: colors.border }}>
+                          <View style={[modalStyles.componentRow, { marginBottom: 0, backgroundColor: 'transparent', padding: 0, alignItems: 'flex-start' }]}>
+                            <ItemDropdown
+                              dropdownKey={`acc-${acc.id}`}
+                              selectedItem={acc.item}
+                              onSelect={(item) => selectItemForAccessory(acc.id, item)}
+                              itemsList={nonFoodItems}
+                              placeholder={language === 'ar' ? 'اختر مادة تعبئة' : 'Select packaging item'}
+                            />
+                            <TextInput
+                              style={[modalStyles.componentQty]}
+                              value={acc.quantity ? acc.quantity.toString() : ''}
+                              onChangeText={(val) => {
+                                if (val === '' || /^\d+$/.test(val)) {
+                                  updateAccessory(acc.id, { quantity: val === '' ? 1 : parseInt(val) });
+                                }
+                              }}
+                              placeholder="1"
+                              placeholderTextColor={colors.mutedForeground}
+                              keyboardType="number-pad"
+                            />
+                            <TouchableOpacity onPress={() => removeAccessory(acc.id)}>
+                              <Trash2 size={18} color={colors.destructive} />
+                            </TouchableOpacity>
+                          </View>
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+                            <Text style={{ fontSize: 11, color: colors.mutedForeground, alignSelf: 'center' }}>
+                              {language === 'ar' ? 'خصم عند:' : 'Deduct for:'}
+                            </Text>
+                            {(['always', 'dine_in', 'takeaway', 'delivery'] as AccessoryOrderType[]).map((orderType) => (
+                              <TouchableOpacity
+                                key={orderType}
+                                style={{
+                                  paddingHorizontal: 10,
+                                  paddingVertical: 5,
+                                  borderRadius: 6,
+                                  backgroundColor: acc.applicable_order_types.includes(orderType) ? colors.primary : colors.secondary,
+                                }}
+                                onPress={() => toggleOrderType(acc.id, orderType)}
+                              >
+                                <Text style={{
+                                  fontSize: 10,
+                                  fontWeight: '600',
+                                  color: acc.applicable_order_types.includes(orderType) ? colors.primaryForeground : colors.mutedForeground,
+                                }}>
+                                  {orderType === 'always' && (language === 'ar' ? 'دائماً' : 'Always')}
+                                  {orderType === 'dine_in' && (language === 'ar' ? 'محلي' : 'Dine-in')}
+                                  {orderType === 'takeaway' && (language === 'ar' ? 'سفري' : 'Takeaway')}
+                                  {orderType === 'delivery' && (language === 'ar' ? 'توصيل' : 'Delivery')}
+                                </Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        </View>
+                      ))
+                    )}
+
+                    {nonFoodItems.length > 0 && (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.primary, borderRadius: 10, marginTop: 4 }}
+                        onPress={addAccessory}
+                      >
+                        <Plus size={16} color={colors.primary} />
+                        <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
+                          {language === 'ar' ? 'إضافة مستلزم' : 'Add Accessory'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+
+            {/* Footer */}
+            <View style={modalStyles.footer}>
+              <TouchableOpacity style={modalStyles.cancelButton} onPress={onClose}>
+                <Text style={modalStyles.cancelButtonText}>{t('cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[modalStyles.saveButton, saving && { opacity: 0.7 }]}
+                onPress={handleSave}
+                disabled={saving || loadingIngredients}
+              >
+                <Text style={modalStyles.saveButtonText}>
+                  {saving ? (language === 'ar' ? 'جاري الحفظ...' : 'Saving...') : t('save')}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

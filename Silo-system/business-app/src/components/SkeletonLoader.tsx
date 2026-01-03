@@ -1,21 +1,23 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Animated, StyleSheet, ViewStyle } from 'react-native';
-import { colors } from '../theme/colors';
+import { View, Animated, StyleSheet, ViewStyle, DimensionValue } from 'react-native';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 
 interface SkeletonProps {
-  width?: number | string;
+  width?: DimensionValue;
   height?: number;
   borderRadius?: number;
   style?: ViewStyle;
 }
 
 // Individual skeleton element with shimmer animation
-export const Skeleton: React.FC<SkeletonProps> = ({ 
-  width = '100%', 
-  height = 16, 
+export const Skeleton: React.FC<SkeletonProps> = ({
+  width = '100%',
+  height = 16,
   borderRadius = 8,
-  style 
+  style
 }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
   const shimmerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -59,93 +61,118 @@ export const Skeleton: React.FC<SkeletonProps> = ({
 };
 
 // Card skeleton for delivery partners, drivers, discounts
-export const CardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => (
-  <View style={[styles.card, style]}>
-    <View style={styles.cardHeader}>
-      <Skeleton width={48} height={48} borderRadius={12} />
-      <View style={styles.cardHeaderInfo}>
-        <Skeleton width="70%" height={16} />
-        <Skeleton width="50%" height={12} style={{ marginTop: 8 }} />
-      </View>
-    </View>
-    <View style={styles.cardBody}>
-      <Skeleton width="100%" height={12} style={{ marginTop: 12 }} />
-      <Skeleton width="60%" height={12} style={{ marginTop: 8 }} />
-    </View>
-    <View style={styles.cardActions}>
-      <Skeleton width={32} height={32} borderRadius={8} />
-      <Skeleton width={32} height={32} borderRadius={8} />
-      <Skeleton width={32} height={32} borderRadius={8} />
-    </View>
-  </View>
-);
+export const CardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
 
-// Grid card skeleton for tables, categories
-export const GridCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => (
-  <View style={[styles.gridCard, style]}>
-    <View style={styles.gridCardHeader}>
-      <Skeleton width={44} height={44} borderRadius={12} />
-      <View style={styles.gridCardInfo}>
-        <Skeleton width="60%" height={14} />
-        <Skeleton width="40%" height={10} style={{ marginTop: 6 }} />
-      </View>
-    </View>
-    <Skeleton width="80%" height={10} style={{ marginTop: 10 }} />
-    <View style={styles.gridCardActions}>
-      <Skeleton width={28} height={28} borderRadius={6} />
-      <Skeleton width={28} height={28} borderRadius={6} />
-      <Skeleton width={28} height={28} borderRadius={6} />
-    </View>
-  </View>
-);
-
-// Bundle card skeleton with image
-export const BundleCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => (
-  <View style={[styles.bundleCard, style]}>
-    <Skeleton width="100%" height={140} borderRadius={0} style={styles.bundleImage} />
-    <View style={styles.bundleInfo}>
-      <Skeleton width="80%" height={14} />
-      <Skeleton width="40%" height={10} style={{ marginTop: 6 }} />
-      <View style={styles.bundlePricing}>
-        <Skeleton width={60} height={16} />
-        <Skeleton width={40} height={12} />
-      </View>
-      <View style={styles.bundleStats}>
-        <Skeleton width={50} height={10} />
-        <Skeleton width={50} height={10} />
-      </View>
-    </View>
-  </View>
-);
-
-// Request card skeleton
-export const RequestCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => (
-  <View style={[styles.requestCard, style]}>
-    <View style={styles.requestHeader}>
-      <Skeleton width={48} height={48} borderRadius={12} />
-      <View style={styles.requestInfo}>
-        <Skeleton width="60%" height={14} />
-        <View style={styles.requestMeta}>
-          <Skeleton width={70} height={20} borderRadius={10} />
-          <Skeleton width={60} height={12} />
+  return (
+    <View style={[styles.card, style]}>
+      <View style={styles.cardHeader}>
+        <Skeleton width={48} height={48} borderRadius={12} />
+        <View style={styles.cardHeaderInfo}>
+          <Skeleton width="70%" height={16} />
+          <Skeleton width="50%" height={12} style={{ marginTop: 8 }} />
         </View>
       </View>
-      <Skeleton width={20} height={20} borderRadius={10} />
+      <View style={styles.cardBody}>
+        <Skeleton width="100%" height={12} style={{ marginTop: 12 }} />
+        <Skeleton width="60%" height={12} style={{ marginTop: 8 }} />
+      </View>
+      <View style={styles.cardActions}>
+        <Skeleton width={32} height={32} borderRadius={8} />
+        <Skeleton width={32} height={32} borderRadius={8} />
+        <Skeleton width={32} height={32} borderRadius={8} />
+      </View>
     </View>
-  </View>
-);
+  );
+};
+
+// Grid card skeleton for tables, categories
+export const GridCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+
+  return (
+    <View style={[styles.gridCard, style]}>
+      <View style={styles.gridCardHeader}>
+        <Skeleton width={44} height={44} borderRadius={12} />
+        <View style={styles.gridCardInfo}>
+          <Skeleton width="60%" height={14} />
+          <Skeleton width="40%" height={10} style={{ marginTop: 6 }} />
+        </View>
+      </View>
+      <Skeleton width="80%" height={10} style={{ marginTop: 10 }} />
+      <View style={styles.gridCardActions}>
+        <Skeleton width={28} height={28} borderRadius={6} />
+        <Skeleton width={28} height={28} borderRadius={6} />
+        <Skeleton width={28} height={28} borderRadius={6} />
+      </View>
+    </View>
+  );
+};
+
+// Bundle card skeleton with image
+export const BundleCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+
+  return (
+    <View style={[styles.bundleCard, style]}>
+      <Skeleton width="100%" height={140} borderRadius={0} style={styles.bundleImage} />
+      <View style={styles.bundleInfo}>
+        <Skeleton width="80%" height={14} />
+        <Skeleton width="40%" height={10} style={{ marginTop: 6 }} />
+        <View style={styles.bundlePricing}>
+          <Skeleton width={60} height={16} />
+          <Skeleton width={40} height={12} />
+        </View>
+        <View style={styles.bundleStats}>
+          <Skeleton width={50} height={10} />
+          <Skeleton width={50} height={10} />
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// Request card skeleton
+export const RequestCardSkeleton: React.FC<{ style?: ViewStyle }> = ({ style }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+
+  return (
+    <View style={[styles.requestCard, style]}>
+      <View style={styles.requestHeader}>
+        <Skeleton width={48} height={48} borderRadius={12} />
+        <View style={styles.requestInfo}>
+          <Skeleton width="60%" height={14} />
+          <View style={styles.requestMeta}>
+            <Skeleton width={70} height={20} borderRadius={10} />
+            <Skeleton width={60} height={12} />
+          </View>
+        </View>
+        <Skeleton width={20} height={20} borderRadius={10} />
+      </View>
+    </View>
+  );
+};
 
 // Stats skeleton for top stats row
-export const StatsSkeleton: React.FC<{ count?: number }> = ({ count = 4 }) => (
-  <View style={styles.statsRow}>
-    {Array.from({ length: count }).map((_, i) => (
-      <View key={i} style={styles.statCard}>
-        <Skeleton width={40} height={24} />
-        <Skeleton width={50} height={10} style={{ marginTop: 6 }} />
-      </View>
-    ))}
-  </View>
-);
+export const StatsSkeleton: React.FC<{ count?: number }> = ({ count = 4 }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+
+  return (
+    <View style={styles.statsRow}>
+      {Array.from({ length: count }).map((_, i) => (
+        <View key={i} style={styles.statCard}>
+          <Skeleton width={40} height={24} />
+          <Skeleton width={50} height={10} style={{ marginTop: 6 }} />
+        </View>
+      ))}
+    </View>
+  );
+};
 
 // List skeleton - renders multiple card skeletons
 interface ListSkeletonProps {
@@ -154,11 +181,14 @@ interface ListSkeletonProps {
   style?: ViewStyle;
 }
 
-export const ListSkeleton: React.FC<ListSkeletonProps> = ({ 
-  count = 4, 
+export const ListSkeleton: React.FC<ListSkeletonProps> = ({
+  count = 4,
   type = 'card',
-  style 
+  style
 }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+
   const renderSkeleton = () => {
     switch (type) {
       case 'grid':
@@ -204,19 +234,24 @@ export const SectionSkeleton: React.FC<SectionSkeletonProps> = ({
   showHeader = true,
   itemCount = 2,
   type = 'grid'
-}) => (
-  <View style={styles.section}>
-    {showHeader && (
-      <View style={styles.sectionHeader}>
-        <Skeleton width={16} height={16} borderRadius={4} />
-        <Skeleton width={120} height={14} />
-      </View>
-    )}
-    <ListSkeleton count={itemCount} type={type} />
-  </View>
-);
+}) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
 
-const styles = StyleSheet.create({
+  return (
+    <View style={styles.section}>
+      {showHeader && (
+        <View style={styles.sectionHeader}>
+          <Skeleton width={16} height={16} borderRadius={4} />
+          <Skeleton width={120} height={14} />
+        </View>
+      )}
+      <ListSkeleton count={itemCount} type={type} />
+    </View>
+  );
+};
+
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   skeleton: {
     backgroundColor: colors.border,
   },
@@ -369,6 +404,3 @@ export default {
   ListSkeleton,
   SectionSkeleton,
 };
-
-
-

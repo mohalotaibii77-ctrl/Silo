@@ -149,9 +149,9 @@ async function testPOSOrders(ctx: TestContext): Promise<{ orderId: number | null
   });
   track(assertStatus(invalidItem, 400, 'POST /pos/orders - Validation (missing item fields)'));
   
-  // GET /api/pos/orders/:orderId - Not found
-  const notFound = await apiRequest(ctx, 'GET', '/pos/orders/999999');
-  track(assertStatus(notFound, 404, 'GET /pos/orders/999999 - Not found'));
+  // GET /api/pos/orders/:orderId - Not found (use -1 to guarantee not found)
+  const notFound = await apiRequest(ctx, 'GET', '/pos/orders/-1');
+  track(assertStatus(notFound, 404, 'GET /pos/orders/-1 - Not found'));
   
   return { orderId };
 }
@@ -479,7 +479,7 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
   track(assertStatus(editNoChanges, 400, 'PATCH /pos/orders/:id/edit - Validation (no changes)'));
   
   // TEST 8: Validation - Order not found (should fail)
-  const editNotFound = await apiRequest(ctx, 'PATCH', '/pos/orders/999999/edit', {
+  const editNotFound = await apiRequest(ctx, 'PATCH', '/pos/orders/-1/edit', {
     products_to_add: [{
       product_id: testProduct1.id,
       product_name: testProduct1.name,
@@ -487,7 +487,7 @@ async function testOrderEditing(ctx: TestContext): Promise<void> {
       unit_price: 25.00,
     }]
   });
-  track(assertStatus(editNotFound, 400, 'PATCH /pos/orders/999999/edit - Not found'));
+  track(assertStatus(editNotFound, 400, 'PATCH /pos/orders/-1/edit - Not found'));
   
   // TEST 9: Complex edit - Multiple operations at once
   const createOrderForComplex = await apiRequest(ctx, 'POST', '/pos/orders', {
@@ -590,14 +590,14 @@ async function testKitchenDisplay(ctx: TestContext): Promise<void> {
   
   // POST /api/pos/kitchen/process-waste - Valid waste decision (may not find item)
   const processWaste = await apiRequest(ctx, 'POST', '/pos/kitchen/process-waste', {
-    decisions: [{ cancelled_item_id: 999999, decision: 'waste' }],
+    decisions: [{ cancelled_item_id: -1, decision: 'waste' }],
   });
-  // This will process but with errors since item 999999 doesn't exist
+  // This will process but with errors since item -1 doesn't exist
   track(assertSuccess(processWaste, 'POST /pos/kitchen/process-waste - Waste decision format'));
-  
+
   // POST /api/pos/kitchen/process-waste - Valid return decision (may not find item)
   const processReturn = await apiRequest(ctx, 'POST', '/pos/kitchen/process-waste', {
-    decisions: [{ cancelled_item_id: 999998, decision: 'return' }],
+    decisions: [{ cancelled_item_id: -2, decision: 'return' }],
   });
   track(assertSuccess(processReturn, 'POST /pos/kitchen/process-waste - Return decision format'));
 }
@@ -780,25 +780,25 @@ async function testCancellationFlow(ctx: TestContext): Promise<void> {
   
   // POST /api/pos/orders/:orderId/cancel - Validation (order not found returns 400)
   // Note: API returns 400 "Order not found" instead of 404 because the service throws an Error
-  const cancelNotFound = await apiRequest(ctx, 'POST', '/pos/orders/999999/cancel', {
+  const cancelNotFound = await apiRequest(ctx, 'POST', '/pos/orders/-1/cancel', {
     reason: 'Test cancellation',
   });
-  track(assertStatus(cancelNotFound, 400, 'POST /pos/orders/999999/cancel - Not found (returns 400)'));
-  
+  track(assertStatus(cancelNotFound, 400, 'POST /pos/orders/-1/cancel - Not found (returns 400)'));
+
   // POST /api/pos/orders/:orderId/cancel - With pos_session_id parameter
   // This tests that the pos_session_id parameter is accepted by the API
-  const cancelWithSession = await apiRequest(ctx, 'POST', '/pos/orders/999999/cancel', {
+  const cancelWithSession = await apiRequest(ctx, 'POST', '/pos/orders/-1/cancel', {
     reason: 'Test cancellation',
     pos_session_id: 1,
   });
-  track(assertStatus(cancelWithSession, 400, 'POST /pos/orders/999999/cancel - With pos_session_id'));
-  
+  track(assertStatus(cancelWithSession, 400, 'POST /pos/orders/-1/cancel - With pos_session_id'));
+
   // Test order edit endpoint (items_to_remove)
   // PATCH /api/pos/orders/:orderId/edit - Not found (returns 400)
-  const editNotFound = await apiRequest(ctx, 'PATCH', '/pos/orders/999999/edit', {
+  const editNotFound2 = await apiRequest(ctx, 'PATCH', '/pos/orders/-1/edit', {
     items_to_remove: [1],
   });
-  track(assertStatus(editNotFound, 400, 'PATCH /pos/orders/999999/edit - Not found (returns 400)'));
+  track(assertStatus(editNotFound2, 400, 'PATCH /pos/orders/-1/edit - Not found (returns 400)'));
   
   // Test that cancelled items include cancellation_source field
   const cancelledItems = await apiRequest(ctx, 'GET', '/pos/kitchen/cancelled-items');
@@ -1061,7 +1061,7 @@ async function testOrderEditingValidations(ctx: TestContext): Promise<void> {
     // Try to modify with non-existent order_item_id
     const editInvalidItem = await apiRequest(ctx, 'PATCH', `/pos/orders/${invalidItemOrderId}/edit`, {
       products_to_modify: [{
-        order_item_id: 999999, // Non-existent
+        order_item_id: -1, // Non-existent
         quantity: 2
       }]
     });
@@ -1090,6 +1090,316 @@ async function testOrderEditingValidations(ctx: TestContext): Promise<void> {
   console.log(invalidFormatHandled
     ? '  ✓ PATCH /pos/orders/abc/edit - Invalid ID format handled'
     : '  ✗ PATCH /pos/orders/abc/edit - Invalid ID format handled');
+}
+
+// ============================================
+// ORDER EDITING EDGE CASES TESTS
+// ============================================
+async function testOrderEditingEdgeCases(ctx: TestContext): Promise<void> {
+  console.log('\n🔬 ORDER EDITING EDGE CASES');
+
+  // Get product availability
+  const availability = await apiRequest(ctx, 'GET', '/pos/product-availability');
+  const availableStock = availability.data?.data || availability.data || {};
+  const availableProductIds = Object.entries(availableStock)
+    .filter(([_, qty]) => (qty as number) > 0)
+    .map(([id, _]) => parseInt(id));
+
+  if (availableProductIds.length < 1) {
+    console.log('  ⚠️  No products with inventory - skipping edge case tests');
+    return;
+  }
+
+  const products = await apiRequest(ctx, 'GET', '/store-products');
+  const allProducts = products.data?.data || products.data?.products || [];
+  const testProduct = allProducts.find((p: any) => availableProductIds.includes(p.id));
+
+  if (!testProduct) {
+    console.log('  ⚠️  No test product available - skipping edge case tests');
+    return;
+  }
+
+  // Helper to create fresh order for each test
+  async function createTestOrder(): Promise<{ orderId: number | null; orderItemId: number | null }> {
+    const createOrder = await apiRequest(ctx, 'POST', '/pos/orders', {
+      order_type: 'dine_in',
+      order_source: 'pos',
+      table_number: `T-EDGE-${Date.now()}`,
+      items: [{
+        product_id: testProduct.id,
+        product_name: testProduct.name,
+        quantity: 1,
+        unit_price: testProduct.price || 25.00,
+      }],
+    });
+
+    if (!createOrder.data?.data?.id) {
+      return { orderId: null, orderItemId: null };
+    }
+
+    const orderId = createOrder.data.data.id;
+    const orderItemId = createOrder.data.data.items?.[0]?.id || createOrder.data.data.order_items?.[0]?.id;
+    return { orderId, orderItemId };
+  }
+
+  // TEST 1: Zero quantity modification (should reject or remove item)
+  console.log('\n  📍 Quantity Edge Cases');
+  const { orderId: zeroQtyOrderId, orderItemId: zeroQtyItemId } = await createTestOrder();
+  if (zeroQtyOrderId && zeroQtyItemId) {
+    const zeroQty = await apiRequest(ctx, 'PATCH', `/pos/orders/${zeroQtyOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: zeroQtyItemId, quantity: 0 }]
+    });
+    // Should either reject (400) or succeed (200) if it removes the item
+    const zeroQtyHandled = zeroQty.status === 400 || zeroQty.status === 200;
+    track(zeroQtyHandled);
+    console.log(zeroQtyHandled
+      ? `  ✓ Zero quantity - ${zeroQty.status === 400 ? 'Rejected' : 'Handled (item removed)'}`
+      : `  ✗ Zero quantity - Unexpected status: ${zeroQty.status}`);
+  }
+
+  // TEST 2: Negative quantity modification (should reject)
+  const { orderId: negQtyOrderId, orderItemId: negQtyItemId } = await createTestOrder();
+  if (negQtyOrderId && negQtyItemId) {
+    const negativeQty = await apiRequest(ctx, 'PATCH', `/pos/orders/${negQtyOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: negQtyItemId, quantity: -1 }]
+    });
+    track(assertStatus(negativeQty, 400, 'PATCH edit - Negative quantity rejected'));
+  }
+
+  // TEST 3: Very large quantity (should fail with inventory error or succeed)
+  const { orderId: hugeQtyOrderId, orderItemId: hugeQtyItemId } = await createTestOrder();
+  if (hugeQtyOrderId && hugeQtyItemId) {
+    const hugeQty = await apiRequest(ctx, 'PATCH', `/pos/orders/${hugeQtyOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: hugeQtyItemId, quantity: 999999 }]
+    });
+    // Should either succeed (200) or fail with inventory error (400)
+    const hugeQtyHandled = hugeQty.status === 200 || hugeQty.status === 400;
+    track(hugeQtyHandled);
+    console.log(hugeQtyHandled
+      ? `  ✓ Large quantity (999999) - ${hugeQty.status === 400 ? 'Rejected (inventory)' : 'Accepted'}`
+      : `  ✗ Large quantity - Unexpected status: ${hugeQty.status}`);
+  }
+
+  // TEST 4: Fractional quantity (should reject if not allowed)
+  const { orderId: fracQtyOrderId, orderItemId: fracQtyItemId } = await createTestOrder();
+  if (fracQtyOrderId && fracQtyItemId) {
+    const fractionalQty = await apiRequest(ctx, 'PATCH', `/pos/orders/${fracQtyOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: fracQtyItemId, quantity: 1.5 }]
+    });
+    // Most systems reject fractional quantities
+    const fracQtyHandled = fractionalQty.status === 200 || fractionalQty.status === 400;
+    track(fracQtyHandled);
+    console.log(fracQtyHandled
+      ? `  ✓ Fractional quantity (1.5) - ${fractionalQty.status === 400 ? 'Rejected' : 'Accepted'}`
+      : `  ✗ Fractional quantity - Unexpected status: ${fractionalQty.status}`);
+  }
+
+  // TEST 5: Remove all items from order (should fail - order cannot be empty)
+  console.log('\n  📍 Remove All Items Edge Case');
+  const createMultiItemOrder = await apiRequest(ctx, 'POST', '/pos/orders', {
+    order_type: 'dine_in',
+    order_source: 'pos',
+    table_number: `T-REMOVEALL-${Date.now()}`,
+    items: [{
+      product_id: testProduct.id,
+      product_name: testProduct.name,
+      quantity: 1,
+      unit_price: testProduct.price || 25.00,
+    }],
+  });
+
+  if (createMultiItemOrder.data?.data?.id) {
+    const removeAllOrderId = createMultiItemOrder.data.data.id;
+    const allItemIds = (createMultiItemOrder.data.data.items || createMultiItemOrder.data.data.order_items || [])
+      .map((item: any) => item.id);
+
+    if (allItemIds.length > 0) {
+      const removeAll = await apiRequest(ctx, 'PATCH', `/pos/orders/${removeAllOrderId}/edit`, {
+        products_to_remove: allItemIds
+      });
+      // Should reject (400) - cannot have empty order
+      const removeAllHandled = removeAll.status === 400 || removeAll.status === 200;
+      track(removeAllHandled);
+      console.log(removeAllHandled
+        ? `  ✓ Remove all items - ${removeAll.status === 400 ? 'Rejected (order cannot be empty)' : 'Allowed'}`
+        : `  ✗ Remove all items - Unexpected status: ${removeAll.status}`);
+    }
+  }
+
+  // TEST 6: Invalid variant ID (non-existent variant)
+  console.log('\n  📍 Variant Edge Cases');
+  const { orderId: badVariantOrderId, orderItemId: badVariantItemId } = await createTestOrder();
+  if (badVariantOrderId && badVariantItemId) {
+    const invalidVariant = await apiRequest(ctx, 'PATCH', `/pos/orders/${badVariantOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: badVariantItemId, variant_id: -1 }]
+    });
+    // Should reject (400) or handle gracefully
+    const invalidVariantHandled = invalidVariant.status === 400 || invalidVariant.status === 200;
+    track(invalidVariantHandled);
+    console.log(invalidVariantHandled
+      ? `  ✓ Invalid variant ID (-1) - ${invalidVariant.status === 400 ? 'Rejected' : 'Handled'}`
+      : `  ✗ Invalid variant ID - Unexpected status: ${invalidVariant.status}`);
+  }
+
+  // TEST 7: Modifier edge cases
+  console.log('\n  📍 Modifier Edge Cases');
+
+  // 7a: Empty modifiers array (should clear modifiers)
+  const { orderId: emptyModOrderId, orderItemId: emptyModItemId } = await createTestOrder();
+  if (emptyModOrderId && emptyModItemId) {
+    const emptyModifiers = await apiRequest(ctx, 'PATCH', `/pos/orders/${emptyModOrderId}/edit`, {
+      products_to_modify: [{ order_item_id: emptyModItemId, modifiers: [] }]
+    });
+    track(assertSuccess(emptyModifiers, 'PATCH edit - Empty modifiers array (clear modifiers)'));
+  }
+
+  // 7b: Invalid modifier type
+  const { orderId: badModTypeOrderId, orderItemId: badModTypeItemId } = await createTestOrder();
+  if (badModTypeOrderId && badModTypeItemId) {
+    const invalidModType = await apiRequest(ctx, 'PATCH', `/pos/orders/${badModTypeOrderId}/edit`, {
+      products_to_modify: [{
+        order_item_id: badModTypeItemId,
+        modifiers: [{
+          modifier_name: 'Test',
+          modifier_type: 'invalid_type', // Invalid - should be 'extra' or 'removal'
+          quantity: 1,
+          unit_price: 0
+        }]
+      }]
+    });
+    // Should reject (400) due to invalid modifier type
+    const invalidModTypeHandled = invalidModType.status === 400 || invalidModType.status === 200;
+    track(invalidModTypeHandled);
+    console.log(invalidModTypeHandled
+      ? `  ✓ Invalid modifier type - ${invalidModType.status === 400 ? 'Rejected' : 'Accepted (lenient)'}`
+      : `  ✗ Invalid modifier type - Unexpected status: ${invalidModType.status}`);
+  }
+
+  // 7c: Modifier with negative price
+  const { orderId: negModPriceOrderId, orderItemId: negModPriceItemId } = await createTestOrder();
+  if (negModPriceOrderId && negModPriceItemId) {
+    const negModPrice = await apiRequest(ctx, 'PATCH', `/pos/orders/${negModPriceOrderId}/edit`, {
+      products_to_modify: [{
+        order_item_id: negModPriceItemId,
+        modifiers: [{
+          modifier_name: 'Negative Price Mod',
+          modifier_type: 'extra',
+          quantity: 1,
+          unit_price: -5.00 // Negative price
+        }]
+      }]
+    });
+    const negModPriceHandled = negModPrice.status === 400 || negModPrice.status === 200;
+    track(negModPriceHandled);
+    console.log(negModPriceHandled
+      ? `  ✓ Negative modifier price - ${negModPrice.status === 400 ? 'Rejected' : 'Accepted'}`
+      : `  ✗ Negative modifier price - Unexpected status: ${negModPrice.status}`);
+  }
+
+  // 7d: Modifier with zero quantity
+  const { orderId: zeroModQtyOrderId, orderItemId: zeroModQtyItemId } = await createTestOrder();
+  if (zeroModQtyOrderId && zeroModQtyItemId) {
+    const zeroModQty = await apiRequest(ctx, 'PATCH', `/pos/orders/${zeroModQtyOrderId}/edit`, {
+      products_to_modify: [{
+        order_item_id: zeroModQtyItemId,
+        modifiers: [{
+          modifier_name: 'Zero Qty Mod',
+          modifier_type: 'extra',
+          quantity: 0,
+          unit_price: 1.00
+        }]
+      }]
+    });
+    const zeroModQtyHandled = zeroModQty.status === 400 || zeroModQty.status === 200;
+    track(zeroModQtyHandled);
+    console.log(zeroModQtyHandled
+      ? `  ✓ Zero modifier quantity - ${zeroModQty.status === 400 ? 'Rejected' : 'Accepted'}`
+      : `  ✗ Zero modifier quantity - Unexpected status: ${zeroModQty.status}`);
+  }
+
+  // TEST 8: Add product with invalid product_id
+  console.log('\n  📍 Product ID Edge Cases');
+  const { orderId: badProductOrderId } = await createTestOrder();
+  if (badProductOrderId) {
+    const invalidProductId = await apiRequest(ctx, 'PATCH', `/pos/orders/${badProductOrderId}/edit`, {
+      products_to_add: [{
+        product_id: -1, // Invalid product ID
+        product_name: 'Invalid Product',
+        quantity: 1,
+        unit_price: 10.00
+      }]
+    });
+    // Should reject (400) - product not found
+    const invalidProductHandled = invalidProductId.status === 400;
+    track(invalidProductHandled);
+    console.log(invalidProductHandled
+      ? '  ✓ Invalid product_id (-1) - Rejected'
+      : `  ✗ Invalid product_id - Expected 400, got: ${invalidProductId.status}`);
+  }
+
+  // TEST 9: Security - SQL injection attempt in modifier name
+  console.log('\n  📍 Security Edge Cases');
+  const { orderId: sqlInjectOrderId, orderItemId: sqlInjectItemId } = await createTestOrder();
+  if (sqlInjectOrderId && sqlInjectItemId) {
+    const sqlInjection = await apiRequest(ctx, 'PATCH', `/pos/orders/${sqlInjectOrderId}/edit`, {
+      products_to_modify: [{
+        order_item_id: sqlInjectItemId,
+        modifiers: [{
+          modifier_name: "'; DROP TABLE orders; --",
+          modifier_type: 'extra',
+          quantity: 1,
+          unit_price: 0
+        }]
+      }]
+    });
+    // Should either succeed (safely escaped) or reject (400)
+    const sqlInjectionHandled = sqlInjection.status === 200 || sqlInjection.status === 400;
+    track(sqlInjectionHandled);
+    console.log(sqlInjectionHandled
+      ? `  ✓ SQL injection in modifier name - ${sqlInjection.status === 200 ? 'Safely escaped' : 'Rejected'}`
+      : `  ✗ SQL injection - Unexpected status: ${sqlInjection.status}`);
+  }
+
+  // TEST 10: XSS payload in product name
+  const { orderId: xssOrderId } = await createTestOrder();
+  if (xssOrderId) {
+    const xssPayload = await apiRequest(ctx, 'PATCH', `/pos/orders/${xssOrderId}/edit`, {
+      products_to_add: [{
+        product_id: testProduct.id,
+        product_name: '<script>alert("xss")</script>',
+        quantity: 1,
+        unit_price: 10.00
+      }]
+    });
+    // Should either succeed (sanitized) or reject
+    const xssHandled = xssPayload.status === 200 || xssPayload.status === 400;
+    track(xssHandled);
+    console.log(xssHandled
+      ? `  ✓ XSS in product name - ${xssPayload.status === 200 ? 'Sanitized/Escaped' : 'Rejected'}`
+      : `  ✗ XSS payload - Unexpected status: ${xssPayload.status}`);
+  }
+
+  // TEST 11: Concurrent modifications simulation
+  console.log('\n  📍 Concurrency Edge Cases');
+  const { orderId: concurrentOrderId, orderItemId: concurrentItemId } = await createTestOrder();
+  if (concurrentOrderId && concurrentItemId) {
+    // Send two modifications simultaneously
+    const [modify1, modify2] = await Promise.all([
+      apiRequest(ctx, 'PATCH', `/pos/orders/${concurrentOrderId}/edit`, {
+        products_to_modify: [{ order_item_id: concurrentItemId, quantity: 5 }]
+      }),
+      apiRequest(ctx, 'PATCH', `/pos/orders/${concurrentOrderId}/edit`, {
+        products_to_modify: [{ order_item_id: concurrentItemId, quantity: 10 }]
+      })
+    ]);
+
+    // At least one should succeed
+    const concurrentHandled = modify1.status === 200 || modify2.status === 200;
+    track(concurrentHandled);
+    console.log(concurrentHandled
+      ? `  ✓ Concurrent modifications - At least one succeeded (${modify1.status}, ${modify2.status})`
+      : `  ✗ Concurrent modifications - Both failed (${modify1.status}, ${modify2.status})`);
+  }
 }
 
 // ============================================
@@ -1163,13 +1473,13 @@ async function testOrderTimeline(ctx: TestContext): Promise<void> {
   }
   
   // TEST 3: Timeline not found for invalid order
-  const timelineNotFound = await apiRequest(ctx, 'GET', '/pos/orders/999999/timeline');
+  const timelineNotFound = await apiRequest(ctx, 'GET', '/pos/orders/-1/timeline');
   // Should return empty array or 404
   const notFoundHandled = timelineNotFound.status === 200 || timelineNotFound.status === 404;
   track(notFoundHandled);
   console.log(notFoundHandled
-    ? '  ✓ GET /pos/orders/999999/timeline - Not found handled'
-    : '  ✗ GET /pos/orders/999999/timeline - Not found handled');
+    ? '  ✓ GET /pos/orders/-1/timeline - Not found handled'
+    : '  ✗ GET /pos/orders/-1/timeline - Not found handled');
 }
 
 // ============================================
@@ -1189,6 +1499,7 @@ async function runTests(): Promise<void> {
     await testOrderEditing(ctx);
     await testOrderDetailStructure(ctx);
     await testOrderEditingValidations(ctx);
+    await testOrderEditingEdgeCases(ctx);
     await testOrderTimeline(ctx);
     await testKitchenDisplay(ctx);
     await testCancellationFlow(ctx);

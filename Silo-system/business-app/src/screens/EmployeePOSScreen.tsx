@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme/ThemeContext';
-import { 
+import { attendanceService, AttendanceErrorCode } from '../services/AttendanceService';
+import { locationService } from '../services/LocationService';
+import {
   ClipboardList,
   Clock,
   LogIn,
@@ -32,7 +34,9 @@ export default function EmployeePOSScreen({ navigation }: any) {
   const [userName, setUserName] = useState('Employee');
   const [isClockedIn, setIsClockedIn] = useState(false);
   const [clockInTime, setClockInTime] = useState<string | null>(null);
-  
+  const [isLoading, setIsLoading] = useState(false);
+  const [lateMinutes, setLateMinutes] = useState<number>(0);
+
   // Sample tasks - in production these would come from the API
   const [tasks] = useState<Task[]>([
     { id: 1, title: 'Complete opening checklist', priority: 'high', completed: false, dueTime: '9:00 AM' },
@@ -42,7 +46,29 @@ export default function EmployeePOSScreen({ navigation }: any) {
 
   useEffect(() => {
     loadUserData();
+    loadAttendanceStatus();
+    // Request location permissions early for faster check-in
+    locationService.requestPermissions().catch(() => {});
   }, []);
+
+  const loadAttendanceStatus = async () => {
+    try {
+      const result = await attendanceService.getStatus();
+      if (result.success && result.data) {
+        const status = result.data.status;
+        if (status === 'checked_in') {
+          setIsClockedIn(true);
+          if (result.data.checkin_time) {
+            const time = new Date(result.data.checkin_time);
+            setClockInTime(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          }
+          setLateMinutes(result.data.late_minutes || 0);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading attendance status:', error);
+    }
+  };
 
   const loadUserData = async () => {
     try {
@@ -61,17 +87,58 @@ export default function EmployeePOSScreen({ navigation }: any) {
     navigation.replace('Login');
   };
 
-  const handlePunchIn = () => {
-    const now = new Date();
-    setClockInTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    setIsClockedIn(true);
-    // TODO: API call to record punch-in
+  const handlePunchIn = async () => {
+    setIsLoading(true);
+    try {
+      const result = await attendanceService.checkIn();
+
+      if (result.success && result.data) {
+        const time = new Date(result.data.checkin_time);
+        setClockInTime(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        setIsClockedIn(true);
+        setLateMinutes(result.data.late_minutes);
+
+        const statusMessage = result.data.status === 'late'
+          ? `Checked in (${result.data.late_minutes} min late)`
+          : 'Checked in on time!';
+        Alert.alert('Success', statusMessage);
+      } else {
+        const errorMessage = attendanceService.getErrorMessage(
+          result.errorCode,
+          result.error || 'Check-in failed'
+        );
+        Alert.alert('Check-in Failed', errorMessage);
+      }
+    } catch (error) {
+      console.error('Punch in error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handlePunchOut = () => {
-    setIsClockedIn(false);
-    setClockInTime(null);
-    // TODO: API call to record punch-out
+  const handlePunchOut = async () => {
+    setIsLoading(true);
+    try {
+      const result = await attendanceService.checkOut();
+
+      if (result.success) {
+        setIsClockedIn(false);
+        setClockInTime(null);
+        Alert.alert('Success', 'Checked out successfully!');
+      } else {
+        const errorMessage = attendanceService.getErrorMessage(
+          result.errorCode,
+          result.error || 'Check-out failed'
+        );
+        Alert.alert('Check-out Failed', errorMessage);
+      }
+    } catch (error) {
+      console.error('Punch out error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const getPriorityColor = (priority: string) => {
@@ -128,26 +195,45 @@ export default function EmployeePOSScreen({ navigation }: any) {
             <View style={styles.clockedInContainer}>
               <View style={styles.clockedInInfo}>
                 <View style={styles.statusBadge}>
-                  <View style={styles.statusDot} />
-                  <Text style={styles.statusText}>Clocked In</Text>
+                  <View style={[
+                    styles.statusDot,
+                    lateMinutes > 0 && { backgroundColor: '#f59e0b' }
+                  ]} />
+                  <Text style={styles.statusText}>
+                    {lateMinutes > 0 ? `Clocked In (${lateMinutes}m late)` : 'Clocked In'}
+                  </Text>
                 </View>
                 <Text style={styles.clockedInTime}>Since {clockInTime}</Text>
               </View>
-              <TouchableOpacity 
-                style={[styles.punchButton, styles.punchOutButton]} 
+              <TouchableOpacity
+                style={[styles.punchButton, styles.punchOutButton, isLoading && styles.buttonDisabled]}
                 onPress={handlePunchOut}
+                disabled={isLoading}
               >
-                <LogOut size={18} color={colors.background} />
-                <Text style={styles.punchButtonText}>Punch Out</Text>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color={colors.background} />
+                ) : (
+                  <>
+                    <LogOut size={18} color={colors.background} />
+                    <Text style={styles.punchButtonText}>Punch Out</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity 
-              style={[styles.punchButton, styles.punchInButton]} 
+            <TouchableOpacity
+              style={[styles.punchButton, styles.punchInButton, isLoading && styles.buttonDisabled]}
               onPress={handlePunchIn}
+              disabled={isLoading}
             >
-              <LogIn size={18} color={colors.background} />
-              <Text style={styles.punchButtonText}>Punch In</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={colors.background} />
+              ) : (
+                <>
+                  <LogIn size={18} color={colors.background} />
+                  <Text style={styles.punchButtonText}>Punch In</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -200,22 +286,32 @@ export default function EmployeePOSScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>HR</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={BookOpen} 
-              title="SOP" 
+            <MenuItem
+              icon={BookOpen}
+              title="SOP"
               subtitle="Standard Operating Procedures"
+              onPress={() => navigation.navigate('HR')}
             />
             <View style={styles.divider} />
-            <MenuItem 
-              icon={CalendarDays} 
-              title="Leaves" 
+            <MenuItem
+              icon={CalendarDays}
+              title="Leaves"
               subtitle="Request & view leaves"
+              onPress={() => navigation.navigate('HR')}
             />
             <View style={styles.divider} />
-            <MenuItem 
-              icon={Receipt} 
-              title="Payslip" 
+            <MenuItem
+              icon={Receipt}
+              title="Payslip"
               subtitle="View your payslips"
+              onPress={() => navigation.navigate('HR')}
+            />
+            <View style={styles.divider} />
+            <MenuItem
+              icon={Clock}
+              title="Attendance"
+              subtitle="View attendance history"
+              onPress={() => navigation.navigate('HR')}
             />
           </View>
         </View>
@@ -482,5 +578,8 @@ const createStyles = (colors: any) => StyleSheet.create({
     height: 1,
     backgroundColor: colors.border,
     marginLeft: 70,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });

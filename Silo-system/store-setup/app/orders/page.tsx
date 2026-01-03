@@ -93,6 +93,11 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
+  // Timeline state
+  const [categorizedTimeline, setCategorizedTimeline] = useState<{ order_status: any[]; payment_status: any[] }>({ order_status: [], payment_status: [] });
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [activeTimelineTab, setActiveTimelineTab] = useState<'order_status' | 'payment_status'>('order_status');
+
   // Order stats from backend - all calculations done server-side
   const [orderStats, setOrderStats] = useState<{
     total_orders: number;
@@ -296,6 +301,38 @@ export default function OrdersPage() {
       day: 'numeric',
     });
     return time ? `${dateStr} ${time}` : dateStr;
+  };
+
+  // Timeline event color based on simplified display_type
+  const getTimelineEventColor = (displayType: string) => {
+    const eventColors: Record<string, string> = {
+      created: '#3b82f6',           // Blue
+      edited: '#f59e0b',            // Amber
+      canceled: '#ef4444',          // Red
+      completed: '#22c55e',         // Green
+      picked_up: '#10b981',         // Teal
+      paid: '#22c55e',              // Green
+      additional_payment: '#3b82f6', // Blue
+      partial_refund: '#f97316',    // Orange
+      full_refund: '#ef4444',       // Red
+    };
+    return eventColors[displayType] || '#6b7280';
+  };
+
+  // Fetch order timeline (categorized for tabbed display)
+  const fetchOrderTimeline = async (orderId: number) => {
+    try {
+      setLoadingTimeline(true);
+      const response = await api.get(`/pos/orders/${orderId}/timeline/categorized`);
+      if (response.data.success) {
+        setCategorizedTimeline(response.data.data || { order_status: [], payment_status: [] });
+        setActiveTimelineTab('order_status');
+      }
+    } catch (error) {
+      console.error('Error fetching timeline:', error);
+    } finally {
+      setLoadingTimeline(false);
+    }
   };
 
   // Build source options from database + built-in
@@ -593,6 +630,7 @@ export default function OrdersPage() {
                           onClick={() => {
                             setSelectedOrder(order);
                             setShowDetailModal(true);
+                            fetchOrderTimeline(order.id);
                           }}
                           className="p-2 text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
                           title={t('View Details', 'عرض التفاصيل')}
@@ -742,14 +780,101 @@ export default function OrdersPage() {
                     </span>
                   </div>
                   <span className={`font-medium ${
-                    selectedOrder.payment_status === 'paid' 
-                      ? 'text-emerald-600 dark:text-emerald-400' 
+                    selectedOrder.payment_status === 'paid'
+                      ? 'text-emerald-600 dark:text-emerald-400'
                       : selectedOrder.payment_status === 'app_payment'
                       ? 'text-blue-600 dark:text-blue-400'
                       : 'text-amber-600 dark:text-amber-400'
                   }`}>
                     {getPaymentStatusLabel(selectedOrder.payment_status)}
                   </span>
+                </div>
+
+                {/* Order Timeline Section */}
+                <div className="mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-700">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Clock className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                    <h4 className="text-sm font-semibold text-zinc-900 dark:text-white">
+                      {t('Order Timeline', 'الجدول الزمني للطلب')}
+                    </h4>
+                  </div>
+
+                  {/* Timeline Tabs */}
+                  <div className="flex gap-2 mb-4">
+                    <button
+                      onClick={() => setActiveTimelineTab('order_status')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        activeTimelineTab === 'order_status'
+                          ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      {t('Order Status', 'حالة الطلب')}
+                    </button>
+                    <button
+                      onClick={() => setActiveTimelineTab('payment_status')}
+                      className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        activeTimelineTab === 'payment_status'
+                          ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                          : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                      }`}
+                    >
+                      {t('Payment Status', 'حالة الدفع')}
+                    </button>
+                  </div>
+
+                  {/* Timeline Content */}
+                  {loadingTimeline ? (
+                    <div className="flex justify-center py-4">
+                      <Loader2 className="w-5 h-5 animate-spin text-zinc-400" />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {(() => {
+                        const timelineEvents = activeTimelineTab === 'order_status'
+                          ? categorizedTimeline.order_status
+                          : categorizedTimeline.payment_status;
+
+                        if (timelineEvents.length === 0) {
+                          return (
+                            <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center py-4">
+                              {t('No events', 'لا توجد أحداث')}
+                            </p>
+                          );
+                        }
+
+                        return timelineEvents.map((event: any, index: number) => {
+                          const isLast = index === timelineEvents.length - 1;
+                          return (
+                            <div key={event.id || index} className="flex gap-3">
+                              <div className="flex flex-col items-center">
+                                <div
+                                  className="w-3 h-3 rounded-full"
+                                  style={{ backgroundColor: getTimelineEventColor(event.display_type) }}
+                                />
+                                {!isLast && (
+                                  <div className="w-0.5 flex-1 bg-zinc-200 dark:bg-zinc-700 mt-1" />
+                                )}
+                              </div>
+                              <div className="flex-1 pb-3">
+                                <p className="text-sm font-medium text-zinc-900 dark:text-white">
+                                  {event.description}
+                                </p>
+                                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                  {new Date(event.created_at).toLocaleString(isRTL ? 'ar-KW' : 'en-US')}
+                                </p>
+                                {event.done_by && (
+                                  <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                                    {t('done by', 'بواسطة')}: {event.done_by}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
+                  )}
                 </div>
               </div>
 

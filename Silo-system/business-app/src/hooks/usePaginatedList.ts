@@ -118,14 +118,15 @@ export function usePaginatedList<T = any>(
   const currentParamsRef = useRef(params);
   const isFetchingRef = useRef(false);
 
-  // Build cache key from endpoint and params
+  // Build cache key from endpoint and params (includes fields for proper cache invalidation)
   const getCacheKey = useCallback((pageNum: number, queryParams: Record<string, any>) => {
+    const fieldsList = fields ? (Array.isArray(fields) ? fields.join(',') : fields) : '';
     const paramString = Object.entries({ ...queryParams, page: pageNum, limit: pageSize })
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([k, v]) => `${k}=${v}`)
       .join('&');
-    return `paginated_${endpoint}_${paramString}`;
-  }, [endpoint, pageSize]);
+    return `paginated_${endpoint}_${paramString}_${fieldsList}`;
+  }, [endpoint, pageSize, fields]);
 
   // Fetch a single page of data
   const fetchPage = useCallback(async (
@@ -370,7 +371,8 @@ export function usePaginatedProducts(options?: Partial<UsePaginatedListOptions<a
   return usePaginatedList({
     endpoint: '/store-products',
     pageSize: 30,
-    fields: ['id', 'name', 'name_ar', 'price', 'category', 'category_id', 'is_active', 'has_variants', 'image_url', 'thumbnail_url'],
+    // Include margin fields and delivery_margins for stats display
+    fields: ['id', 'name', 'name_ar', 'price', 'cost', 'category', 'category_id', 'is_active', 'has_variants', 'image_url', 'thumbnail_url', 'margin_percent', 'delivery_margins', 'variants'],
     dataKey: 'data',
     ...options,
   });

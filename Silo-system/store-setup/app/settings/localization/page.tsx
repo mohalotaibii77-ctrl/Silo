@@ -78,6 +78,10 @@ export default function LocalizationPage() {
   const [showCurrencyWarning, setShowCurrencyWarning] = useState(false);
   const [pendingCurrency, setPendingCurrency] = useState('');
 
+  // Branch context
+  const [currentBranchId, setCurrentBranchId] = useState<number | null>(null);
+  const [currentBranchName, setCurrentBranchName] = useState<string | null>(null);
+
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
     const storedUser = localStorage.getItem('setup_user');
@@ -100,34 +104,61 @@ export default function LocalizationPage() {
         setCountry(biz.country || '');
         // Validate currency exists - no fallback allowed
         if (!biz.currency) {
-          setMessage({ 
-            type: 'error', 
-            text: 'Business currency not set. Please contact your administrator.' 
+          setMessage({
+            type: 'error',
+            text: 'Business currency not set. Please contact your administrator.'
           });
         }
         setCurrency(biz.currency || '');
         setLanguageState(biz.language || 'en');
       }
+
+      // Load current branch from localStorage
+      // IMPORTANT: Pass branchId synchronously to fetchLocalization to avoid race condition
+      let branchId: number | null = null;
+      const storedBranch = localStorage.getItem('setup_branch');
+      if (storedBranch) {
+        const branch = JSON.parse(storedBranch);
+        branchId = branch.id;
+        setCurrentBranchId(branch.id);
+        setCurrentBranchName(branch.name);
+      }
+
+      // Fetch with branch ID directly
+      fetchLocalization(branchId);
     } catch {
       router.push('/login');
       return;
     }
 
     setLoading(false);
-    fetchLocalization();
   }, [router]);
 
-  const fetchLocalization = async () => {
+  // Fetch localization when branch changes (not on initial mount - that's handled above)
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  useEffect(() => {
+    if (initialLoadDone) {
+      fetchLocalization(currentBranchId);
+    } else {
+      setInitialLoadDone(true);
+    }
+  }, [currentBranchId]);
+
+  const fetchLocalization = async (branchId: number | null) => {
     try {
-      const response = await api.get('/business-settings/localization');
+      const url = branchId
+        ? `/business-settings/localization?branch_id=${branchId}`
+        : '/business-settings/localization';
+
+      const response = await api.get(url);
       if (response.data.data) {
         const data = response.data.data;
         setCountry(data.country || '');
         // Validate currency exists - no fallback allowed
         if (!data.currency) {
-          setMessage({ 
-            type: 'error', 
-            text: 'Business currency not set. Please contact your administrator.' 
+          setMessage({
+            type: 'error',
+            text: 'Business currency not set. Please contact your administrator.'
           });
         }
         setCurrency(data.currency || '');
@@ -153,65 +184,42 @@ export default function LocalizationPage() {
   const handleSave = async () => {
     setSaving(true);
     setMessage({ type: '', text: '' });
-    
+
     try {
-      const currencyChanged = currency !== originalSettings.currency;
-      const languageChanged = language !== originalSettings.language;
-      
-      if (!currencyChanged && !languageChanged) {
-        setMessage({ type: 'info', text: t('No changes detected', 'لم يتم اكتشاف تغييرات') });
-        setSaving(false);
-        return;
+      // Localization settings are now branch-specific - save directly
+      const localizationData: Record<string, any> = {
+        country,
+        currency,
+        language,
+      };
+
+      // Include branch_id if in branch context
+      if (currentBranchId) {
+        localizationData.branch_id = currentBranchId;
       }
 
-      // Language is a USER preference (not business-wide setting)
-      if (languageChanged) {
-        // Apply language change to UI and save to user settings in database
-        // setGlobalLanguage calls the /business-settings/user-settings endpoint
+      await api.put('/business-settings/localization', localizationData);
+
+      // Apply language change to UI
+      if (language !== originalSettings.language) {
         setGlobalLanguage(language);
-        
-        // Update original settings
-        setOriginalSettings(prev => ({ ...prev, language }));
       }
 
-      // Only currency requires admin approval
-      if (currencyChanged) {
-        try {
-          await api.post('/business-settings/change-requests', {
-            request_type: 'localization',
-            new_currency: currency,
-          });
-          setMessage({ 
-            type: 'success', 
-            text: languageChanged 
-              ? t('Language saved. Currency change submitted for admin approval.', 'تم حفظ اللغة. تم إرسال طلب تغيير العملة للموافقة.')
-              : t('Currency change submitted for admin approval.', 'تم إرسال طلب تغيير العملة للموافقة.')
-          });
-        } catch (err: any) {
-          if (err.response?.data?.error?.includes('pending request')) {
-            setMessage({ 
-              type: 'warning', 
-              text: languageChanged
-                ? t('Language saved. You already have a pending currency change request.', 'تم حفظ اللغة. لديك بالفعل طلب تغيير عملة قيد الانتظار.')
-                : t('You already have a pending currency change request.', 'لديك بالفعل طلب تغيير عملة قيد الانتظار.')
-            });
-          } else {
-            throw err;
-          }
-        }
-      } else if (languageChanged) {
-        setMessage({ 
-          type: 'success', 
-          text: t('Language saved successfully!', 'تم حفظ اللغة بنجاح!')
-        });
-      }
-      
+      // Update original settings
+      setOriginalSettings({ country, currency, language });
+
+      const branchText = currentBranchName ? ` for ${currentBranchName}` : '';
+      setMessage({
+        type: 'success',
+        text: t(`Localization settings saved successfully${branchText}!`, `تم حفظ إعدادات التوطين بنجاح${branchText}!`)
+      });
+
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err: any) {
-      setMessage({ 
-        type: 'error', 
-        text: err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات') 
+      setMessage({
+        type: 'error',
+        text: err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات')
       });
     } finally {
       setSaving(false);

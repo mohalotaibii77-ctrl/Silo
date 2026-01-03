@@ -13,7 +13,7 @@
  * 6. Orders are tagged to this employee
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -25,11 +25,12 @@ import {
   Vibration,
   Platform,
 } from 'react-native';
-import { Lock, Delete, User } from 'lucide-react-native';
+import { Lock, Delete, User, ScanFace, Fingerprint } from 'lucide-react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
 import { API_URL } from '../api/client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { biometricAuth, BiometricType } from '../services/BiometricAuthService';
 
 const { width } = Dimensions.get('window');
 
@@ -48,12 +49,41 @@ interface POSLockScreenProps {
 
 export function POSLockScreen({ visible, onUnlock, currentEmployeeName }: POSLockScreenProps) {
   const { colors } = useTheme();
-  const { t, isRTL } = useLocalization();
-  
+  const { t, isRTL, language } = useLocalization();
+
   const [pin, setPin] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shake, setShake] = useState(false);
+
+  // Biometric state
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [biometricType, setBiometricType] = useState<BiometricType>('fingerprint');
+  const [biometricLoading, setBiometricLoading] = useState(false);
+
+  // Check biometric availability when modal opens
+  useEffect(() => {
+    if (visible) {
+      checkBiometricAvailability();
+    }
+  }, [visible]);
+
+  const checkBiometricAvailability = async () => {
+    try {
+      const capability = await biometricAuth.isDeviceSupported();
+      setBiometricAvailable(capability.isSupported);
+      setBiometricType(capability.biometricType);
+
+      // Check if user has stored credentials (biometric is enabled)
+      const credentials = await biometricAuth.getStoredCredentials();
+      if (!credentials) {
+        setBiometricAvailable(false);
+      }
+    } catch (error) {
+      console.error('[POSLockScreen] Error checking biometric:', error);
+      setBiometricAvailable(false);
+    }
+  };
 
   const handleKeyPress = useCallback((key: string) => {
     setError(null);
@@ -113,6 +143,54 @@ export function POSLockScreen({ visible, onUnlock, currentEmployeeName }: POSLoc
       setIsLoading(false);
     }
   }, [pin, onUnlock, t, triggerShake]);
+
+  // Handle biometric unlock
+  const handleBiometricUnlock = useCallback(async () => {
+    if (biometricLoading || isLoading) return;
+
+    setBiometricLoading(true);
+    setError(null);
+
+    try {
+      const biometricTypeName = biometricAuth.getBiometricTypeName(biometricType, language as 'en' | 'ar');
+      const verified = await biometricAuth.promptBiometric(
+        t(`Use ${biometricTypeName} to unlock`, `استخدم ${biometricTypeName} للفتح`)
+      );
+
+      if (!verified) {
+        setError(t('Biometric authentication failed', 'فشل التحقق البيومتري'));
+        triggerShake();
+        return;
+      }
+
+      // Get stored user data to unlock
+      const userStr = await AsyncStorage.getItem('user');
+      if (!userStr) {
+        setError(t('User data not found', 'بيانات المستخدم غير موجودة'));
+        return;
+      }
+
+      const user = JSON.parse(userStr);
+
+      // Unlock with the stored user's data
+      onUnlock({
+        id: user.id,
+        username: user.username,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        display_name: user.first_name
+          ? `${user.first_name}${user.last_name ? ' ' + user.last_name : ''}`
+          : user.username,
+        role: user.role,
+      });
+    } catch (err: any) {
+      console.error('[POSLockScreen] Biometric unlock error:', err);
+      setError(t('Biometric unlock failed', 'فشل الفتح البيومتري'));
+      triggerShake();
+    } finally {
+      setBiometricLoading(false);
+    }
+  }, [biometricLoading, isLoading, biometricType, language, t, triggerShake, onUnlock]);
 
   // Auto-submit when PIN reaches 4-6 digits
   React.useEffect(() => {
@@ -244,6 +322,39 @@ export function POSLockScreen({ visible, onUnlock, currentEmployeeName }: POSLoc
             {renderKeypad()}
           </View>
 
+          {/* Biometric unlock button */}
+          {biometricAvailable && (
+            <TouchableOpacity
+              style={[
+                styles.biometricButton,
+                {
+                  backgroundColor: colors.primary + '15',
+                  borderColor: colors.primary + '30',
+                },
+              ]}
+              onPress={handleBiometricUnlock}
+              disabled={biometricLoading || isLoading}
+            >
+              {biometricLoading ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <>
+                  {biometricType === 'face' ? (
+                    <ScanFace size={24} color={colors.primary} />
+                  ) : (
+                    <Fingerprint size={24} color={colors.primary} />
+                  )}
+                  <Text style={[styles.biometricButtonText, { color: colors.primary }]}>
+                    {t(
+                      `Use ${biometricAuth.getBiometricTypeName(biometricType, 'en')}`,
+                      `استخدم ${biometricAuth.getBiometricTypeName(biometricType, 'ar')}`
+                    )}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+
           {/* Hint */}
           <View style={[styles.hintContainer, { backgroundColor: colors.muted }]}>
             <User size={16} color={colors.mutedForeground} />
@@ -334,6 +445,21 @@ const styles = StyleSheet.create({
   },
   keypadText: {
     fontSize: 24,
+    fontWeight: '600',
+  },
+  biometricButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    width: '100%',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 16,
+  },
+  biometricButtonText: {
+    fontSize: 16,
     fontWeight: '600',
   },
   hintContainer: {

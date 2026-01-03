@@ -1,27 +1,28 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  FlatList, 
-  Platform, 
-  Modal, 
-  Alert, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  FlatList,
+  Platform,
+  Modal,
+  Alert,
   TextInput,
   Animated,
   ActivityIndicator,
-  Dimensions
+  Dimensions,
+  ScrollView,
+  Image
 } from 'react-native';
-import { useTheme } from '../theme/ThemeContext';
-import { colors as staticColors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
 import ProgressiveImage from '../components/ProgressiveImage';
 import { usePaginatedProducts } from '../hooks';
-import { 
+import {
   ShoppingBag,
   ArrowLeft,
   ArrowRight,
@@ -33,12 +34,30 @@ import {
   ChevronDown,
   Check,
   ImageIcon,
-  Layers
+  Layers,
+  Store,
+  Truck
 } from 'lucide-react-native';
 
 const { width } = Dimensions.get('window');
 
 // Types
+interface DeliveryMargin {
+  partner_id: number;
+  partner_name: string;
+  partner_name_ar?: string;
+  margin_percent: number;
+}
+
+interface ProductVariant {
+  id: number;
+  name: string;
+  name_ar?: string;
+  price_adjustment: number;
+  margin_percent?: number;
+  delivery_margins?: DeliveryMargin[];
+}
+
 interface Product {
   id: number;
   business_id: number;
@@ -54,6 +73,13 @@ interface Product {
   image_url?: string;
   thumbnail_url?: string;
   margin_percent?: number;
+  delivery_margins?: DeliveryMargin[];
+  variants?: ProductVariant[];
+}
+
+interface ProductStats {
+  sold: number;
+  profit_margin: number;
 }
 
 interface Category {
@@ -63,7 +89,7 @@ interface Category {
 }
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -79,18 +105,18 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const ProductSkeleton = ({ styles }: { styles: any }) => (
+const ProductSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.productCard}>
-    <Skeleton width="100%" height={120} borderRadius={12} />
+    <Skeleton width="100%" height={120} borderRadius={12} colors={colors} />
     <View style={{ padding: 12 }}>
-      <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} />
-      <Skeleton width="40%" height={12} style={{ marginBottom: 8 }} />
-      <Skeleton width="50%" height={18} />
+      <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} colors={colors} />
+      <Skeleton width="40%" height={12} style={{ marginBottom: 8 }} colors={colors} />
+      <Skeleton width="50%" height={18} colors={colors} />
     </View>
   </View>
 );
@@ -118,7 +144,8 @@ export default function ProductsScreen({ navigation }: any) {
   
   const [categories, setCategories] = useState<Category[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [productStats, setProductStats] = useState<Record<number, ProductStats>>({});
+
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -126,7 +153,19 @@ export default function ProductsScreen({ navigation }: any) {
 
   useEffect(() => {
     fetchCategories(false);
+    fetchProductStats();
   }, []);
+
+  const fetchProductStats = async () => {
+    try {
+      const response = await api.get('/inventory/products/stats');
+      if (response.data?.data) {
+        setProductStats(response.data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching product stats:', error);
+    }
+  };
 
   const fetchCategories = async (forceRefresh = false) => {
     const cacheKey = CacheKeys.categories();
@@ -174,6 +213,7 @@ export default function ProductsScreen({ navigation }: any) {
             try {
               await api.delete(`/store-products/${productId}`);
               refresh(); // Refresh the paginated list
+              fetchProductStats(); // Refresh stats
               Alert.alert(t('success'), t('productDeleted'));
             } catch (error) {
               console.error('Error deleting product:', error);
@@ -211,9 +251,11 @@ export default function ProductsScreen({ navigation }: any) {
   const renderProductCard = useCallback(({ item: product }: { item: Product }) => {
     // Use margin_percent from backend API
     const margin = product.margin_percent || 0;
-    
+    const stats = productStats[product.id];
+    const sold = stats?.sold || 0;
+
     return (
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.productCard}
         onPress={() => setSelectedProduct(product)}
         activeOpacity={0.7}
@@ -221,7 +263,7 @@ export default function ProductsScreen({ navigation }: any) {
         {/* Product Image with Progressive Loading */}
         <View style={styles.productImageContainer}>
           {product.image_url ? (
-            <ProgressiveImage 
+            <ProgressiveImage
               source={{ uri: product.image_url }}
               thumbnailSource={product.thumbnail_url ? { uri: product.thumbnail_url } : undefined}
               style={styles.productImage}
@@ -233,10 +275,10 @@ export default function ProductsScreen({ navigation }: any) {
               <ImageIcon size={32} color={colors.border} />
             </View>
           )}
-          
+
           {/* Action buttons */}
           <View style={[styles.productActions, isRTL && { left: 8, right: undefined }]}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.productActionButton}
               onPress={(e) => {
                 e.stopPropagation();
@@ -246,7 +288,7 @@ export default function ProductsScreen({ navigation }: any) {
             >
               <Edit2 size={14} color={colors.foreground} />
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.productActionButton, styles.deleteActionButton]}
               onPress={(e) => {
                 e.stopPropagation();
@@ -260,7 +302,7 @@ export default function ProductsScreen({ navigation }: any) {
           {/* Variants badge */}
           {product.has_variants && (
             <View style={[styles.variantBadge, isRTL && { right: 8, left: undefined }]}>
-              <Layers size={10} color="#fff" />
+              <Layers size={10} color={colors.primaryForeground} />
               <Text style={styles.variantBadgeText}>{t('variants')}</Text>
             </View>
           )}
@@ -276,20 +318,46 @@ export default function ProductsScreen({ navigation }: any) {
               {product.category}
             </Text>
           )}
-          <View style={[styles.productPriceRow, isRTL && styles.rtlRow]}>
-            <Text style={styles.productPrice}>{formatCurrency(product.price)}</Text>
-            {product.cost && (
-              <View style={[styles.marginBadge, { backgroundColor: `${getMarginColor(margin)}15` }]}>
-                <Text style={[styles.marginText, { color: getMarginColor(margin) }]}>
-                  {margin.toFixed(0)}%
+          <Text style={styles.productPrice}>{formatCurrency(product.price)}</Text>
+
+          {/* Stats Section - Sold count and Margins */}
+          <View style={styles.statsSection}>
+            {/* Sold count */}
+            <View style={[styles.statRow, isRTL && styles.rtlRow]}>
+              <Text style={styles.statLabel}>{t('sold')}:</Text>
+              <Text style={styles.statValue}>{sold}</Text>
+            </View>
+
+            {/* Dine-in Margin */}
+            <View style={[styles.statRow, isRTL && styles.rtlRow]}>
+              <View style={[styles.statLabelWithIcon, isRTL && styles.rtlRow]}>
+                <Store size={10} color={colors.mutedForeground} />
+                <Text style={styles.statLabel}>{t('dineIn')}:</Text>
+              </View>
+              <Text style={[styles.statValue, { color: getMarginColor(margin) }]}>
+                {margin.toFixed(2)}%
+              </Text>
+            </View>
+
+            {/* Delivery partner margins */}
+            {product.delivery_margins?.map((dm) => (
+              <View key={dm.partner_id} style={[styles.statRow, isRTL && styles.rtlRow]}>
+                <View style={[styles.statLabelWithIcon, isRTL && styles.rtlRow]}>
+                  <Truck size={10} color={colors.mutedForeground} />
+                  <Text style={styles.statLabel} numberOfLines={1}>
+                    {language === 'ar' && dm.partner_name_ar ? dm.partner_name_ar : dm.partner_name}:
+                  </Text>
+                </View>
+                <Text style={[styles.statValue, { color: getMarginColor(dm.margin_percent) }]}>
+                  {dm.margin_percent.toFixed(2)}%
                 </Text>
               </View>
-            )}
+            ))}
           </View>
         </View>
       </TouchableOpacity>
     );
-  }, [language, isRTL, formatCurrency, t, setSelectedProduct, setEditingProduct, setShowAddModal, handleDeleteProduct]);
+  }, [language, isRTL, formatCurrency, t, setSelectedProduct, setEditingProduct, setShowAddModal, handleDeleteProduct, productStats]);
 
   // Render footer with loading indicator for infinite scroll
   const renderFooter = useCallback(() => {
@@ -366,10 +434,10 @@ export default function ProductsScreen({ navigation }: any) {
         <View style={styles.loadingContainer}>
           {renderHeader()}
           <View style={styles.productsGrid}>
-            <ProductSkeleton styles={styles} />
-            <ProductSkeleton styles={styles} />
-            <ProductSkeleton styles={styles} />
-            <ProductSkeleton styles={styles} />
+            <ProductSkeleton styles={styles} colors={colors} />
+            <ProductSkeleton styles={styles} colors={colors} />
+            <ProductSkeleton styles={styles} colors={colors} />
+            <ProductSkeleton styles={styles} colors={colors} />
           </View>
         </View>
       ) : (
@@ -382,7 +450,10 @@ export default function ProductsScreen({ navigation }: any) {
           contentContainerStyle={styles.flatListContent}
           showsVerticalScrollIndicator={false}
           refreshing={refreshing}
-          onRefresh={refresh}
+          onRefresh={() => {
+            refresh();
+            fetchProductStats();
+          }}
           onEndReached={handleEndReached}
           onEndReachedThreshold={0.3}
           ListHeaderComponent={renderHeader}
@@ -412,16 +483,18 @@ export default function ProductsScreen({ navigation }: any) {
         onSave={() => {
           setShowAddModal(false);
           setEditingProduct(null);
-          fetchProducts();
+          refetch();
+          fetchProductStats();
         }}
         editingProduct={editingProduct}
         categories={categories}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         colors={colors}
         styles={styles}
         modalStyles={modalStyles}
+        currency={currency}
       />
 
       {/* Product Details Modal */}
@@ -444,7 +517,7 @@ export default function ProductsScreen({ navigation }: any) {
         }}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         formatCurrency={formatCurrency}
         colors={colors}
         styles={styles}
@@ -455,7 +528,7 @@ export default function ProductsScreen({ navigation }: any) {
 }
 
 // Add/Edit Product Modal
-function AddProductModal({ visible, onClose, onSave, editingProduct, categories, isRTL, language, t, colors, styles, modalStyles }: {
+function AddProductModal({ visible, onClose, onSave, editingProduct, categories, isRTL, language, t, colors, styles, modalStyles, currency }: {
   visible: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -467,6 +540,7 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   colors: any;
   styles: any;
   modalStyles: any;
+  currency: string;
 }) {
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -750,7 +824,7 @@ function ProductDetailsModal({ visible, product, onClose, onEdit, onDelete, isRT
             {/* Actions */}
             <View style={modalStyles.actionsRow}>
               <TouchableOpacity style={modalStyles.editButton} onPress={onEdit}>
-                <Edit2 size={18} color="#fff" />
+                <Edit2 size={18} color={colors.primaryForeground} />
                 <Text style={modalStyles.editButtonText}>{t('editProduct')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={modalStyles.deleteButton} onPress={onDelete}>
@@ -820,11 +894,11 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingBottom: 100,
   },
   productRow: {
-    justifyContent: 'flex-start',
-    paddingHorizontal: 6,
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
   },
   flatListContent: {
-    padding: 12,
+    paddingTop: 12,
     paddingBottom: 100,
   },
   loadingFooter: {
@@ -832,10 +906,10 @@ const createStyles = (colors: any) => StyleSheet.create({
     alignItems: 'center',
   },
   productCard: {
-    width: (width - 36) / 2,
+    width: '48%',
     backgroundColor: colors.card,
     borderRadius: 16,
-    margin: 6,
+    margin: 4,
     borderWidth: 1,
     borderColor: colors.border,
     overflow: 'hidden',
@@ -866,12 +940,12 @@ const createStyles = (colors: any) => StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
   deleteActionButton: {
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: colors.surface,
   },
   variantBadge: {
     position: 'absolute',
@@ -888,7 +962,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   variantBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   productInfo: {
     padding: 12,
@@ -913,6 +987,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: colors.foreground,
+    marginBottom: 8,
   },
   marginBadge: {
     paddingHorizontal: 6,
@@ -922,6 +997,32 @@ const createStyles = (colors: any) => StyleSheet.create({
   marginText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  statsSection: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 8,
+    gap: 4,
+  },
+  statRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statLabelWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    flex: 1,
+  },
+  statLabel: {
+    fontSize: 10,
+    color: colors.mutedForeground,
+  },
+  statValue: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.foreground,
   },
   emptyState: {
     flex: 1,
@@ -1109,7 +1210,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   // Details modal styles
   detailsContainer: {
@@ -1140,7 +1241,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1210,7 +1311,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
   editButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   deleteButton: {
     width: 48,

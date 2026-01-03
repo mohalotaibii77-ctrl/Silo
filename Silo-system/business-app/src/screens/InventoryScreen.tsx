@@ -1,23 +1,23 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
   Modal,
   TextInput,
   Alert
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
 import { safeGoBack } from '../utils/navigationHelpers';
-import { 
+import {
   ArrowLeft,
   ArrowRight,
   Search,
@@ -101,7 +101,7 @@ interface InventoryTransfer {
 }
 
 // Timeline types
-type TransactionType = 
+type TransactionType =
   | 'manual_addition'
   | 'manual_deduction'
   | 'transfer_in'
@@ -163,7 +163,7 @@ interface TimelineStats {
 type TabType = 'inventory' | 'vendors' | 'purchase-orders' | 'transfers' | 'timeline';
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -184,26 +184,28 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
   );
 };
 
-const ItemSkeleton = ({ styles }: { styles: any }) => (
+const ItemSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.listCard}>
     <View style={styles.listCardContent}>
-      <Skeleton width={44} height={44} borderRadius={12} />
+      <Skeleton width={44} height={44} borderRadius={12} colors={colors} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} />
-        <Skeleton width="40%" height={12} />
+        <Skeleton width="60%" height={16} style={{ marginBottom: 6 }} colors={colors} />
+        <Skeleton width="40%" height={12} colors={colors} />
       </View>
-      <Skeleton width={50} height={24} borderRadius={6} />
+      <Skeleton width={50} height={24} borderRadius={6} colors={colors} />
     </View>
   </View>
 );
 
 export default function InventoryScreen({ navigation }: any) {
+  const { colors } = useTheme();
   const { t, isRTL, language, formatCurrency } = useLocalization();
-  
+  const styles = createStyles(colors);
+
   const [activeTab, setActiveTab] = useState<TabType>('inventory');
   const [searchQuery, setSearchQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
-  
+
   // Data states
   const [stockItems, setStockItems] = useState<InventoryStock[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -212,12 +214,12 @@ export default function InventoryScreen({ navigation }: any) {
   const [loading, setLoading] = useState(true);
   const [filterLowStock, setFilterLowStock] = useState(false);
   const [poStatusFilter, setPOStatusFilter] = useState<'all' | 'pending' | 'counted' | 'received' | 'cancelled'>('all');
-  
+
   // Timeline state
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [timelineStats, setTimelineStats] = useState<TimelineStats | null>(null);
   const [timelineItemFilter, setTimelineItemFilter] = useState<{ id: number; name: string } | null>(null);
-  
+
   // Adjustment modal state
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
   const [adjustmentStock, setAdjustmentStock] = useState<InventoryStock | null>(null);
@@ -226,7 +228,7 @@ export default function InventoryScreen({ navigation }: any) {
   const [adjustmentReason, setAdjustmentReason] = useState<DeductionReason | null>(null);
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
   const [adjustmentLoading, setAdjustmentLoading] = useState(false);
-  
+
   // Stock stats from backend - all calculations done server-side
   const [stockStats, setStockStats] = useState<{
     total_items: number;
@@ -275,7 +277,7 @@ export default function InventoryScreen({ navigation }: any) {
 
   const loadStockLevels = async (forceRefresh = false) => {
     const cacheKey = `inventory_stock_${filterLowStock ? 'low' : 'all'}`;
-    
+
     // Check cache first
     if (!forceRefresh) {
       const cached = await cacheManager.get<{items: InventoryStock[], stats: any}>(cacheKey);
@@ -301,7 +303,7 @@ export default function InventoryScreen({ navigation }: any) {
         return;
       }
     }
-    
+
     setLoading(true);
     try {
       const params = filterLowStock ? '?low_stock=true' : '';
@@ -325,7 +327,7 @@ export default function InventoryScreen({ navigation }: any) {
 
   const loadVendors = async (forceRefresh = false) => {
     const cacheKey = 'inventory_vendors';
-    
+
     if (!forceRefresh) {
       const cached = await cacheManager.get<Vendor[]>(cacheKey);
       if (cached) {
@@ -341,7 +343,7 @@ export default function InventoryScreen({ navigation }: any) {
         return;
       }
     }
-    
+
     setLoading(true);
     try {
       const response = await api.get('/inventory-stock/vendors');
@@ -357,7 +359,7 @@ export default function InventoryScreen({ navigation }: any) {
 
   const loadPurchaseOrders = async (forceRefresh = false) => {
     const cacheKey = 'inventory_purchase_orders';
-    
+
     if (!forceRefresh) {
       const cached = await cacheManager.get<PurchaseOrder[]>(cacheKey);
       if (cached) {
@@ -373,7 +375,7 @@ export default function InventoryScreen({ navigation }: any) {
         return;
       }
     }
-    
+
     setLoading(true);
     try {
       const response = await api.get('/inventory-stock/purchase-orders');
@@ -389,7 +391,7 @@ export default function InventoryScreen({ navigation }: any) {
 
   const loadTransfers = async (forceRefresh = false) => {
     const cacheKey = 'inventory_transfers';
-    
+
     if (!forceRefresh) {
       const cached = await cacheManager.get<InventoryTransfer[]>(cacheKey);
       if (cached) {
@@ -405,7 +407,7 @@ export default function InventoryScreen({ navigation }: any) {
         return;
       }
     }
-    
+
     setLoading(true);
     try {
       const response = await api.get('/inventory-stock/transfers');
@@ -422,14 +424,14 @@ export default function InventoryScreen({ navigation }: any) {
   const loadTimeline = async (forceRefresh = false, itemId?: number, branchId?: number) => {
     const filterItemId = itemId ?? timelineItemFilter?.id;
     const cacheKey = filterItemId ? `inventory_timeline_item_${filterItemId}` : 'inventory_timeline';
-    
+
     // Build query params - include branch_id if available for branch-level filtering
     const params = new URLSearchParams();
     if (filterItemId) params.append('item_id', filterItemId.toString());
     if (branchId) params.append('branch_id', branchId.toString());
     params.append('limit', '100');
     const timelineUrl = `/inventory/timeline?${params.toString()}`;
-    
+
     if (!forceRefresh) {
       const cached = await cacheManager.get<{transactions: InventoryTransaction[], stats: TimelineStats}>(cacheKey);
       if (cached) {
@@ -454,7 +456,7 @@ export default function InventoryScreen({ navigation }: any) {
         return;
       }
     }
-    
+
     setLoading(true);
     try {
       const [timelineRes, statsRes] = await Promise.all([
@@ -566,7 +568,7 @@ export default function InventoryScreen({ navigation }: any) {
 
       setShowAdjustmentModal(false);
       loadData(true); // Refresh data
-      
+
       Alert.alert(
         language === 'ar' ? 'تم' : 'Success',
         adjustmentType === 'add'
@@ -663,7 +665,7 @@ export default function InventoryScreen({ navigation }: any) {
         return false;
       }
     }
-    
+
     // Then filter by search query
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
@@ -700,10 +702,10 @@ export default function InventoryScreen({ navigation }: any) {
 
   const renderStockCard = (stock: InventoryStock) => {
     const statusInfo = getStockStatus(stock);
-    
+
     return (
-      <TouchableOpacity 
-        key={stock.id} 
+      <TouchableOpacity
+        key={stock.id}
         style={styles.listCard}
         onPress={() => handleOpenAdjustment(stock)}
         activeOpacity={0.7}
@@ -783,10 +785,10 @@ export default function InventoryScreen({ navigation }: any) {
 
   const renderPOCard = (po: PurchaseOrder) => {
     const statusColors = getPOStatusColor(po.status);
-    
+
     return (
-      <TouchableOpacity 
-        key={po.id} 
+      <TouchableOpacity
+        key={po.id}
         style={styles.listCard}
         onPress={() => navigation.navigate('PODetail', { orderId: po.id })}
         activeOpacity={0.7}
@@ -823,7 +825,7 @@ export default function InventoryScreen({ navigation }: any) {
 
   const renderTransferCard = (transfer: InventoryTransfer) => {
     const statusColors = getTransferStatusColor(transfer.status);
-    
+
     return (
       <View key={transfer.id} style={styles.listCard}>
         <View style={[styles.listCardContent, isRTL && styles.rtlRow]}>
@@ -855,9 +857,9 @@ export default function InventoryScreen({ navigation }: any) {
     if (loading) {
       return (
         <>
-          <ItemSkeleton styles={styles} />
-          <ItemSkeleton styles={styles} />
-          <ItemSkeleton styles={styles} />
+          <ItemSkeleton styles={styles} colors={colors} />
+          <ItemSkeleton styles={styles} colors={colors} />
+          <ItemSkeleton styles={styles} colors={colors} />
         </>
       );
     }
@@ -936,6 +938,7 @@ export default function InventoryScreen({ navigation }: any) {
       'order_sale': { en: 'Order Sale', ar: 'بيع طلب' },
       'order_cancel_waste': { en: 'Waste', ar: 'هدر' },
       'order_cancel_return': { en: 'Returned', ar: 'مرتجع' },
+      'order_void_return': { en: 'Void Return', ar: 'إلغاء مرتجع' },
       'transfer_in': { en: 'Transfer In', ar: 'تحويل وارد' },
       'transfer_out': { en: 'Transfer Out', ar: 'تحويل صادر' },
       'production_consume': { en: 'Production', ar: 'إنتاج' },
@@ -1051,7 +1054,7 @@ export default function InventoryScreen({ navigation }: any) {
                     </Text>
                   )}
                 </View>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => tx.item && handleFilterByItem(tx.item.id, language === 'ar' && tx.item.name_ar ? tx.item.name_ar : tx.item.name)}
                   activeOpacity={0.7}
                 >
@@ -1100,7 +1103,7 @@ export default function InventoryScreen({ navigation }: any) {
           </Text>
           <View style={{ width: 40 }} />
         </View>
-        
+
         {/* Search */}
         <View style={[styles.searchContainer, isRTL && styles.rtlRow]}>
           <Search size={20} color={colors.mutedForeground} />
@@ -1121,8 +1124,8 @@ export default function InventoryScreen({ navigation }: any) {
       </View>
 
       {/* Tabs - Horizontally scrollable for better fit */}
-      <ScrollView 
-        horizontal 
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.tabScrollContainer}
         contentContainerStyle={[styles.tabContainer, isRTL && { flexDirection: 'row-reverse' }]}
@@ -1136,7 +1139,7 @@ export default function InventoryScreen({ navigation }: any) {
               style={[styles.tab, isActive && styles.tabActive]}
               onPress={() => setActiveTab(tab.key)}
             >
-              <Icon size={18} color={isActive ? '#fff' : colors.mutedForeground} />
+              <Icon size={18} color={isActive ? colors.background : colors.mutedForeground} />
               <Text style={[styles.tabText, isActive && styles.tabTextActive]}>
                 {language === 'ar' ? tab.labelAr : tab.label}
               </Text>
@@ -1148,14 +1151,14 @@ export default function InventoryScreen({ navigation }: any) {
       {/* Stock Stats (only for inventory tab) */}
       {activeTab === 'inventory' && !loading && (
         <View style={styles.statsRow}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.statItem, !filterLowStock && styles.statItemActive]}
             onPress={() => setFilterLowStock(false)}
           >
             <Text style={[styles.statValue, !filterLowStock && styles.statValueActive]}>{totalItems}</Text>
             <Text style={styles.statLabel}>{language === 'ar' ? 'الكل' : 'All'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.statItem, filterLowStock && styles.statItemActive]}
             onPress={() => setFilterLowStock(true)}
           >
@@ -1171,13 +1174,13 @@ export default function InventoryScreen({ navigation }: any) {
 
       {/* PO Status Filters (only for purchase-orders tab) */}
       {activeTab === 'purchase-orders' && !loading && (
-        <ScrollView 
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
           style={styles.poFiltersContainer}
           contentContainerStyle={[styles.poFiltersContent, isRTL && { flexDirection: 'row-reverse' }]}
         >
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.poFilterTab, poStatusFilter === 'all' && styles.poFilterTabActive]}
             onPress={() => setPOStatusFilter('all')}
           >
@@ -1190,8 +1193,8 @@ export default function InventoryScreen({ navigation }: any) {
               </Text>
             </View>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.poFilterTab, poStatusFilter === 'pending' && styles.poFilterTabActive]}
             onPress={() => setPOStatusFilter('pending')}
           >
@@ -1206,8 +1209,8 @@ export default function InventoryScreen({ navigation }: any) {
               </View>
             )}
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.poFilterTab, poStatusFilter === 'counted' && styles.poFilterTabActive]}
             onPress={() => setPOStatusFilter('counted')}
           >
@@ -1222,8 +1225,8 @@ export default function InventoryScreen({ navigation }: any) {
               </View>
             )}
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.poFilterTab, poStatusFilter === 'received' && styles.poFilterTabActive]}
             onPress={() => setPOStatusFilter('received')}
           >
@@ -1238,8 +1241,8 @@ export default function InventoryScreen({ navigation }: any) {
               </View>
             )}
           </TouchableOpacity>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[styles.poFilterTab, poStatusFilter === 'cancelled' && styles.poFilterTabActive]}
             onPress={() => setPOStatusFilter('cancelled')}
           >
@@ -1258,7 +1261,7 @@ export default function InventoryScreen({ navigation }: any) {
       )}
 
       {/* Content */}
-      <ScrollView 
+      <ScrollView
         style={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -1286,8 +1289,8 @@ export default function InventoryScreen({ navigation }: any) {
                   {language === 'ar' ? 'تعديل المخزون' : 'Adjust Stock'}
                 </Text>
                 <Text style={[styles.modalSubtitle, isRTL && styles.rtlText]} numberOfLines={1}>
-                  {language === 'ar' && adjustmentStock?.item?.name_ar 
-                    ? adjustmentStock.item.name_ar 
+                  {language === 'ar' && adjustmentStock?.item?.name_ar
+                    ? adjustmentStock.item.name_ar
                     : adjustmentStock?.item?.name}
                 </Text>
               </View>
@@ -1315,7 +1318,7 @@ export default function InventoryScreen({ navigation }: any) {
                 ]}
                 onPress={() => { setAdjustmentType('add'); setAdjustmentReason(null); }}
               >
-                <Plus size={18} color={adjustmentType === 'add' ? '#fff' : colors.mutedForeground} />
+                <Plus size={18} color={adjustmentType === 'add' ? colors.primaryForeground : colors.mutedForeground} />
                 <Text style={[
                   styles.adjustmentTypeText,
                   adjustmentType === 'add' && styles.adjustmentTypeTextActive
@@ -1330,7 +1333,7 @@ export default function InventoryScreen({ navigation }: any) {
                 ]}
                 onPress={() => setAdjustmentType('deduct')}
               >
-                <Minus size={18} color={adjustmentType === 'deduct' ? '#fff' : colors.mutedForeground} />
+                <Minus size={18} color={adjustmentType === 'deduct' ? colors.primaryForeground : colors.mutedForeground} />
                 <Text style={[
                   styles.adjustmentTypeText,
                   adjustmentType === 'deduct' && styles.adjustmentTypeTextActive
@@ -1422,9 +1425,9 @@ export default function InventoryScreen({ navigation }: any) {
               ) : (
                 <>
                   {adjustmentType === 'add' ? (
-                    <Plus size={20} color="#fff" />
+                    <Plus size={20} color={colors.primaryForeground} />
                   ) : (
-                    <Minus size={20} color="#fff" />
+                    <Minus size={20} color={colors.primaryForeground} />
                   )}
                   <Text style={styles.submitButtonText}>
                     {adjustmentType === 'add'
@@ -1441,7 +1444,7 @@ export default function InventoryScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -1692,7 +1695,7 @@ const styles = StyleSheet.create({
   },
   poFilterText: {
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.mutedForeground,
   },
   poFilterTextActive: {
@@ -1914,7 +1917,7 @@ const styles = StyleSheet.create({
     color: colors.mutedForeground,
   },
   adjustmentTypeTextActive: {
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   inputGroup: {
     marginBottom: 16,
@@ -1992,10 +1995,8 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   submitButtonText: {
-    color: '#fff',
+    color: colors.primaryForeground,
     fontSize: 16,
     fontWeight: '600',
   },
 });
-
-

@@ -8,11 +8,13 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLanguage } from '@/lib/language-context';
 import { getUsers, createUser, updateUser, deleteUser, resetUserPassword, resetUserPIN, setUserPIN, type BusinessUser, type CreateUserData, type UserPermissions, DEFAULT_PERMISSIONS } from '@/lib/users-api';
+import { getBranches, type Branch } from '@/lib/branches-api';
 
 export default function UsersRolesPage() {
   const router = useRouter();
   const { t, isRTL } = useLanguage();
   const [users, setUsers] = useState<BusinessUser[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [maxUsers, setMaxUsers] = useState(5);
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -28,6 +30,7 @@ export default function UsersRolesPage() {
   const [role, setRole] = useState<'manager' | 'employee' | 'pos' | 'kitchen_display'>('employee');
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
   const [permissions, setPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS.employee);
+  const [branchId, setBranchId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -54,15 +57,19 @@ export default function UsersRolesPage() {
   const loadUsers = async () => {
     try {
       setIsLoading(true);
-      const response = await getUsers();
+      const [usersResponse, branchesResponse] = await Promise.all([
+        getUsers(),
+        getBranches()
+      ]);
       // Sort users: owner first, then managers, then employees/pos
-      const sortedUsers = [...response.data].sort((a, b) => {
+      const sortedUsers = [...usersResponse.data].sort((a, b) => {
         const roleOrder: Record<string, number> = { owner: 0, manager: 1, employee: 2, pos: 3 };
         return (roleOrder[a.role] ?? 99) - (roleOrder[b.role] ?? 99);
       });
       setUsers(sortedUsers);
-      setMaxUsers(response.max_users);
-      setCurrentUserId(response.current_user_id);
+      setMaxUsers(usersResponse.max_users);
+      setCurrentUserId(usersResponse.current_user_id);
+      setBranches(branchesResponse.data || []);
     } catch (err: any) {
       console.error('Failed to load users:', err);
       if (err.response?.status === 403) {
@@ -83,10 +90,11 @@ export default function UsersRolesPage() {
       setPhone(user.phone || '');
       setRole(user.role === 'owner' ? 'manager' : user.role as 'manager' | 'employee' | 'pos' | 'kitchen_display');
       setStatus(user.status === 'suspended' ? 'inactive' : user.status as 'active' | 'inactive');
+      setBranchId(user.branch_id || null);
       // Set permissions from user or defaults based on role
       // Merge with defaults to ensure new permission fields (like pos_access) have a value
       if (user.permissions) {
-        const defaultPerms = (user.role === 'manager' || user.role === 'employee') 
+        const defaultPerms = (user.role === 'manager' || user.role === 'employee')
           ? DEFAULT_PERMISSIONS[user.role as 'manager' | 'employee']
           : DEFAULT_PERMISSIONS.employee;
         setPermissions({ ...defaultPerms, ...user.permissions });
@@ -105,6 +113,18 @@ export default function UsersRolesPage() {
       setRole('employee');
       setStatus('active');
       setPermissions(DEFAULT_PERMISSIONS.employee);
+      // Default to first branch or current branch if available
+      const storedBranch = localStorage.getItem('setup_branch');
+      if (storedBranch) {
+        try {
+          const branch = JSON.parse(storedBranch);
+          setBranchId(branch.id || null);
+        } catch {
+          setBranchId(branches.length > 0 ? branches[0].id : null);
+        }
+      } else {
+        setBranchId(branches.length > 0 ? branches[0].id : null);
+      }
     }
     setError(null);
     setSuccessMessage(null);
@@ -147,7 +167,21 @@ export default function UsersRolesPage() {
     try {
       // Only include permissions for manager/employee roles
       const shouldIncludePermissions = role === 'manager' || role === 'employee';
-      
+
+      // Get current branch from localStorage for auto-assignment
+      let currentBranchId: number | null = branchId;
+      if (!currentBranchId) {
+        const storedBranch = localStorage.getItem('setup_branch');
+        if (storedBranch) {
+          try {
+            const branch = JSON.parse(storedBranch);
+            currentBranchId = branch.id || null;
+          } catch {
+            // Ignore parse error
+          }
+        }
+      }
+
       if (editingUser) {
         await updateUser(editingUser.id, {
           username: username.trim(),
@@ -158,6 +192,7 @@ export default function UsersRolesPage() {
           phone: phone.trim() || undefined,
           status: editingUser.role === 'owner' ? undefined : status,
           permissions: shouldIncludePermissions ? permissions : undefined,
+          branch_id: currentBranchId || undefined,
         });
         setSuccessMessage(t('User updated successfully', 'تم تحديث المستخدم بنجاح'));
       } else {
@@ -169,6 +204,7 @@ export default function UsersRolesPage() {
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           permissions: shouldIncludePermissions ? permissions : undefined,
+          branch_id: currentBranchId || undefined,
         });
         setSuccessMessage(t(`User created! Default password: ${result.default_password}`, `تم إنشاء المستخدم! كلمة المرور الافتراضية: ${result.default_password}`));
       }

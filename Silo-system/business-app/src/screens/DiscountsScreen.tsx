@@ -304,7 +304,7 @@ export default function DiscountsScreen({ navigation }: any) {
           ]}>
             <Tag 
               size={24} 
-              color={discount.is_active && !expired ? colors.success : colors.textSecondary} 
+              color={discount.is_active && !expired ? colors.success : colors.mutedForeground} 
             />
           </View>
           <View style={[styles.discountInfo, isRTL && { alignItems: 'flex-end' }]}>
@@ -335,7 +335,7 @@ export default function DiscountsScreen({ navigation }: any) {
             {/* Discount Details */}
             <View style={[styles.discountDetails, isRTL && styles.discountDetailsRTL]}>
               <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
-                <Percent size={14} color={colors.textSecondary} />
+                <Percent size={14} color={colors.mutedForeground} />
                 <Text style={styles.detailText}>
                   {discount.discount_type === 'percentage' 
                     ? `${discount.discount_value}%`
@@ -346,14 +346,14 @@ export default function DiscountsScreen({ navigation }: any) {
               
               {discount.usage_limit && (
                 <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
-                  <Hash size={14} color={colors.textSecondary} />
+                  <Hash size={14} color={colors.mutedForeground} />
                   <Text style={styles.detailText}>{discount.used_count}/{discount.usage_limit}</Text>
                 </View>
               )}
               
               {(discount.start_date || discount.end_date) && (
                 <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
-                  <Calendar size={14} color={colors.textSecondary} />
+                  <Calendar size={14} color={colors.mutedForeground} />
                   <Text style={styles.detailText}>
                     {discount.start_date && new Date(discount.start_date).toLocaleDateString()}
                     {discount.start_date && discount.end_date && ' - '}
@@ -374,20 +374,20 @@ export default function DiscountsScreen({ navigation }: any) {
             {discount.is_active ? (
               <CheckCircle size={18} color={colors.success} />
             ) : (
-              <XCircle size={18} color={colors.textSecondary} />
+              <XCircle size={18} color={colors.mutedForeground} />
             )}
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.actionButton}
             onPress={() => handleOpenModal(discount)}
           >
-            <Edit2 size={16} color={colors.textSecondary} />
+            <Edit2 size={16} color={colors.mutedForeground} />
           </TouchableOpacity>
           <TouchableOpacity 
             style={styles.actionButton}
             onPress={() => handleDelete(discount)}
           >
-            <Trash2 size={16} color={colors.error} />
+            <Trash2 size={16} color={colors.destructive} />
           </TouchableOpacity>
         </View>
       </View>
@@ -406,40 +406,40 @@ export default function DiscountsScreen({ navigation }: any) {
           showsVerticalScrollIndicator={false}
         >
           {/* Header - scrolls with content */}
-          <View style={[styles.header, isRTL && styles.headerRTL]}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => safeGoBack(navigation)}
-            >
-              <BackIcon size={24} color={colors.text} />
-            </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>{t('discounts', 'Discounts')}</Text>
-              <Text style={styles.headerSubtitle}>{t('manageDiscountCodes', 'Manage discount codes for POS')}</Text>
+          <View style={styles.header}>
+            <View style={[styles.headerTop, isRTL && styles.headerTopRTL]}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => safeGoBack(navigation)}
+              >
+                <BackIcon size={24} color={colors.foreground} />
+              </TouchableOpacity>
+              <View style={styles.headerCenter}>
+                <Text style={[styles.headerTitle, isRTL && styles.textRTL]}>{t('discounts', 'Discounts')}</Text>
+                <Text style={[styles.headerSubtitle, isRTL && styles.textRTL]}>{t('manageDiscountCodes', 'Manage discount codes for POS')}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => handleOpenModal()}
+              >
+                <Plus size={20} color={colors.background} />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity 
-              style={styles.addButton}
-              onPress={() => handleOpenModal()}
-            >
-              <Plus size={20} color={colors.background} />
-            </TouchableOpacity>
-          </View>
 
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <View style={[styles.searchInputWrapper, isRTL && styles.searchInputWrapperRTL]}>
-              <Search size={18} color={colors.textSecondary} />
+            {/* Search */}
+            <View style={[styles.searchContainer, isRTL && styles.searchContainerRTL]}>
+              <Search size={18} color={colors.mutedForeground} />
               <TextInput
                 style={[styles.searchInput, isRTL && styles.textRTL]}
                 placeholder={t('searchDiscounts', 'Search discounts...')}
-                placeholderTextColor={colors.textSecondary}
+                placeholderTextColor={colors.mutedForeground}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 textAlign={isRTL ? 'right' : 'left'}
               />
               {searchQuery ? (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <X size={18} color={colors.textSecondary} />
+                  <X size={18} color={colors.mutedForeground} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -500,7 +500,7 @@ export default function DiscountsScreen({ navigation }: any) {
                 {editingDiscount ? t('editDiscount', 'Edit Discount') : t('addDiscount', 'Add Discount')}
               </Text>
               <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.textSecondary} />
+                <X size={20} color={colors.mutedForeground} />
               </TouchableOpacity>
             </View>
 
@@ -521,7 +521,7 @@ export default function DiscountsScreen({ navigation }: any) {
                   value={code}
                   onChangeText={(text) => setCode(text.toUpperCase())}
                   placeholder={t('egSUMMER20', 'e.g., SUMMER20')}
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   autoCapitalize="characters"
                 />
               </View>
@@ -536,7 +536,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={name}
                     onChangeText={setName}
                     placeholder={t('summerSale', 'Summer Sale')}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     textAlign={isRTL ? 'right' : 'left'}
                   />
                 </View>
@@ -549,7 +549,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={nameAr}
                     onChangeText={setNameAr}
                     placeholder="تخفيضات الصيف"
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                   />
                 </View>
               </View>
@@ -563,7 +563,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     style={[styles.typeButton, discountType === 'percentage' && styles.typeButtonActive]}
                     onPress={() => setDiscountType('percentage')}
                   >
-                    <Percent size={16} color={discountType === 'percentage' ? colors.background : colors.textSecondary} />
+                    <Percent size={16} color={discountType === 'percentage' ? colors.background : colors.mutedForeground} />
                     <Text style={[styles.typeButtonText, discountType === 'percentage' && styles.typeButtonTextActive]}>
                       {t('percentage', 'Percentage')}
                     </Text>
@@ -572,7 +572,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     style={[styles.typeButton, discountType === 'fixed' && styles.typeButtonActive]}
                     onPress={() => setDiscountType('fixed')}
                   >
-                    <Coins size={16} color={discountType === 'fixed' ? colors.background : colors.textSecondary} />
+                    <Coins size={16} color={discountType === 'fixed' ? colors.background : colors.mutedForeground} />
                     <Text style={[styles.typeButtonText, discountType === 'fixed' && styles.typeButtonTextActive]}>
                       {t('fixedAmount', 'Fixed Amount')}
                     </Text>
@@ -590,7 +590,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={discountValue}
                     onChangeText={setDiscountValue}
                     placeholder={discountType === 'percentage' ? '20' : '5.000'}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="decimal-pad"
                   />
                 </View>
@@ -603,7 +603,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={minOrderAmount}
                     onChangeText={setMinOrderAmount}
                     placeholder="0.000"
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="decimal-pad"
                   />
                 </View>
@@ -619,7 +619,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={maxDiscountAmount}
                     onChangeText={setMaxDiscountAmount}
                     placeholder={t('noLimit', 'No limit')}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="decimal-pad"
                   />
                 </View>
@@ -632,7 +632,7 @@ export default function DiscountsScreen({ navigation }: any) {
                     value={usageLimit}
                     onChangeText={setUsageLimit}
                     placeholder={t('unlimited', 'Unlimited')}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="numeric"
                   />
                 </View>
@@ -671,16 +671,19 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
-    backgroundColor: colors.background,
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerRTL: {
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTopRTL: {
     flexDirection: 'row-reverse',
   },
   backButton: {
@@ -698,26 +701,22 @@ const createStyles = (colors: any) => StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   addButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     justifyContent: 'center',
     alignItems: 'center',
   },
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.secondary,
@@ -726,13 +725,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     height: 44,
     gap: 10,
   },
+  searchContainerRTL: {
+    flexDirection: 'row-reverse',
+  },
   searchInputWrapperRTL: {
     flexDirection: 'row-reverse',
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
   },
   filterContainer: {
     flexDirection: 'row',
@@ -753,7 +755,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.foreground,
   },
   filterTabText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: colors.mutedForeground,
   },
@@ -767,7 +769,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -778,7 +779,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -788,19 +789,19 @@ const createStyles = (colors: any) => StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 8,
     textAlign: 'center',
   },
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
@@ -814,6 +815,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   discountList: {
     gap: 12,
+    paddingHorizontal: 16,
   },
   discountCard: {
     backgroundColor: colors.surface,
@@ -863,25 +865,25 @@ const createStyles = (colors: any) => StyleSheet.create({
   discountCode: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   statusBadge: {
-    backgroundColor: colors.textSecondary + '30',
+    backgroundColor: colors.mutedForeground + '30',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
   },
   statusBadgeText: {
     fontSize: 10,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     fontWeight: '600',
   },
   expiredBadge: {
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.destructive + '20',
   },
   expiredBadgeText: {
-    color: colors.error,
+    color: colors.destructive,
   },
   scheduledBadge: {
     backgroundColor: colors.warning + '20',
@@ -891,7 +893,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   discountName: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 4,
   },
   discountDetails: {
@@ -914,7 +916,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   detailText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   discountActions: {
     flexDirection: 'row',
@@ -970,7 +972,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   modalCloseButton: {
     width: 36,
@@ -984,16 +986,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     padding: 20,
   },
   errorBanner: {
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.destructive + '20',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: colors.error + '40',
+    borderColor: colors.destructive + '40',
   },
   errorText: {
     fontSize: 13,
-    color: colors.error,
+    color: colors.destructive,
   },
   formRow: {
     flexDirection: 'row',
@@ -1009,7 +1011,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   formLabel: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.text,
+    color: colors.foreground,
     marginBottom: 8,
   },
   formInput: {
@@ -1018,7 +1020,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -1046,12 +1048,12 @@ const createStyles = (colors: any) => StyleSheet.create({
     gap: 8,
   },
   typeButtonActive: {
-    backgroundColor: colors.text,
-    borderColor: colors.text,
+    backgroundColor: colors.foreground,
+    borderColor: colors.foreground,
   },
   typeButtonText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     fontWeight: '500',
   },
   typeButtonTextActive: {
@@ -1080,10 +1082,10 @@ const createStyles = (colors: any) => StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   submitButton: {
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,

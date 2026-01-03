@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Modal, Alert, RefreshControl, Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { dataPreloader } from '../services/DataPreloader';
 import { useLocalization } from '../localization/LocalizationContext';
-import { 
-  LayoutDashboard, 
-  Package, 
-  ShoppingBag, 
-  ClipboardList, 
-  Users, 
-  BarChart3, 
-  Settings, 
+import {
+  LayoutDashboard,
+  Package,
+  ShoppingBag,
+  ClipboardList,
+  Users,
+  BarChart3,
+  Settings,
   LogOut,
   ChevronRight,
   ChevronDown,
@@ -32,7 +32,9 @@ import {
   Armchair,
   Car,
   Truck,
-  Percent
+  Percent,
+  Moon,
+  Sun
 } from 'lucide-react-native';
 
 interface Branch {
@@ -62,7 +64,7 @@ interface DashboardStats {
 type TimePeriod = 'today' | 'week' | 'month' | 'year' | 'all';
 
 // Skeleton component for loading states
-const Skeleton = ({ width, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -101,15 +103,18 @@ const Skeleton = ({ width, height, borderRadius = 8, style }: { width: number | 
 };
 
 // Skeleton stat card
-const StatCardSkeleton = ({ isRTL }: { isRTL: boolean }) => (
-  <View style={[skeletonStyles.statCard, isRTL && skeletonStyles.statCardRTL]}>
-    <Skeleton width={40} height={40} borderRadius={10} style={{ marginBottom: 12, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
-    <Skeleton width={80} height={28} borderRadius={6} style={{ marginBottom: 8, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
-    <Skeleton width={60} height={14} borderRadius={4} style={{ alignSelf: isRTL ? 'flex-end' : 'flex-start' }} />
-  </View>
-);
+const StatCardSkeleton = ({ isRTL, colors }: { isRTL: boolean; colors: ThemeColors }) => {
+  const skeletonStyles = createSkeletonStyles(colors);
+  return (
+    <View style={[skeletonStyles.statCard, isRTL && skeletonStyles.statCardRTL]}>
+      <Skeleton width={40} height={40} borderRadius={10} style={{ marginBottom: 12, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} colors={colors} />
+      <Skeleton width={80} height={28} borderRadius={6} style={{ marginBottom: 8, alignSelf: isRTL ? 'flex-end' : 'flex-start' }} colors={colors} />
+      <Skeleton width={60} height={14} borderRadius={4} style={{ alignSelf: isRTL ? 'flex-end' : 'flex-start' }} colors={colors} />
+    </View>
+  );
+};
 
-const skeletonStyles = StyleSheet.create({
+const createSkeletonStyles = (colors: ThemeColors) => StyleSheet.create({
   statCard: {
     backgroundColor: colors.card,
     borderRadius: 16,
@@ -124,8 +129,10 @@ const skeletonStyles = StyleSheet.create({
 });
 
 export default function OwnerDashboardScreen({ navigation }: any) {
+  const { colors, isDark, toggleTheme } = useTheme();
   const { t, isRTL, formatCurrency } = useLocalization();
-  
+  const styles = createStyles(colors);
+
   // Time periods with translations
   const TIME_PERIODS: { value: TimePeriod; label: string }[] = [
     { value: 'today', label: t('today') },
@@ -149,19 +156,19 @@ export default function OwnerDashboardScreen({ navigation }: any) {
 
   useEffect(() => {
     loadBusinessData();
-    
+
     // Prefetch management screens data in background for instant navigation
     dataPreloader.prefetch([
       'Items', 'Products', 'Orders', 'Inventory',
       'Categories', 'Bundles', 'StaffManagement',
       'DeliveryPartners', 'Tables', 'Drivers', 'Discounts'
     ]).catch(() => {});
-    
+
     // Refresh data when screen comes into focus
     const unsubscribe = navigation.addListener('focus', () => {
       loadBusinessData();
     });
-    
+
     return unsubscribe;
   }, [navigation]);
 
@@ -176,7 +183,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
       const businessStr = await AsyncStorage.getItem('business');
       const businessesStr = await AsyncStorage.getItem('businesses');
       const branchStr = await AsyncStorage.getItem('branch');
-      
+
       if (businessStr) {
         setCurrentBusiness(JSON.parse(businessStr));
       }
@@ -216,7 +223,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
           combined: isAllWorkspaces ? 'true' : 'false',
         },
       });
-      
+
       if (response.data.success) {
         setStats(response.data.stats);
       }
@@ -247,7 +254,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         setIsAllWorkspaces(false);
         await AsyncStorage.setItem('business', JSON.stringify(business));
         setCurrentBusiness(business);
-        
+
         if (allBranches) {
           // View all branches of this business
           setIsAllBranches(true);
@@ -328,15 +335,15 @@ export default function OwnerDashboardScreen({ navigation }: any) {
     </View>
   );
 
-  const displayName = isAllWorkspaces 
-    ? t('allWorkspaces') 
-    : currentBranch 
+  const displayName = isAllWorkspaces
+    ? t('allWorkspaces')
+    : currentBranch
       ? `${currentBusiness?.name} - ${currentBranch.name}`
       : (currentBusiness?.name || 'Silo Business');
-  
-  const displaySubtitle = isAllWorkspaces 
-    ? 'Combined View' 
-    : currentBranch 
+
+  const displaySubtitle = isAllWorkspaces
+    ? 'Combined View'
+    : currentBranch
       ? 'Branch View'
       : 'All Branches';
 
@@ -349,14 +356,14 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         animationType="fade"
         onRequestClose={() => setShowBusinessPicker(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowBusinessPicker(false)}
         >
           <View style={styles.modalContent}>
             <Text style={[styles.modalTitle, isRTL && styles.rtlText]}>{t('selectWorkspace')}</Text>
-            
+
             {/* All Workspaces Option */}
             {businesses.length > 1 && (
               <TouchableOpacity
@@ -486,9 +493,9 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      <ScrollView 
-        style={styles.scrollView} 
-        showsVerticalScrollIndicator={false} 
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
@@ -504,28 +511,35 @@ export default function OwnerDashboardScreen({ navigation }: any) {
               </View>
               <Text style={[styles.brandName, isRTL && { marginLeft: 0, marginRight: 10 }]}>Sylo</Text>
             </View>
-            
+
             {/* Actions on trailing side */}
             <View style={styles.headerActions}>
               <TouchableOpacity style={styles.iconButton}>
                 <Bell size={20} color={colors.foreground} />
                 <View style={styles.badge} />
               </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton} onPress={toggleTheme}>
+                {isDark ? (
+                  <Sun size={20} color={colors.foreground} />
+                ) : (
+                  <Moon size={20} color={colors.foreground} />
+                )}
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.iconButton, styles.logoutButton]} onPress={handleLogout}>
                 <LogOut size={20} color={colors.destructive} />
               </TouchableOpacity>
             </View>
           </View>
-          
+
           {/* Workspace switcher row */}
-          <TouchableOpacity 
-            style={[styles.workspaceSwitcher, isRTL && styles.rtlRow]} 
+          <TouchableOpacity
+            style={[styles.workspaceSwitcher, isRTL && styles.rtlRow]}
             onPress={() => businesses.length > 0 && setShowBusinessPicker(true)}
             activeOpacity={businesses.length > 0 ? 0.7 : 1}
           >
             <View style={[styles.workspaceInfo, isRTL && { alignItems: 'flex-end' }]}>
-              <Text 
-                style={[styles.headerBrand, isRTL && styles.rtlText]} 
+              <Text
+                style={[styles.headerBrand, isRTL && styles.rtlText]}
                 numberOfLines={1}
               >
                 {displayName}
@@ -535,7 +549,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
             {businesses.length > 1 && (
               <View style={[styles.switchBadge, isAllWorkspaces && styles.switchBadgeAll]}>
                 <Text style={styles.switchBadgeText}>{isAllWorkspaces ? t('combined') : t('switch')}</Text>
-                <ChevronDown size={12} color="#fff" style={{ marginLeft: 2 }} />
+                <ChevronDown size={12} color={colors.primaryForeground} style={{ marginLeft: 2 }} />
               </View>
             )}
           </TouchableOpacity>
@@ -543,11 +557,11 @@ export default function OwnerDashboardScreen({ navigation }: any) {
 
         <View style={styles.content}>
         {/* Time Period Filter */}
-        <ScrollView 
+        <ScrollView
           ref={filterScrollRef}
-          horizontal 
-          showsHorizontalScrollIndicator={false} 
-          style={styles.filterScroll} 
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterScroll}
           contentContainerStyle={[styles.filterContainer, isRTL && styles.filterContainerRTL]}
           onContentSizeChange={(contentWidth) => {
             // In RTL, scroll to the right end so "Today" is visible first
@@ -581,36 +595,36 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         {/* Stats Grid */}
         {loading ? (
           <View style={styles.statsGrid}>
-            <StatCardSkeleton isRTL={isRTL} />
-            <StatCardSkeleton isRTL={isRTL} />
-            <StatCardSkeleton isRTL={isRTL} />
-            <StatCardSkeleton isRTL={isRTL} />
+            <StatCardSkeleton isRTL={isRTL} colors={colors} />
+            <StatCardSkeleton isRTL={isRTL} colors={colors} />
+            <StatCardSkeleton isRTL={isRTL} colors={colors} />
+            <StatCardSkeleton isRTL={isRTL} colors={colors} />
           </View>
         ) : stats ? (
           <>
             <View style={styles.statsGrid}>
-              <StatCard 
+              <StatCard
                 icon={ShoppingBag}
                 title={t('orders')}
                 value={stats.ordersToday}
                 subtitle={t('today')}
                 color="#3b82f6"
               />
-              <StatCard 
+              <StatCard
                 icon={Clock}
                 title={t('activeNow')}
                 value={stats.activeOrders}
                 subtitle={t('inProgress')}
                 color="#f59e0b"
               />
-              <StatCard 
+              <StatCard
                 icon={CheckCircle}
                 title={t('completed')}
                 value={stats.completedToday}
                 subtitle={t('today')}
                 color="#22c55e"
               />
-              <StatCard 
+              <StatCard
                 icon={TrendingUp}
                 title={t('revenue')}
                 value={formatCurrency(stats.totalRevenue, stats.currency)}
@@ -642,15 +656,15 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('overview')}</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={LayoutDashboard} 
-              title={t('dashboardAnalytics')} 
+            <MenuItem
+              icon={LayoutDashboard}
+              title={t('dashboardAnalytics')}
               subtitle={t('realtimeInsights')}
             />
             <View style={styles.divider} />
-            <MenuItem 
-              icon={BarChart3} 
-              title={t('reports')} 
+            <MenuItem
+              icon={BarChart3}
+              title={t('reports')}
               subtitle={t('salesPerformance')}
               isLast
             />
@@ -661,72 +675,72 @@ export default function OwnerDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('operationManagement')}</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={ShoppingBag} 
-              title={t('orders')} 
+            <MenuItem
+              icon={ShoppingBag}
+              title={t('orders')}
               subtitle={t('manageOrders')}
               onPress={() => navigation.navigate('Orders')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Package} 
-              title={t('items')} 
+            <MenuItem
+              icon={Package}
+              title={t('items')}
               subtitle={t('rawAndCompositeItems')}
               onPress={() => navigation.navigate('Items')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={ShoppingBag} 
-              title={t('products')} 
+            <MenuItem
+              icon={ShoppingBag}
+              title={t('products')}
               subtitle={t('menuProducts')}
               onPress={() => navigation.navigate('Products')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Boxes} 
-              title={t('bundles')} 
+            <MenuItem
+              icon={Boxes}
+              title={t('bundles')}
               subtitle={t('productBundlesSoldTogether')}
               onPress={() => navigation.navigate('Bundles')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={FolderTree} 
-              title={t('categories')} 
+            <MenuItem
+              icon={FolderTree}
+              title={t('categories')}
               subtitle={t('organizeMenuStructure')}
               onPress={() => navigation.navigate('Categories')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={ClipboardList} 
-              title={t('inventory')} 
+            <MenuItem
+              icon={ClipboardList}
+              title={t('inventory')}
               subtitle={t('manageInventory')}
               onPress={() => navigation.navigate('Inventory')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Truck} 
-              title={t('delivery')} 
+            <MenuItem
+              icon={Truck}
+              title={t('delivery')}
               subtitle={t('deliveryManagement')}
               onPress={() => navigation.navigate('DeliveryPartners')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Armchair} 
-              title={t('tables')} 
+            <MenuItem
+              icon={Armchair}
+              title={t('tables')}
               subtitle={t('tableManagement')}
               onPress={() => navigation.navigate('Tables')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Car} 
-              title={t('drivers')} 
+            <MenuItem
+              icon={Car}
+              title={t('drivers')}
               subtitle={t('driverManagement')}
               onPress={() => navigation.navigate('Drivers')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Percent} 
-              title={t('discounts')} 
+            <MenuItem
+              icon={Percent}
+              title={t('discounts')}
               subtitle={t('discountManagement')}
               onPress={() => navigation.navigate('Discounts')}
               isLast
@@ -744,7 +758,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
             <MenuItem icon={FileText} title={t('myRequests')} subtitle={t('trackChangeRequests')} isLast onPress={() => navigation.navigate('Requests')} />
           </View>
         </View>
-        
+
           <View style={styles.footer}>
             <Text style={styles.footerText}>{t('appVersion')}</Text>
           </View>
@@ -754,7 +768,7 @@ export default function OwnerDashboardScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -836,7 +850,7 @@ const styles = StyleSheet.create({
   switchBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   headerActions: {
     flexDirection: 'row',

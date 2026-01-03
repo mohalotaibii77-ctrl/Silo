@@ -1,4 +1,5 @@
-import React, { createContext, useContext, ReactNode } from 'react';
+import React, { createContext, useContext, ReactNode, useState, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Light theme colors
 const lightColors = {
@@ -19,6 +20,8 @@ const lightColors = {
   success: '#22C55E',
   successForeground: '#FFFFFF',
   surface: '#FFFFFF',
+  warning: '#F59E0B',
+  warningForeground: '#FFFFFF',
 };
 
 // Dark theme colors
@@ -40,6 +43,8 @@ const darkColors = {
   success: '#22c55e',
   successForeground: '#fafafa',
   surface: '#18181b',
+  warning: '#f59e0b',
+  warningForeground: '#18181b',
 };
 
 export type ThemeColors = typeof lightColors;
@@ -59,12 +64,32 @@ interface ThemeProviderProps {
 }
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
-  // Single-theme mode: keep legacy `useTheme()` API but lock to light palette.
-  // Business logic and theme selection should not block app rendering.
-  const isDark = false;
-  const colors = lightColors;
-  const toggleTheme = () => {
-    // no-op (single theme)
+  const [isDark, setIsDark] = useState(false);
+  const colors = isDark ? darkColors : lightColors;
+
+  // Load saved theme preference on mount
+  useEffect(() => {
+    const loadTheme = async () => {
+      try {
+        const savedTheme = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+        if (savedTheme === 'dark') {
+          setIsDark(true);
+        }
+      } catch (error) {
+        console.error('Error loading theme:', error);
+      }
+    };
+    loadTheme();
+  }, []);
+
+  const toggleTheme = async () => {
+    const newIsDark = !isDark;
+    setIsDark(newIsDark);
+    try {
+      await AsyncStorage.setItem(THEME_STORAGE_KEY, newIsDark ? 'dark' : 'light');
+    } catch (error) {
+      console.error('Error saving theme:', error);
+    }
   };
 
   return (

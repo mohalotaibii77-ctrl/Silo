@@ -8,7 +8,7 @@ interface LocalizationContextType {
   language: Language;
   isRTL: boolean;
   currency: string;
-  t: (key: TranslationKey) => string;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   setLanguage: (lang: Language) => Promise<void>;
   refreshLanguage: () => Promise<void>;
   applyLanguageFromSettings: (lang: string) => void;
@@ -155,8 +155,14 @@ export function LocalizationProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const t = (key: TranslationKey): string => {
-    return translations[language][key] || translations.en[key] || key;
+  const t = (key: TranslationKey, params?: Record<string, string | number>): string => {
+    let text = translations[language][key] || translations.en[key] || key;
+    if (params) {
+      Object.entries(params).forEach(([k, v]) => {
+        text = text.replace(new RegExp(`{{${k}}}`, 'g'), String(v));
+      });
+    }
+    return text;
   };
 
   const isRTL = language === 'ar';

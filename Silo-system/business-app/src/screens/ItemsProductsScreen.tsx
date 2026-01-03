@@ -13,8 +13,7 @@ import {
   Animated,
   Dimensions
 } from 'react-native';
-import { useTheme } from '../theme/ThemeContext';
-import { colors as staticColors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { useLocalization } from '../localization/LocalizationContext';
 import { useConfig } from '../context/ConfigContext';
@@ -100,7 +99,7 @@ interface Category {
 type TabType = 'items' | 'composite' | 'products';
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -116,20 +115,20 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const ItemSkeleton = ({ styles }: { styles: any }) => (
+const ItemSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.itemCard}>
     <View style={styles.itemCardContent}>
-      <Skeleton width={44} height={44} borderRadius={12} />
+      <Skeleton width={44} height={44} borderRadius={12} colors={colors} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} />
-        <Skeleton width="40%" height={12} />
+        <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} colors={colors} />
+        <Skeleton width="40%" height={12} colors={colors} />
       </View>
-      <Skeleton width={60} height={20} borderRadius={6} />
+      <Skeleton width={60} height={20} borderRadius={6} colors={colors} />
     </View>
   </View>
 );
@@ -137,6 +136,7 @@ const ItemSkeleton = ({ styles }: { styles: any }) => (
 export default function ItemsProductsScreen({ navigation }: any) {
   const { colors } = useTheme();
   const styles = createStyles(colors);
+  const modalStyles = createModalStyles(colors);
   const { t, isRTL, language, formatCurrency, currency } = useLocalization();
   const { config, getCategoryLabel } = useConfig();
   
@@ -354,7 +354,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
             {language === 'ar' && item.name_ar ? item.name_ar : item.name}
           </Text>
           <Text style={[styles.itemCategory, isRTL && styles.rtlText]}>
-            {getCategoryLabel(item.category)}
+            {getCategoryLabel(item.category, language)}
           </Text>
         </View>
         <View style={[styles.itemPriceContainer, isRTL && { alignItems: 'flex-start' }]}>
@@ -449,9 +449,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {itemsLoading ? (
               <>
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
               </>
             ) : filteredItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -468,9 +468,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {compositeLoading ? (
               <>
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
               </>
             ) : filteredCompositeItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -487,9 +487,9 @@ export default function ItemsProductsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {productsLoading ? (
               <>
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
               </>
             ) : filteredProducts.length === 0 ? (
               <View style={styles.emptyState}>
@@ -584,7 +584,7 @@ export default function ItemsProductsScreen({ navigation }: any) {
 
       {/* Add Button */}
       <TouchableOpacity style={styles.addButton} onPress={handleAddPress}>
-        <Plus size={24} color="#fff" />
+        <Plus size={24} color={colors.primaryForeground} />
         <Text style={styles.addButtonText}>{getAddButtonText()}</Text>
       </TouchableOpacity>
 
@@ -603,9 +603,12 @@ export default function ItemsProductsScreen({ navigation }: any) {
         editingItem={editingItem}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         currency={currency}
         config={config}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
 
       {/* Add Composite Item Modal */}
@@ -624,8 +627,11 @@ export default function ItemsProductsScreen({ navigation }: any) {
         allItems={items}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         config={config}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
 
       {/* Add Product Modal */}
@@ -645,8 +651,11 @@ export default function ItemsProductsScreen({ navigation }: any) {
         items={[...items, ...compositeItems]}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         currency={currency}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
 
       {/* Barcode Modal */}
@@ -659,14 +668,17 @@ export default function ItemsProductsScreen({ navigation }: any) {
         }}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
+        colors={colors}
+        styles={styles}
+        modalStyles={modalStyles}
       />
     </View>
   );
 }
 
 // Add Item Modal Component
-function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, t, currency, config }: {
+function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, t, currency, config, colors, styles, modalStyles }: {
   visible: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -676,6 +688,9 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
   t: (key: string) => string;
   currency: string;
   config: any;
+  colors: ThemeColors;
+  styles: any;
+  modalStyles: any;
 }) {
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -966,7 +981,7 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
 }
 
 // Add Composite Item Modal Component
-function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, isRTL, language, t, config }: {
+function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, isRTL, language, t, config, colors, styles, modalStyles }: {
   visible: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -976,6 +991,9 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
   language: string;
   t: (key: string) => string;
   config: any;
+  colors: ThemeColors;
+  styles: any;
+  modalStyles: any;
 }) {
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -1287,7 +1305,7 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
 }
 
 // Add Product Modal Component
-function AddProductModal({ visible, onClose, onSave, editingProduct, categories, items, isRTL, language, t, currency }: {
+function AddProductModal({ visible, onClose, onSave, editingProduct, categories, items, isRTL, language, t, currency, colors, styles, modalStyles }: {
   visible: boolean;
   onClose: () => void;
   onSave: () => void;
@@ -1298,6 +1316,9 @@ function AddProductModal({ visible, onClose, onSave, editingProduct, categories,
   language: string;
   t: (key: string) => string;
   currency: string;
+  colors: ThemeColors;
+  styles: any;
+  modalStyles: any;
 }) {
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -1512,15 +1533,17 @@ interface ItemBarcode {
   } | null;
 }
 
-function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
+function BarcodeModal({ visible, item, onClose, isRTL, language, t, colors, styles, modalStyles }: {
   visible: boolean;
   item: Item | null;
   onClose: () => void;
   isRTL: boolean;
   language: string;
   t: (key: string) => string;
+  colors: ThemeColors;
+  styles: any;
+  modalStyles: any;
 }) {
-  const { colors } = useTheme();
   const [loading, setLoading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [barcode, setBarcode] = useState<ItemBarcode | null>(null);
@@ -1590,7 +1613,7 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
 
   const itemName = language === 'ar' && item.name_ar ? item.name_ar : item.name;
 
-  const modalStyles = StyleSheet.create({
+  const barcodeModalStyles = StyleSheet.create({
     overlay: {
       flex: 1,
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1784,40 +1807,40 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
 
   return (
     <Modal visible={visible} transparent animationType="fade">
-      <View style={modalStyles.overlay}>
-        <View style={modalStyles.container}>
+      <View style={barcodeModalStyles.overlay}>
+        <View style={barcodeModalStyles.container}>
           {/* Header */}
-          <View style={modalStyles.header}>
-            <View style={modalStyles.headerIcon}>
+          <View style={barcodeModalStyles.header}>
+            <View style={barcodeModalStyles.headerIcon}>
               <Barcode size={22} color={colors.primary} />
             </View>
-            <View style={modalStyles.headerTextContainer}>
-              <Text style={modalStyles.title}>
+            <View style={barcodeModalStyles.headerTextContainer}>
+              <Text style={barcodeModalStyles.title}>
                 {language === 'ar' ? 'الباركود' : 'Barcode'}
               </Text>
-              <Text style={modalStyles.subtitle} numberOfLines={1}>
+              <Text style={barcodeModalStyles.subtitle} numberOfLines={1}>
                 {itemName}
               </Text>
             </View>
-            <TouchableOpacity style={modalStyles.closeButton} onPress={onClose}>
+            <TouchableOpacity style={barcodeModalStyles.closeButton} onPress={onClose}>
               <X size={22} color={colors.mutedForeground} />
             </TouchableOpacity>
           </View>
 
           {/* Content */}
-          <View style={modalStyles.content}>
+          <View style={barcodeModalStyles.content}>
             {loading ? (
-              <View style={modalStyles.loadingContainer}>
+              <View style={barcodeModalStyles.loadingContainer}>
                 <Loader2 size={32} color={colors.mutedForeground} />
-                <Text style={modalStyles.loadingText}>
+                <Text style={barcodeModalStyles.loadingText}>
                   {language === 'ar' ? 'جاري التحقق من الباركود...' : 'Checking barcode...'}
                 </Text>
               </View>
             ) : error ? (
-              <View style={modalStyles.errorContainer}>
-                <Text style={modalStyles.errorText}>{error}</Text>
+              <View style={barcodeModalStyles.errorContainer}>
+                <Text style={barcodeModalStyles.errorText}>{error}</Text>
                 <TouchableOpacity onPress={fetchBarcode}>
-                  <Text style={modalStyles.retryText}>
+                  <Text style={barcodeModalStyles.retryText}>
                     {language === 'ar' ? 'حاول مرة أخرى' : 'Try again'}
                   </Text>
                 </TouchableOpacity>
@@ -1825,13 +1848,13 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
             ) : barcode ? (
               <>
                 {/* Barcode exists */}
-                <View style={modalStyles.barcodeExistsContainer}>
-                  <CheckCircle2 size={20} color="#16a34a" style={modalStyles.barcodeExistsIcon} />
-                  <View style={modalStyles.barcodeExistsTextContainer}>
-                    <Text style={modalStyles.barcodeExistsTitle}>
+                <View style={barcodeModalStyles.barcodeExistsContainer}>
+                  <CheckCircle2 size={20} color="#16a34a" style={barcodeModalStyles.barcodeExistsIcon} />
+                  <View style={barcodeModalStyles.barcodeExistsTextContainer}>
+                    <Text style={barcodeModalStyles.barcodeExistsTitle}>
                       {language === 'ar' ? 'تم حفظ الباركود' : 'Barcode saved'}
                     </Text>
-                    <Text style={modalStyles.barcodeExistsSubtitle}>
+                    <Text style={barcodeModalStyles.barcodeExistsSubtitle}>
                       {language === 'ar'
                         ? 'هذه المادة لديها باركود مرتبط بها.'
                         : 'This item has a barcode associated with it.'}
@@ -1840,17 +1863,17 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
                 </View>
 
                 {/* Barcode value */}
-                <View style={modalStyles.barcodeValueContainer}>
-                  <Text style={modalStyles.barcodeLabel}>
+                <View style={barcodeModalStyles.barcodeValueContainer}>
+                  <Text style={barcodeModalStyles.barcodeLabel}>
                     {language === 'ar' ? 'قيمة الباركود' : 'Barcode Value'}
                   </Text>
-                  <Text style={modalStyles.barcodeValue}>{barcode.barcode}</Text>
-                  <View style={modalStyles.barcodeMeta}>
-                    <Text style={modalStyles.barcodeDate}>
+                  <Text style={barcodeModalStyles.barcodeValue}>{barcode.barcode}</Text>
+                  <View style={barcodeModalStyles.barcodeMeta}>
+                    <Text style={barcodeModalStyles.barcodeDate}>
                       {language === 'ar' ? 'تم الحفظ في' : 'Saved on'}: {new Date(barcode.created_at).toLocaleDateString(language === 'ar' ? 'ar' : 'en')}
                     </Text>
                     {barcode.created_by_user && (
-                      <Text style={modalStyles.barcodeDate}>
+                      <Text style={barcodeModalStyles.barcodeDate}>
                         {language === 'ar' ? 'تم الحفظ بواسطة' : 'Saved by'}: {barcode.created_by_user.first_name || barcode.created_by_user.last_name
                           ? `${barcode.created_by_user.first_name || ''} ${barcode.created_by_user.last_name || ''}`.trim()
                           : barcode.created_by_user.username}
@@ -1861,7 +1884,7 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
 
                 {/* Delete button */}
                 <TouchableOpacity
-                  style={modalStyles.deleteButton}
+                  style={barcodeModalStyles.deleteButton}
                   onPress={handleDelete}
                   disabled={deleting}
                 >
@@ -1870,7 +1893,7 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
                   ) : (
                     <Trash2 size={18} color={colors.destructive} />
                   )}
-                  <Text style={modalStyles.deleteButtonText}>
+                  <Text style={barcodeModalStyles.deleteButtonText}>
                     {deleting
                       ? (language === 'ar' ? 'جاري الحذف...' : 'Deleting...')
                       : (language === 'ar' ? 'حذف الباركود' : 'Delete Barcode')}
@@ -1878,14 +1901,14 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
                 </TouchableOpacity>
               </>
             ) : (
-              <View style={modalStyles.noBarcodeContainer}>
-                <View style={modalStyles.noBarcodeIconContainer}>
+              <View style={barcodeModalStyles.noBarcodeContainer}>
+                <View style={barcodeModalStyles.noBarcodeIconContainer}>
                   <XCircle size={32} color={colors.mutedForeground} />
                 </View>
-                <Text style={modalStyles.noBarcodeTitle}>
+                <Text style={barcodeModalStyles.noBarcodeTitle}>
                   {language === 'ar' ? 'لا يوجد باركود محفوظ' : 'No barcode saved'}
                 </Text>
-                <Text style={modalStyles.noBarcodeSubtitle}>
+                <Text style={barcodeModalStyles.noBarcodeSubtitle}>
                   {language === 'ar'
                     ? 'هذه المادة ليس لديها باركود مرتبط بها. يمكنك مسح باركود أثناء جرد طلب الشراء لربط باركود.'
                     : 'This item does not have a barcode associated with it. You can scan a barcode during PO counting to associate one.'}
@@ -1895,9 +1918,9 @@ function BarcodeModal({ visible, item, onClose, isRTL, language, t }: {
           </View>
 
           {/* Footer */}
-          <View style={modalStyles.footer}>
-            <TouchableOpacity style={modalStyles.closeFooterButton} onPress={onClose}>
-              <Text style={modalStyles.closeFooterButtonText}>
+          <View style={barcodeModalStyles.footer}>
+            <TouchableOpacity style={barcodeModalStyles.closeFooterButton} onPress={onClose}>
+              <Text style={barcodeModalStyles.closeFooterButtonText}>
                 {language === 'ar' ? 'إغلاق' : 'Close'}
               </Text>
             </TouchableOpacity>
@@ -2090,7 +2113,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   addButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   rtlRow: {
     flexDirection: 'row-reverse',
@@ -2359,7 +2382,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
 });
 

@@ -40,3 +40,4 @@ COMMENT ON COLUMN purchase_orders.invoice_image_url IS 'URL to uploaded vendor i
 
 
 
+

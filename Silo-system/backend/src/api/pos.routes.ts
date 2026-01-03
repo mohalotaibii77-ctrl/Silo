@@ -118,8 +118,9 @@ router.post('/orders', requireBusinessAccess, asyncHandler(async (req, res) => {
     packaging_fee,
     service_charge,
     tip_amount,
-    payment_method,
+    payment_method: payment_method === 'pay_later' ? undefined : payment_method,  // pay_later is not a real payment method
     payment_reference,
+    is_pay_later: payment_method === 'pay_later',  // Set flag when customer will pay after dining
     scheduled_time,
     // Use cashier_id from request (actual employee) or fall back to token user
     created_by: cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId),
@@ -396,7 +397,7 @@ router.get('/orders/external/:externalOrderId', requireBusinessAccess, asyncHand
  */
 router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { status, reason } = req.body;
+  const { status, reason, cashier_id } = req.body;
 
   if (!status) {
     return res.status(400).json({
@@ -414,10 +415,13 @@ router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(asyn
     });
   }
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   const order = await posService.updateOrderStatus(
-    parseInt(orderId), 
+    parseInt(orderId),
     status,
-    parseInt(req.user!.userId),
+    processedBy,
     reason
   );
 
@@ -434,10 +438,14 @@ router.patch('/orders/:orderId/status', requireBusinessAccess, asyncHandler(asyn
  */
 router.post('/orders/:orderId/accept', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
+  const { cashier_id } = req.body;
+
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
 
   const order = await posService.acceptOrder(
     parseInt(orderId),
-    parseInt(req.user!.userId)
+    processedBy
   );
 
   res.json({
@@ -454,11 +462,14 @@ router.post('/orders/:orderId/accept', requireBusinessAccess, asyncHandler(async
  */
 router.post('/orders/:orderId/reject', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { reason } = req.body;
+  const { reason, cashier_id } = req.body;
+
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
 
   const order = await posService.rejectOrder(
     parseInt(orderId),
-    parseInt(req.user!.userId),
+    processedBy,
     reason
   );
 
@@ -474,15 +485,19 @@ router.post('/orders/:orderId/reject', requireBusinessAccess, asyncHandler(async
  * Complete an in-progress order (food is ready)
  * Changes status: in_progress → completed
  * For delivery orders: completed means "ready for pickup" - driver still needs to collect
- * 
+ *
  * ACCESS: Kitchen Display only - orders can only be completed from kitchen
  */
 router.post('/orders/:orderId/complete', requireBusinessAccess, requireKitchenAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
+  const { cashier_id } = req.body;
+
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
 
   const order = await posService.completeOrder(
     parseInt(orderId),
-    parseInt(req.user!.userId)
+    processedBy
   );
 
   res.json({
@@ -505,7 +520,7 @@ router.post('/orders/:orderId/complete', requireBusinessAccess, requireKitchenAc
  * ACCESS: Business users with 'orders' permission
  */
 router.post('/orders/scan-complete', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const { order_number } = req.body;
+  const { order_number, cashier_id } = req.body;
 
   if (!order_number) {
     return res.status(400).json({
@@ -563,10 +578,13 @@ router.post('/orders/scan-complete', requireBusinessAccess, asyncHandler(async (
     });
   }
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   // Complete the order
   const completedOrder = await posService.completeOrder(
     order.id,
-    parseInt(req.user!.userId)
+    processedBy
   );
 
   res.json({
@@ -607,11 +625,14 @@ router.post('/orders/:orderId/pickup', requireBusinessAccess, requirePOSAccess, 
  */
 router.post('/orders/:orderId/cancel', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { reason, pos_session_id } = req.body;
+  const { reason, pos_session_id, cashier_id } = req.body;
+
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
 
   const order = await posService.cancelOrder(
     parseInt(orderId),
-    parseInt(req.user!.userId),
+    processedBy,
     reason,
     pos_session_id ? parseInt(pos_session_id) : undefined
   );
@@ -630,7 +651,7 @@ router.post('/orders/:orderId/cancel', requireBusinessAccess, asyncHandler(async
  */
 router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { payment_method, amount, reference, amount_received, change_given, pos_session_id } = req.body;
+  const { payment_method, amount, reference, amount_received, change_given, pos_session_id, cashier_id } = req.body;
 
   if (!payment_method || amount === undefined) {
     return res.status(400).json({
@@ -644,12 +665,15 @@ router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(asyn
     ? { amount_received, change_given }
     : undefined;
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   const order = await posService.processPayment(
     parseInt(orderId),
     payment_method,
     amount,
     reference,
-    parseInt(req.user!.userId),
+    processedBy,
     cashDetails,
     pos_session_id ? parseInt(pos_session_id) : undefined
   );
@@ -667,7 +691,7 @@ router.post('/orders/:orderId/payment', requireBusinessAccess, asyncHandler(asyn
  */
 router.post('/orders/:orderId/refund', requireBusinessAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  const { amount, reason, reference, pos_session_id } = req.body;
+  const { amount, reason, reference, pos_session_id, cashier_id } = req.body;
 
   if (amount === undefined || !reason) {
     return res.status(400).json({
@@ -676,12 +700,15 @@ router.post('/orders/:orderId/refund', requireBusinessAccess, asyncHandler(async
     });
   }
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   const order = await posService.refundOrder(
     parseInt(orderId),
     amount,
     reason,
     reference,
-    parseInt(req.user!.userId),
+    processedBy,
     pos_session_id ? parseInt(pos_session_id) : undefined
   );
 
@@ -807,12 +834,13 @@ router.post('/calculate-delivery-margin', requireBusinessAccess, asyncHandler(as
  */
 router.patch('/orders/:orderId/edit', requireBusinessAccess, requirePOSAccess, asyncHandler(async (req, res) => {
   const { orderId } = req.params;
-  
+
   // Support both new names (products_*) and legacy names (items_*) for backward compatibility
-  const { 
+  const {
     products_to_add, items_to_add,
     products_to_remove, items_to_remove,
-    products_to_modify, items_to_modify 
+    products_to_modify, items_to_modify,
+    cashier_id
   } = req.body;
 
   // Use new names if provided, otherwise fall back to legacy names
@@ -828,6 +856,9 @@ router.patch('/orders/:orderId/edit', requireBusinessAccess, requirePOSAccess, a
     });
   }
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   const order = await posService.editOrder(
     parseInt(orderId),
     {
@@ -835,7 +866,7 @@ router.patch('/orders/:orderId/edit', requireBusinessAccess, requirePOSAccess, a
       products_to_remove: productsToRemove,
       products_to_modify: productsToModify,
     },
-    parseInt(req.user!.userId)
+    processedBy
   );
 
   res.json({
@@ -853,6 +884,22 @@ router.get('/orders/:orderId/timeline', requireBusinessAccess, asyncHandler(asyn
   const { orderId } = req.params;
 
   const timeline = await posService.getOrderTimeline(parseInt(orderId));
+
+  res.json({
+    success: true,
+    data: timeline,
+  });
+}));
+
+/**
+ * GET /api/pos/orders/:orderId/timeline/categorized
+ * Get categorized order timeline for tabbed UI display
+ * Returns events organized into order_status and payment_status categories
+ */
+router.get('/orders/:orderId/timeline/categorized', requireBusinessAccess, asyncHandler(async (req, res) => {
+  const { orderId } = req.params;
+
+  const timeline = await posService.getCategorizedOrderTimeline(parseInt(orderId));
 
   res.json({
     success: true,
@@ -948,7 +995,7 @@ router.get('/kitchen/cancelled-items', requireBusinessAccess, asyncHandler(async
  * Kitchen decides for each cancelled item whether it's waste or can return to inventory
  */
 router.post('/kitchen/process-waste', requireBusinessAccess, asyncHandler(async (req, res) => {
-  const { decisions } = req.body;
+  const { decisions, cashier_id } = req.body;
 
   if (!decisions || !Array.isArray(decisions) || decisions.length === 0) {
     return res.status(400).json({
@@ -967,9 +1014,12 @@ router.post('/kitchen/process-waste', requireBusinessAccess, asyncHandler(async 
     }
   }
 
+  // Use cashier_id if provided (actual employee using POS), otherwise fall back to token user
+  const processedBy = cashier_id ? parseInt(cashier_id) : parseInt(req.user!.userId);
+
   const result = await posService.processWasteDecisions(
     decisions,
-    parseInt(req.user!.userId)
+    processedBy
   );
 
   res.json({

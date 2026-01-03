@@ -15,3 +15,4 @@ COMMENT ON INDEX idx_business_users_unique_username IS 'Ensures usernames are un
 
 
 
+

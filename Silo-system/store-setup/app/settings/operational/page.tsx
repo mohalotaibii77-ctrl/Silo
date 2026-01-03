@@ -1,13 +1,24 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense, lazy } from 'react';
 import { useRouter } from 'next/navigation';
-import { LogOut, User, Command, ArrowLeft, Save, Loader2, Clock, Hash, Bell, Timer, Monitor, ScanLine, ChefHat, DollarSign, Users } from 'lucide-react';
+import { LogOut, User, Command, ArrowLeft, Save, Loader2, Clock, Hash, Bell, Timer, Monitor, ScanLine, ChefHat, DollarSign, Users, MapPin, Calendar, UserCog, Check, Trash2 } from 'lucide-react';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Sidebar } from '@/components/sidebar';
 import { motion } from 'framer-motion';
 import api from '@/lib/api';
 import { useLanguage } from '@/lib/language-context';
+import dynamic from 'next/dynamic';
+
+// Dynamically import MapPicker to avoid SSR issues
+const MapPicker = dynamic(() => import('@/components/map-picker'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-64 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+      <Loader2 className="w-8 h-8 animate-spin text-zinc-500" />
+    </div>
+  ),
+});
 
 interface Business {
   id: number;
@@ -31,6 +42,13 @@ interface OperationalSettings {
   pos_opening_float_fixed: boolean;
   pos_opening_float_amount: number;
   pos_session_allowed_user_ids: number[];
+  // Working days and GPS check-in settings
+  working_days: string[];
+  require_gps_checkin: boolean;
+  geofence_radius_meters: number;
+  checkin_buffer_minutes_before: number;
+  checkin_buffer_minutes_after: number;
+  gps_accuracy_threshold_meters: number;
 }
 
 const defaultSettings: OperationalSettings = {
@@ -48,6 +66,13 @@ const defaultSettings: OperationalSettings = {
   pos_opening_float_fixed: false,
   pos_opening_float_amount: 0,
   pos_session_allowed_user_ids: [],
+  // Working days and GPS check-in settings
+  working_days: ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+  require_gps_checkin: false,
+  geofence_radius_meters: 100,
+  checkin_buffer_minutes_before: 15,
+  checkin_buffer_minutes_after: 30,
+  gps_accuracy_threshold_meters: 50,
 };
 
 interface POSUser {
@@ -55,6 +80,35 @@ interface POSUser {
   username: string;
   name: string;
   role: string;
+}
+
+interface Branch {
+  id: number;
+  name: string;
+  code: string;
+  latitude: number | null;
+  longitude: number | null;
+  geofence_radius_meters: number;
+  geofence_enabled: boolean;
+}
+
+interface Employee {
+  id: number;
+  username: string;
+  name: string;
+  role: string;
+}
+
+interface ScheduleOverride {
+  id?: number;
+  employee_id: number;
+  working_days: string[] | null;
+  opening_time: string | null;
+  closing_time: string | null;
+  checkin_buffer_minutes_before: number | null;
+  checkin_buffer_minutes_after: number | null;
+  is_active: boolean;
+  notes: string | null;
 }
 
 export default function OperationalSettingsPage() {
@@ -66,6 +120,15 @@ export default function OperationalSettingsPage() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [settings, setSettings] = useState<OperationalSettings>(defaultSettings);
   const [posUsers, setPosUsers] = useState<POSUser[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [scheduleOverrides, setScheduleOverrides] = useState<ScheduleOverride[]>([]);
+  const [editingBranchId, setEditingBranchId] = useState<number | null>(null);
+  const [editingEmployeeId, setEditingEmployeeId] = useState<number | null>(null);
+  const [savingBranch, setSavingBranch] = useState(false);
+  const [savingOverride, setSavingOverride] = useState(false);
+  const [currentBranchId, setCurrentBranchId] = useState<number | null>(null); // Auto-loaded from localStorage
+  const [currentBranchName, setCurrentBranchName] = useState<string | null>(null);
 
   useEffect(() => {
     const token = localStorage.getItem('setup_token');
@@ -82,31 +145,123 @@ export default function OperationalSettingsPage() {
         router.push('/login');
         return;
       }
-      fetchData();
+
+      // Load current branch from localStorage (set by sidebar/page-layout when user selects a branch)
+      // IMPORTANT: Pass branchId synchronously to fetchData to avoid race condition
+      let branchId: number | null = null;
+      const storedBranch = localStorage.getItem('setup_branch');
+      if (storedBranch) {
+        try {
+          const branch = JSON.parse(storedBranch);
+          branchId = branch.id;
+          setCurrentBranchId(branch.id);
+          setCurrentBranchName(branch.name);
+        } catch {}
+      }
+
+      fetchData(branchId);
     } catch {
       router.push('/login');
       return;
     }
   }, [router]);
 
-  const fetchData = async () => {
+  // Refetch settings when branch changes
+  useEffect(() => {
+    if (!loading && branches.length > 0) {
+      fetchSettingsForBranch(currentBranchId);
+    }
+  }, [currentBranchId]);
+
+  // Fetch only operational settings for a specific branch (without refetching everything)
+  const fetchSettingsForBranch = async (branchId: number | null) => {
     try {
-      const [businessRes, settingsRes, posEmployeesRes] = await Promise.all([
-        api.get('/business-settings'),
-        api.get('/business-settings/operational'),
-        api.get('/pos-sessions/employees'),
+      const operationalUrl = branchId
+        ? `/business-settings/operational?branch_id=${branchId}`
+        : '/business-settings/operational';
+
+      const res = await api.get(operationalUrl);
+      if (res.data.data) {
+        setSettings({ ...defaultSettings, ...res.data.data });
+      }
+    } catch (err) {
+      console.error('Failed to fetch branch settings:', err);
+    }
+  };
+
+  const fetchData = async (branchId: number | null = null) => {
+    try {
+      // Build operational settings URL with optional branch_id
+      const operationalUrl = branchId
+        ? `/business-settings/operational?branch_id=${branchId}`
+        : '/business-settings/operational';
+
+      // Add .catch() to ALL endpoints to identify which one is failing
+      const [businessRes, settingsRes, posEmployeesRes, branchesRes, employeesRes, overridesRes] = await Promise.all([
+        api.get('/business-settings').catch((err) => {
+          console.error('Failed to fetch business settings:', err.response?.status, err.response?.data || err.message);
+          return { data: { data: null } };
+        }),
+        api.get(operationalUrl).catch((err) => {
+          console.error('Failed to fetch operational settings:', err.response?.status, err.response?.data || err.message);
+          return { data: { data: null, is_branch_default: false } };
+        }),
+        api.get('/pos-sessions/employees').catch((err) => {
+          console.warn('Failed to fetch POS employees:', err.response?.data?.error || err.message);
+          return { data: { data: [] } };
+        }),
+        api.get('/business-settings/branches/geofence').catch((err) => {
+          console.warn('Failed to fetch branches geofence:', err.response?.data?.error || err.message);
+          return { data: { data: [] } };
+        }),
+        api.get('/business-users').catch((err) => {
+          console.warn('Failed to fetch business users:', err.response?.data?.error || err.message);
+          return { data: { data: [] } };
+        }),
+        api.get('/hr/schedule-overrides').catch((err) => {
+          console.warn('Failed to fetch schedule overrides:', err.response?.data?.error || err.message);
+          return { data: { data: [] } };
+        }),
       ]);
-      
+
       if (businessRes.data.data) {
         setBusiness(businessRes.data.data);
       }
-      
+
       if (settingsRes.data.data) {
         setSettings({ ...defaultSettings, ...settingsRes.data.data });
       }
 
       if (posEmployeesRes.data.data) {
         setPosUsers(posEmployeesRes.data.data);
+      }
+
+      if (branchesRes.data.data) {
+        setBranches(branchesRes.data.data);
+
+        // Auto-select main branch if no branch is currently selected
+        if (!currentBranchId && branchesRes.data.data.length > 0) {
+          // Try to find main branch or use first one
+          const branches = branchesRes.data.data;
+          const mainBranch = branches.find((b: Branch) => b.name?.toLowerCase().includes('main')) || branches[0];
+          if (mainBranch) {
+            setCurrentBranchId(mainBranch.id);
+            setCurrentBranchName(mainBranch.name);
+            // Save to localStorage for consistency
+            localStorage.setItem('setup_branch', JSON.stringify({ id: mainBranch.id, name: mainBranch.name }));
+          }
+        }
+      }
+
+      if (employeesRes.data.data) {
+        // Filter to only show employees (not owners)
+        setEmployees(employeesRes.data.data.filter((u: Employee) =>
+          u.role !== 'owner' && u.role !== 'super_admin'
+        ));
+      }
+
+      if (overridesRes.data.data) {
+        setScheduleOverrides(overridesRes.data.data);
       }
     } catch (err) {
       console.error('Failed to fetch data:', err);
@@ -132,8 +287,18 @@ export default function OperationalSettingsPage() {
     setMessage({ type: '', text: '' });
 
     try {
-      await api.put('/business-settings/operational', settings);
-      setMessage({ type: 'success', text: t('Settings saved successfully!', 'تم حفظ الإعدادات بنجاح!') });
+      // Include branch_id if in a specific branch context
+      const dataToSave = currentBranchId
+        ? { ...settings, branch_id: currentBranchId }
+        : settings;
+
+      await api.put('/business-settings/operational', dataToSave);
+
+      const successMsg = currentBranchName
+        ? t(`Settings saved for ${currentBranchName}!`, `تم حفظ إعدادات ${currentBranchName} بنجاح!`)
+        : t('Business settings saved successfully!', 'تم حفظ إعدادات العمل بنجاح!');
+
+      setMessage({ type: 'success', text: successMsg });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات') });
     } finally {
@@ -149,7 +314,7 @@ export default function OperationalSettingsPage() {
     setSettings(prev => {
       const currentIds = prev.pos_session_allowed_user_ids || [];
       const isSelected = currentIds.includes(userId);
-      
+
       return {
         ...prev,
         pos_session_allowed_user_ids: isSelected
@@ -157,6 +322,99 @@ export default function OperationalSettingsPage() {
           : [...currentIds, userId]
       };
     });
+  };
+
+  // Update branch geofence locally
+  const updateBranch = (branchId: number, field: keyof Branch, value: any) => {
+    setBranches(prev => prev.map(b =>
+      b.id === branchId ? { ...b, [field]: value } : b
+    ));
+  };
+
+  // Save branch geofence settings
+  const saveBranchGeofence = async (branchId: number) => {
+    setSavingBranch(true);
+    const branch = branches.find(b => b.id === branchId);
+    if (!branch) return;
+
+    try {
+      await api.put(`/business-settings/branches/${branchId}/geofence`, {
+        latitude: branch.latitude,
+        longitude: branch.longitude,
+        geofence_radius_meters: branch.geofence_radius_meters,
+        geofence_enabled: branch.geofence_enabled,
+      });
+      setEditingBranchId(null);
+      setMessage({ type: 'success', text: t('Branch geofence saved!', 'تم حفظ السياج الجغرافي للفرع!') });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || t('Failed to save branch geofence', 'فشل في حفظ السياج الجغرافي') });
+    } finally {
+      setSavingBranch(false);
+    }
+  };
+
+  // Get schedule override for an employee
+  const getOverrideForEmployee = (employeeId: number): ScheduleOverride | undefined => {
+    return scheduleOverrides.find(o => o.employee_id === employeeId);
+  };
+
+  // Update schedule override locally
+  const updateOverride = (employeeId: number, field: keyof ScheduleOverride, value: any) => {
+    setScheduleOverrides(prev => {
+      const existing = prev.find(o => o.employee_id === employeeId);
+      if (existing) {
+        return prev.map(o => o.employee_id === employeeId ? { ...o, [field]: value } : o);
+      } else {
+        // Create new override
+        return [...prev, {
+          employee_id: employeeId,
+          working_days: null,
+          opening_time: null,
+          closing_time: null,
+          checkin_buffer_minutes_before: null,
+          checkin_buffer_minutes_after: null,
+          is_active: true,
+          notes: null,
+          [field]: value,
+        }];
+      }
+    });
+  };
+
+  // Save employee schedule override
+  const saveScheduleOverride = async (employeeId: number) => {
+    setSavingOverride(true);
+    const override = getOverrideForEmployee(employeeId);
+
+    try {
+      await api.put(`/hr/schedule-overrides/${employeeId}`, override || {
+        working_days: null,
+        opening_time: null,
+        closing_time: null,
+        checkin_buffer_minutes_before: null,
+        checkin_buffer_minutes_after: null,
+        is_active: true,
+        notes: null,
+      });
+      setEditingEmployeeId(null);
+      setMessage({ type: 'success', text: t('Employee schedule saved!', 'تم حفظ جدول الموظف!') });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || t('Failed to save schedule', 'فشل في حفظ الجدول') });
+    } finally {
+      setSavingOverride(false);
+    }
+  };
+
+  // Delete employee schedule override
+  const deleteScheduleOverride = async (employeeId: number) => {
+    try {
+      await api.delete(`/hr/schedule-overrides/${employeeId}`);
+      setScheduleOverrides(prev => prev.filter(o => o.employee_id !== employeeId));
+      setEditingEmployeeId(null);
+      setMessage({ type: 'success', text: t('Override removed, using business defaults', 'تم إزالة التخصيص، يستخدم الإعدادات الافتراضية') });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || t('Failed to remove override', 'فشل في إزالة التخصيص') });
+    }
   };
 
   if (loading) {
@@ -595,18 +853,19 @@ export default function OperationalSettingsPage() {
               </div>
             </div>
 
-            {/* Business Hours */}
+            {/* Business Working Days/Hours */}
             <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">
               <div className="flex items-center gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
                 <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
-                  <Clock className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                  <Calendar className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
                 </div>
                 <div>
-                  <h2 className="font-semibold text-zinc-900 dark:text-white">{t('Business Hours', 'ساعات العمل')}</h2>
-                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set your store operating hours', 'تعيين ساعات عمل المتجر')}</p>
+                  <h2 className="font-semibold text-zinc-900 dark:text-white">{t('Business Working Days/Hours', 'أيام وساعات العمل')}</h2>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set your store operating schedule', 'تعيين جدول عمل المتجر')}</p>
                 </div>
               </div>
 
+              {/* Working Hours */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
@@ -631,7 +890,420 @@ export default function OperationalSettingsPage() {
                   />
                 </div>
               </div>
+
+              {/* Working Days */}
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-3">
+                  {t('Working Days', 'أيام العمل')}
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { key: 'sunday', en: 'Sun', ar: 'أحد' },
+                    { key: 'monday', en: 'Mon', ar: 'إثنين' },
+                    { key: 'tuesday', en: 'Tue', ar: 'ثلاثاء' },
+                    { key: 'wednesday', en: 'Wed', ar: 'أربعاء' },
+                    { key: 'thursday', en: 'Thu', ar: 'خميس' },
+                    { key: 'friday', en: 'Fri', ar: 'جمعة' },
+                    { key: 'saturday', en: 'Sat', ar: 'سبت' },
+                  ].map((day) => {
+                    const isSelected = settings.working_days?.includes(day.key);
+                    return (
+                      <button
+                        key={day.key}
+                        onClick={() => {
+                          const currentDays = settings.working_days || [];
+                          const newDays = isSelected
+                            ? currentDays.filter(d => d !== day.key)
+                            : [...currentDays, day.key];
+                          updateSetting('working_days', newDays);
+                        }}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          isSelected
+                            ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                            : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                        }`}
+                      >
+                        {isRTL ? day.ar : day.en}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  {t('Select which days your business operates. Employees cannot check in on non-working days.', 'حدد أيام عمل نشاطك التجاري. لا يمكن للموظفين تسجيل الحضور في أيام الراحة.')}
+                </p>
+              </div>
             </div>
+
+            {/* GPS Check-in Settings */}
+            <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">
+              <div className="flex items-center gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
+                <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                  <MapPin className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-zinc-900 dark:text-white">{t('GPS Check-in Settings', 'إعدادات تسجيل الحضور GPS')}</h2>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Configure location-based employee check-in', 'إعداد تسجيل حضور الموظفين بناءً على الموقع')}</p>
+                </div>
+              </div>
+
+              {/* Require GPS Check-in Toggle */}
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <p className="font-medium text-zinc-900 dark:text-white">{t('Require GPS for Check-in', 'طلب GPS لتسجيل الحضور')}</p>
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Employees must be at branch location to check in', 'يجب أن يكون الموظفون في موقع الفرع لتسجيل الحضور')}</p>
+                </div>
+                <button
+                  onClick={() => updateSetting('require_gps_checkin', !settings.require_gps_checkin)}
+                  className={`relative w-12 h-7 rounded-full transition-colors ${
+                    settings.require_gps_checkin ? 'bg-green-500' : 'bg-zinc-300 dark:bg-zinc-600'
+                  }`}
+                >
+                  <span className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                    settings.require_gps_checkin ? (isRTL ? 'right-6' : 'left-6') : (isRTL ? 'right-1' : 'left-1')
+                  }`} />
+                </button>
+              </div>
+
+              {/* GPS Settings - only shown when enabled */}
+              {settings.require_gps_checkin && (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                        {t('Geofence Radius (meters)', 'نطاق السياج الجغرافي (متر)')}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={settings.geofence_radius_meters}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            updateSetting('geofence_radius_meters', val === '' ? 100 : parseInt(val));
+                          }
+                        }}
+                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                        {t('GPS Accuracy Threshold (meters)', 'دقة GPS المطلوبة (متر)')}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={settings.gps_accuracy_threshold_meters}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            updateSetting('gps_accuracy_threshold_meters', val === '' ? 50 : parseInt(val));
+                          }
+                        }}
+                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                        {t('Buffer Before Opening (minutes)', 'المهلة قبل الافتتاح (دقائق)')}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={settings.checkin_buffer_minutes_before}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            updateSetting('checkin_buffer_minutes_before', val === '' ? 15 : parseInt(val));
+                          }
+                        }}
+                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">
+                        {t('Buffer After Opening (minutes)', 'المهلة بعد الافتتاح (دقائق)')}
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={settings.checkin_buffer_minutes_after}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d+$/.test(val)) {
+                            updateSetting('checkin_buffer_minutes_after', val === '' ? 30 : parseInt(val));
+                          }
+                        }}
+                        className="w-full px-4 py-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white focus:ring-2 focus:ring-zinc-500/20 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700">
+                    <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                      <strong>{t('How it works:', 'كيف يعمل:')}</strong>{' '}
+                      {t('Employees can check in starting', 'يمكن للموظفين تسجيل الحضور بدءًا من')} {settings.checkin_buffer_minutes_before} {t('minutes before opening time. Check-ins after opening time will be marked as "Late" up to', 'دقيقة قبل وقت الافتتاح. سيتم تحديد تسجيلات الحضور بعد وقت الافتتاح على أنها "متأخر" حتى')} {settings.checkin_buffer_minutes_after} {t('minutes.', 'دقيقة.')}
+                    </p>
+                  </div>
+
+                  {/* Branch Location - integrated into GPS settings */}
+                  {branches.length > 0 && (
+                    <div className="pt-4 border-t border-zinc-200 dark:border-zinc-700">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <p className="font-medium text-zinc-900 dark:text-white">{t('Branch Location', 'موقع الفرع')}</p>
+                          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set the GPS location for employee check-in', 'تعيين موقع GPS لتسجيل حضور الموظفين')}</p>
+                        </div>
+                        {(() => {
+                          const branch = currentBranchId
+                            ? branches.find(b => b.id === currentBranchId)
+                            : branches[0];
+                          if (!branch) return null;
+                          return (
+                            <button
+                              onClick={() => saveBranchGeofence(branch.id)}
+                              disabled={savingBranch}
+                              className="px-4 py-2 text-sm font-medium rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-100 disabled:opacity-50 flex items-center gap-2"
+                            >
+                              {savingBranch ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                              {t('Save Location', 'حفظ الموقع')}
+                            </button>
+                          );
+                        })()}
+                      </div>
+
+                      {/* Show map for current branch */}
+                      {(() => {
+                        const branch = currentBranchId
+                          ? branches.find(b => b.id === currentBranchId)
+                          : branches[0];
+                        if (!branch) return null;
+
+                        return (
+                          <div className="space-y-4">
+                            {/* Status indicator */}
+                            <div className={`p-3 rounded-lg flex items-center gap-3 ${
+                              branch.latitude && branch.longitude
+                                ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800'
+                                : 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800'
+                            }`}>
+                              <MapPin className={`w-5 h-5 ${
+                                branch.latitude && branch.longitude
+                                  ? 'text-green-600 dark:text-green-400'
+                                  : 'text-amber-600 dark:text-amber-400'
+                              }`} />
+                              <div>
+                                <p className={`text-sm font-medium ${
+                                  branch.latitude && branch.longitude
+                                    ? 'text-green-700 dark:text-green-300'
+                                    : 'text-amber-700 dark:text-amber-300'
+                                }`}>
+                                  {branch.latitude && branch.longitude
+                                    ? t('Location set', 'تم تعيين الموقع')
+                                    : t('Location not set', 'الموقع غير محدد')}
+                                </p>
+                                <p className="text-xs text-zinc-500">
+                                  {branch.latitude && branch.longitude
+                                    ? `${branch.latitude.toFixed(6)}, ${branch.longitude.toFixed(6)}`
+                                    : t('Click on the map or use your current location', 'انقر على الخريطة أو استخدم موقعك الحالي')}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* Map Picker */}
+                            <MapPicker
+                              latitude={branch.latitude}
+                              longitude={branch.longitude}
+                              radiusMeters={branch.geofence_radius_meters || settings.geofence_radius_meters}
+                              onLocationSelect={(lat, lng) => {
+                                updateBranch(branch.id, 'latitude', lat);
+                                updateBranch(branch.id, 'longitude', lng);
+                                // Auto-enable geofence when location is set
+                                if (!branch.geofence_enabled) {
+                                  updateBranch(branch.id, 'geofence_enabled', true);
+                                }
+                              }}
+                              isRTL={isRTL}
+                            />
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Employee Schedule Overrides */}
+            {settings.require_gps_checkin && employees.length > 0 && (
+              <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">
+                <div className="flex items-center gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
+                  <div className="w-10 h-10 rounded-xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">
+                    <UserCog className="w-5 h-5 text-zinc-600 dark:text-zinc-400" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-zinc-900 dark:text-white">{t('Employee Schedule Overrides', 'جداول الموظفين المخصصة')}</h2>
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('Set custom working hours/days for specific employees', 'تعيين ساعات/أيام عمل مخصصة لموظفين محددين')}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {employees.map((employee) => {
+                    const override = getOverrideForEmployee(employee.id);
+                    const isEditing = editingEmployeeId === employee.id;
+                    const hasOverride = override && (override.working_days || override.opening_time || override.closing_time);
+
+                    return (
+                      <div
+                        key={employee.id}
+                        className={`p-4 rounded-xl border-2 transition-all ${
+                          isEditing
+                            ? 'border-zinc-900 dark:border-white bg-zinc-50 dark:bg-zinc-800'
+                            : 'border-zinc-200 dark:border-zinc-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                              hasOverride
+                                ? 'bg-blue-100 dark:bg-blue-900/30'
+                                : 'bg-zinc-100 dark:bg-zinc-700'
+                            }`}>
+                              <User className={`w-5 h-5 ${
+                                hasOverride
+                                  ? 'text-blue-600 dark:text-blue-400'
+                                  : 'text-zinc-500'
+                              }`} />
+                            </div>
+                            <div>
+                              <p className="font-medium text-zinc-900 dark:text-white">{employee.name}</p>
+                              <p className="text-xs text-zinc-500">
+                                @{employee.username} • {employee.role}
+                                {hasOverride && (
+                                  <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                                    {t('Custom', 'مخصص')}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {!isEditing ? (
+                              <button
+                                onClick={() => setEditingEmployeeId(employee.id)}
+                                className="px-3 py-1.5 text-sm font-medium rounded-lg bg-zinc-100 dark:bg-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-300"
+                              >
+                                {hasOverride ? t('Edit', 'تعديل') : t('Customize', 'تخصيص')}
+                              </button>
+                            ) : (
+                              <>
+                                {hasOverride && (
+                                  <button
+                                    onClick={() => deleteScheduleOverride(employee.id)}
+                                    className="p-2 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600"
+                                    title={t('Remove override', 'إزالة التخصيص')}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => setEditingEmployeeId(null)}
+                                  className="p-2 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-600"
+                                >
+                                  <X className="w-4 h-4 text-zinc-500" />
+                                </button>
+                                <button
+                                  onClick={() => saveScheduleOverride(employee.id)}
+                                  disabled={savingOverride}
+                                  className="px-3 py-1.5 text-sm font-medium rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 hover:bg-zinc-800 dark:hover:bg-zinc-100 disabled:opacity-50"
+                                >
+                                  {savingOverride ? <Loader2 className="w-4 h-4 animate-spin" /> : t('Save', 'حفظ')}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                        {isEditing && (
+                          <div className="space-y-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
+                            {/* Custom Working Days */}
+                            <div>
+                              <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-2">
+                                {t('Custom Working Days', 'أيام العمل المخصصة')} ({t('leave empty for default', 'اتركه فارغاً للافتراضي')})
+                              </label>
+                              <div className="flex flex-wrap gap-2">
+                                {[
+                                  { key: 'sunday', en: 'Sun', ar: 'أحد' },
+                                  { key: 'monday', en: 'Mon', ar: 'إثنين' },
+                                  { key: 'tuesday', en: 'Tue', ar: 'ثلاثاء' },
+                                  { key: 'wednesday', en: 'Wed', ar: 'أربعاء' },
+                                  { key: 'thursday', en: 'Thu', ar: 'خميس' },
+                                  { key: 'friday', en: 'Fri', ar: 'جمعة' },
+                                  { key: 'saturday', en: 'Sat', ar: 'سبت' },
+                                ].map((day) => {
+                                  const isSelected = override?.working_days?.includes(day.key);
+                                  return (
+                                    <button
+                                      key={day.key}
+                                      onClick={() => {
+                                        const currentDays = override?.working_days || [];
+                                        const newDays = isSelected
+                                          ? currentDays.filter(d => d !== day.key)
+                                          : [...currentDays, day.key];
+                                        updateOverride(employee.id, 'working_days', newDays.length > 0 ? newDays : null);
+                                      }}
+                                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                        isSelected
+                                          ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900'
+                                          : 'bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-200 dark:hover:bg-zinc-600'
+                                      }`}
+                                    >
+                                      {isRTL ? day.ar : day.en}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* Custom Working Hours */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                                  {t('Custom Opening Time', 'وقت الفتح المخصص')}
+                                </label>
+                                <input
+                                  type="time"
+                                  value={override?.opening_time || ''}
+                                  onChange={(e) => updateOverride(employee.id, 'opening_time', e.target.value || null)}
+                                  className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400 mb-1">
+                                  {t('Custom Closing Time', 'وقت الإغلاق المخصص')}
+                                </label>
+                                <input
+                                  type="time"
+                                  value={override?.closing_time || ''}
+                                  onChange={(e) => updateOverride(employee.id, 'closing_time', e.target.value || null)}
+                                  className="w-full px-3 py-2 text-sm rounded-lg border border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white"
+                                />
+                              </div>
+                            </div>
+
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                              {t('Empty fields will use business defaults. This employee will follow their custom schedule for check-in.', 'الحقول الفارغة ستستخدم الإعدادات الافتراضية. سيتبع هذا الموظف جدوله المخصص لتسجيل الحضور.')}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Notifications */}
             <div className="p-6 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 space-y-5">

@@ -8,9 +8,9 @@ import { supabaseAdmin } from '../config/database';
 // Timeline event types
 export type TimelineEventType =
   | 'created'              // Order created
-  | 'item_added'           // Item added to order
-  | 'item_removed'         // Item removed from order
-  | 'item_modified'        // Item quantity/variant/modifiers changed
+  | 'item_added'           // Product added to order
+  | 'item_removed'         // Product removed from order
+  | 'item_modified'        // Product quantity/variant/modifiers changed
   | 'status_changed'       // Order status changed
   | 'payment_received'     // Payment received
   | 'payment_updated'      // Payment status changed (e.g., additional payment needed after edit)
@@ -21,6 +21,37 @@ export type TimelineEventType =
   | 'picked_up'            // Delivery order picked up by driver
   | 'ingredient_wasted'    // Ingredient marked as waste
   | 'ingredient_returned'; // Ingredient returned to inventory
+
+// Categorized timeline types for tabbed UI display
+export type TimelineCategory = 'order_status' | 'payment_status';
+
+export type SimplifiedEventType =
+  | 'created'
+  | 'edited'
+  | 'canceled'
+  | 'completed'
+  | 'picked_up'
+  | 'paid'
+  | 'additional_payment'
+  | 'partial_refund'
+  | 'full_refund';
+
+export interface CategorizedTimelineEvent {
+  id: number;
+  order_id: number;
+  original_event_type: TimelineEventType;
+  display_type: SimplifiedEventType;
+  category: TimelineCategory;
+  description: string;
+  done_by: string | null;
+  created_at: string;
+  event_data: Record<string, any>;
+}
+
+export interface CategorizedTimeline {
+  order_status: CategorizedTimelineEvent[];
+  payment_status: CategorizedTimelineEvent[];
+}
 
 export interface TimelineEvent {
   id: number;
@@ -413,6 +444,256 @@ export class OrderTimelineService {
       user: event.business_users || null,
       business_users: undefined,
     })) as TimelineEvent[];
+  }
+
+  /**
+   * Get categorized timeline for tabbed UI display
+   * Organizes events into Order Status and Payment Status tabs
+   */
+  async getCategorizedTimeline(orderId: number): Promise<CategorizedTimeline> {
+    const rawEvents = await this.getTimeline(orderId);
+
+    const categorized: CategorizedTimeline = {
+      order_status: [],
+      payment_status: [],
+    };
+
+    for (const event of rawEvents) {
+      const mapped = this.mapToCategory(event);
+      if (mapped) {
+        categorized[mapped.category].push(mapped);
+      }
+    }
+
+    return categorized;
+  }
+
+  /**
+   * Map a raw timeline event to a categorized event
+   * Returns null for events that should be hidden (e.g., ingredient_wasted, ingredient_returned)
+   */
+  private mapToCategory(event: TimelineEvent): CategorizedTimelineEvent | null {
+    const eventData = event.event_data || {};
+    const doneBy = this.formatDoneBy(event);
+
+    // Order Status events
+    switch (event.event_type) {
+      case 'created':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'created',
+          category: 'order_status',
+          description: `Order created - ${(eventData.order_type || 'unknown').replace(/_/g, ' ')} (${eventData.items_count || 0} products)`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'item_added':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'edited',
+          category: 'order_status',
+          description: `Edited: Product added - ${eventData.product_name || 'Unknown'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'item_removed':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'edited',
+          category: 'order_status',
+          description: `Edited: Product removed - ${eventData.product_name || 'Unknown'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'item_modified':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'edited',
+          category: 'order_status',
+          description: `Edited: Product modified - ${eventData.product_name || 'Unknown'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'status_changed': {
+        const toStatus = eventData.to_status || eventData.new_status;
+        // Only show specific status transitions
+        if (toStatus === 'cancelled') {
+          return {
+            id: event.id,
+            order_id: event.order_id,
+            original_event_type: event.event_type,
+            display_type: 'canceled',
+            category: 'order_status',
+            description: 'Order canceled',
+            done_by: doneBy,
+            created_at: event.created_at,
+            event_data: eventData,
+          };
+        }
+        if (toStatus === 'completed') {
+          return {
+            id: event.id,
+            order_id: event.order_id,
+            original_event_type: event.event_type,
+            display_type: 'completed',
+            category: 'order_status',
+            description: 'Order completed',
+            done_by: doneBy,
+            created_at: event.created_at,
+            event_data: eventData,
+          };
+        }
+        if (toStatus === 'picked_up') {
+          return {
+            id: event.id,
+            order_id: event.order_id,
+            original_event_type: event.event_type,
+            display_type: 'picked_up',
+            category: 'order_status',
+            description: 'Order picked up',
+            done_by: doneBy,
+            created_at: event.created_at,
+            event_data: eventData,
+          };
+        }
+        // Hide other status transitions
+        return null;
+      }
+
+      case 'cancelled':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'canceled',
+          category: 'order_status',
+          description: eventData.reason ? `Order canceled: ${eventData.reason}` : 'Order canceled',
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'completed':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'completed',
+          category: 'order_status',
+          description: 'Order completed',
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'picked_up':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'picked_up',
+          category: 'order_status',
+          description: 'Order picked up',
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      // Payment Status events
+      case 'payment_received':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'paid',
+          category: 'payment_status',
+          description: `Payment received via ${eventData.payment_method || 'unknown'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'payment_updated':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'paid',
+          category: 'payment_status',
+          description: `Payment updated: ${eventData.reason || 'status changed'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'extra_payment_collected':
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: 'additional_payment',
+          category: 'payment_status',
+          description: `Additional payment collected via ${eventData.payment_method || 'unknown'}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+
+      case 'refund_issued': {
+        const isPartial = eventData.is_partial;
+        return {
+          id: event.id,
+          order_id: event.order_id,
+          original_event_type: event.event_type,
+          display_type: isPartial ? 'partial_refund' : 'full_refund',
+          category: 'payment_status',
+          description: isPartial
+            ? `Partial refund: ${eventData.amount || 0} ${eventData.currency || ''}`
+            : `Full refund: ${eventData.amount || 0} ${eventData.currency || ''}`,
+          done_by: doneBy,
+          created_at: event.created_at,
+          event_data: eventData,
+        };
+      }
+
+      // Hidden events (tracked in inventory timeline)
+      case 'ingredient_wasted':
+      case 'ingredient_returned':
+        return null;
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Format user name for display
+   */
+  private formatDoneBy(event: TimelineEvent): string | null {
+    if (!event.user) return null;
+    const user = event.user;
+    if (user.first_name && user.last_name) {
+      return `${user.first_name} ${user.last_name}`;
+    }
+    if (user.first_name) return user.first_name;
+    if (user.username) return user.username;
+    return null;
   }
 }
 

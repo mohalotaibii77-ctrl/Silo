@@ -127,11 +127,11 @@ async function testBusinessUsers(ctx: TestContext): Promise<{ userId: number | n
     track(assertStatus(duplicateUser, 400, 'POST /business-users - Validation (duplicate username)'));
   }
   
-  // Not found test
-  const notFound = await apiRequest(ctx, 'PUT', '/business-users/999999', {
+  // Not found test (use -1 to guarantee not found)
+  const notFound = await apiRequest(ctx, 'PUT', '/business-users/-1', {
     first_name: 'Test',
   });
-  track(assertStatus(notFound, 404, 'PUT /business-users/999999 - Not found'));
+  track(assertStatus(notFound, 404, 'PUT /business-users/-1 - Not found'));
   
   return { userId: testUserId };
 }
@@ -320,8 +320,8 @@ async function cleanupTestData(ctx: TestContext, userId: number | null): Promise
   }
   
   // Try to delete non-existent user
-  const deleteNotFound = await apiRequest(ctx, 'DELETE', '/business-users/999999');
-  track(assertStatus(deleteNotFound, 404, 'DELETE /business-users/999999 - Not found'));
+  const deleteNotFound = await apiRequest(ctx, 'DELETE', '/business-users/-1');
+  track(assertStatus(deleteNotFound, 404, 'DELETE /business-users/-1 - Not found'));
 }
 
 // ============================================

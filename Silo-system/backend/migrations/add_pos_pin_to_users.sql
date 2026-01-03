@@ -24,3 +24,4 @@ COMMENT ON COLUMN business_users.pos_pin_hash IS 'Bcrypt hash of the POS PIN for
 
 
 
+

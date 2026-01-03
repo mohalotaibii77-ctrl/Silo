@@ -206,7 +206,7 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
 
     const { data: users, error } = await supabase
       .from('business_users')
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, last_login, created_at, pos_pin')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, last_login, created_at, pos_pin, branch_id')
       .eq('business_id', businessId)
       .order('created_at', { ascending: true });
 
@@ -228,7 +228,7 @@ router.get('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respon
 router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const businessId = req.businessUser?.business_id;
-    const { username, role, first_name, last_name, email, phone, permissions } = req.body;
+    const { username, role, first_name, last_name, email, phone, permissions, branch_id } = req.body;
 
     if (!username || !username.trim()) {
       return res.status(400).json({ error: 'Username is required' });
@@ -294,6 +294,7 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
       .from('business_users')
       .insert({
         business_id: businessId,
+        branch_id: branch_id || null,
         username: username.trim(),
         password_hash,
         role,
@@ -306,7 +307,7 @@ router.post('/', authenticateOwner, async (req: AuthenticatedRequest, res: Respo
         password_changed: false, // Requires password change on first login
         pos_pin: posPin,
       })
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin, branch_id')
       .single();
 
     if (error) throw error;
@@ -337,7 +338,7 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
     const businessId = req.businessUser?.business_id;
     const currentUserId = req.businessUser?.id;
     const userId = parseInt(req.params.id);
-    const { username, role, first_name, last_name, email, phone, status, permissions } = req.body;
+    const { username, role, first_name, last_name, email, phone, status, permissions, branch_id } = req.body;
 
     // Check if user belongs to this business
     const { data: user } = await supabase
@@ -396,6 +397,7 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
     if (email !== undefined) updateData.email = email?.trim() || null;
     if (phone !== undefined) updateData.phone = phone?.trim() || null;
     if (status !== undefined && user.role !== 'owner') updateData.status = status;
+    if (branch_id !== undefined) updateData.branch_id = branch_id || null;
     
     // Update permissions only for manager/employee roles
     const effectiveRole = role !== undefined ? role : user.role;
@@ -436,7 +438,7 @@ router.put('/:id', authenticateOwner, async (req: AuthenticatedRequest, res: Res
       .from('business_users')
       .update(updateData)
       .eq('id', userId)
-      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin')
+      .select('id, username, role, first_name, last_name, email, phone, status, permissions, created_at, pos_pin, branch_id')
       .single();
 
     if (error) throw error;

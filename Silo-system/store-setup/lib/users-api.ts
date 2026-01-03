@@ -56,6 +56,7 @@ export interface BusinessUser {
   status: 'active' | 'inactive' | 'suspended';
   permissions?: UserPermissions | null;  // Only for manager/employee roles
   pos_pin?: string | null;  // POS PIN for quick authentication
+  branch_id?: number | null;  // Branch assignment for GPS check-in
   last_login?: string;
   created_at: string;
 }
@@ -68,6 +69,7 @@ export interface CreateUserData {
   email?: string;
   phone?: string;
   permissions?: UserPermissions;  // Only for manager/employee roles
+  branch_id?: number;  // Branch assignment for GPS check-in
 }
 
 export interface UpdateUserData {
@@ -79,6 +81,7 @@ export interface UpdateUserData {
   phone?: string;
   status?: 'active' | 'inactive' | 'suspended';
   permissions?: UserPermissions;  // Only for manager/employee roles
+  branch_id?: number;  // Branch assignment for GPS check-in
 }
 
 export interface UsersResponse {

@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  ScrollView, 
-  Platform, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Platform,
   RefreshControl,
   Animated,
   Modal,
@@ -13,8 +13,8 @@ import {
   Alert,
   Switch
 } from 'react-native';
-import { useTheme } from '../theme/ThemeContext';
-import { colors as staticColors } from '../theme/colors';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
@@ -53,6 +53,7 @@ interface UserPermissions {
 interface BusinessUser {
   id: number;
   business_id: number;
+  branch_id?: number | null;
   username: string;
   role: 'owner' | 'manager' | 'employee' | 'pos' | 'kitchen_display';
   first_name?: string | null;
@@ -87,7 +88,7 @@ const DEFAULT_EMPLOYEE_PERMISSIONS: UserPermissions = {
 };
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -103,20 +104,20 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const UserSkeleton = ({ styles }: { styles: any }) => (
+const UserSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.userCard}>
     <View style={styles.userCardContent}>
-      <Skeleton width={48} height={48} borderRadius={12} />
+      <Skeleton width={48} height={48} borderRadius={12} colors={colors} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Skeleton width="60%" height={18} style={{ marginBottom: 6 }} />
-        <Skeleton width="40%" height={14} />
+        <Skeleton width="60%" height={18} style={{ marginBottom: 6 }} colors={colors} />
+        <Skeleton width="40%" height={14} colors={colors} />
       </View>
-      <Skeleton width={32} height={32} borderRadius={8} />
+      <Skeleton width={32} height={32} borderRadius={8} colors={colors} />
     </View>
   </View>
 );
@@ -296,7 +297,19 @@ export default function StaffManagementScreen({ navigation }: any) {
 
     try {
       const shouldIncludePermissions = role === 'manager' || role === 'employee';
-      
+
+      // Get current branch from storage for auto-assignment
+      let currentBranchId: number | undefined;
+      try {
+        const userDataStr = await AsyncStorage.getItem('userData');
+        if (userDataStr) {
+          const userData = JSON.parse(userDataStr);
+          currentBranchId = userData.branch_id || undefined;
+        }
+      } catch {
+        // Ignore storage errors
+      }
+
       if (editingUser) {
         await api.put(`/business-users/${editingUser.id}`, {
           username: username.trim(),
@@ -307,6 +320,7 @@ export default function StaffManagementScreen({ navigation }: any) {
           phone: phone.trim() || undefined,
           status: editingUser.role === 'owner' ? undefined : status,
           permissions: shouldIncludePermissions && editingUser.role !== 'owner' ? permissions : undefined,
+          branch_id: currentBranchId,
         });
         setSuccessMessage(language === 'ar' ? 'تم تحديث المستخدم بنجاح' : 'User updated successfully');
       } else {
@@ -318,10 +332,11 @@ export default function StaffManagementScreen({ navigation }: any) {
           email: email.trim() || undefined,
           phone: phone.trim() || undefined,
           permissions: shouldIncludePermissions ? permissions : undefined,
+          branch_id: currentBranchId,
         });
         const defaultPassword = result.data.default_password || '90074007';
         setSuccessMessage(
-          language === 'ar' 
+          language === 'ar'
             ? `تم إنشاء المستخدم! كلمة المرور الافتراضية: ${defaultPassword}`
             : `User created! Default password: ${defaultPassword}`
         );
@@ -598,9 +613,9 @@ export default function StaffManagementScreen({ navigation }: any) {
         <View style={styles.usersList}>
           {loading ? (
             <>
-              <UserSkeleton styles={styles} />
-              <UserSkeleton styles={styles} />
-              <UserSkeleton styles={styles} />
+              <UserSkeleton styles={styles} colors={colors} />
+              <UserSkeleton styles={styles} colors={colors} />
+              <UserSkeleton styles={styles} colors={colors} />
             </>
           ) : (filteredUsers || []).length === 0 ? (
             <View style={styles.emptyState}>
@@ -801,7 +816,7 @@ export default function StaffManagementScreen({ navigation }: any) {
                             value={value}
                             onValueChange={(v) => setPermissions(prev => ({ ...prev, [key]: v }))}
                             trackColor={{ false: colors.border, true: colors.primary }}
-                            thumbColor="#fff"
+                            thumbColor={colors.background}
                           />
                         </View>
                       );
@@ -1282,7 +1297,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
 });
 

@@ -136,6 +136,19 @@ interface CartItem {
   bundleItems?: any[]; // Items included in the bundle for receipt
 }
 
+// Receipt settings from business configuration
+interface ReceiptSettings {
+  receipt_logo_url: string | null;
+  print_languages: string[];
+  main_language: string;
+  receipt_header: string;
+  receipt_footer: string;
+  show_order_number: boolean;
+  show_subtotal: boolean;
+  show_closer_username: boolean;
+  show_creator_username: boolean;
+}
+
 interface OrderType {
   type: 'dine_in' | 'takeaway' | 'delivery';
   tableNumber?: string;
@@ -191,6 +204,10 @@ export default function POSScreen({ navigation }: any) {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [user, setUser] = useState<any>(null);
   const [lastOrderNumber, setLastOrderNumber] = useState<string | null>(null);
+  const [lastOrderPayLater, setLastOrderPayLater] = useState(false); // Track if last order was pay-later
+  const [lastOrderTotal, setLastOrderTotal] = useState<number>(0); // Track order total for receipt
+  const [receiptSettings, setReceiptSettings] = useState<ReceiptSettings | null>(null); // Business receipt settings
+  const [lastOrderItems, setLastOrderItems] = useState<any[]>([]); // Track order items for receipt
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>(DEFAULT_CATEGORIES);
   const [loadingProducts, setLoadingProducts] = useState(true);
@@ -271,8 +288,9 @@ export default function POSScreen({ navigation }: any) {
   
   // Order timeline modal state
   const [showTimelineModal, setShowTimelineModal] = useState(false);
-  const [orderTimeline, setOrderTimeline] = useState<any[]>([]);
+  const [categorizedTimeline, setCategorizedTimeline] = useState<{ order_status: any[]; payment_status: any[] }>({ order_status: [], payment_status: [] });
   const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [activeTimelineTab, setActiveTimelineTab] = useState<'order_status' | 'payment_status'>('order_status');
   
   // ==================== LOCAL ORDER EDITING STATE ====================
   // All changes are staged locally until payment/refund is confirmed
@@ -434,52 +452,55 @@ export default function POSScreen({ navigation }: any) {
     }
   };
 
-  // Fetch order timeline
-  const fetchOrderTimeline = async (orderId: number) => {
+  // Fetch order timeline (categorized for tabbed display)
+  // showModal: if true (default), shows the timeline modal after fetching
+  const fetchOrderTimeline = async (orderId: number, showModal: boolean = true) => {
     try {
       setLoadingTimeline(true);
       const token = await AsyncStorage.getItem('token');
       if (!token || !API_URL) return;
 
-      const response = await fetch(`${API_URL}/pos/orders/${orderId}/timeline`, {
+      const response = await fetch(`${API_URL}/pos/orders/${orderId}/timeline/categorized`, {
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
 
       const result = await response.json();
-      
+
       if (result.success) {
-        setOrderTimeline(result.data || []);
-        setShowTimelineModal(true);
-      } else {
+        setCategorizedTimeline(result.data || { order_status: [], payment_status: [] });
+        if (showModal) {
+          setActiveTimelineTab('order_status'); // Reset to first tab
+          setShowTimelineModal(true);
+        }
+      } else if (showModal) {
         Alert.alert('Error', result.error || 'Failed to load timeline');
       }
     } catch (error) {
       console.error('Error fetching timeline:', error);
-      Alert.alert('Error', 'Failed to load timeline');
+      if (showModal) {
+        Alert.alert('Error', 'Failed to load timeline');
+      }
     } finally {
       setLoadingTimeline(false);
     }
   };
 
-  // Get timeline event color
-  const getTimelineEventColor = (eventType: string) => {
-    const colors: Record<string, string> = {
-      created: '#3b82f6',
-      item_added: '#10b981',
-      item_removed: '#ef4444',
-      item_modified: '#f59e0b',
-      status_changed: '#8b5cf6',
-      payment_received: '#22c55e',
-      payment_updated: '#f59e0b',
-      cancelled: '#ef4444',
-      completed: '#22c55e',
-      picked_up: '#10b981',
-      ingredient_wasted: '#ef4444',
-      ingredient_returned: '#3b82f6',
+  // Get timeline event color based on simplified display_type
+  const getTimelineEventColor = (displayType: string) => {
+    const eventColors: Record<string, string> = {
+      created: '#3b82f6',           // Blue
+      edited: '#f59e0b',            // Amber
+      canceled: '#ef4444',          // Red
+      completed: '#22c55e',         // Green
+      picked_up: '#10b981',         // Teal
+      paid: '#22c55e',              // Green
+      additional_payment: '#3b82f6', // Blue
+      partial_refund: '#f97316',    // Orange
+      full_refund: '#ef4444',       // Red
     };
-    return colors[eventType] || '#6b7280';
+    return eventColors[displayType] || '#6b7280';
   };
 
   // Format timeline event description
@@ -538,6 +559,35 @@ export default function POSScreen({ navigation }: any) {
     return null;
   };
 
+  // Get current user's display name for receipts
+  const getCurrentUserDisplayName = (): string => {
+    if (!user) return '';
+    // Use selected POS employee name if available (for PIN-authenticated sessions)
+    if (selectedPosEmployee) {
+      if (selectedPosEmployee.first_name && selectedPosEmployee.last_name) {
+        return `${selectedPosEmployee.first_name} ${selectedPosEmployee.last_name}`;
+      }
+      if (selectedPosEmployee.first_name) return selectedPosEmployee.first_name;
+      if (selectedPosEmployee.username) return selectedPosEmployee.username;
+    }
+    // Fall back to logged-in user
+    if (user.first_name && user.last_name) {
+      return `${user.first_name} ${user.last_name}`;
+    }
+    if (user.first_name) return user.first_name;
+    if (user.username) return user.username;
+    return '';
+  };
+
+  // Get creator name from order timeline (first 'created' event)
+  const getCreatorNameFromTimeline = (): string => {
+    const createdEvent = categorizedTimeline.order_status.find(e => e.display_type === 'created');
+    if (createdEvent && createdEvent.done_by) {
+      return createdEvent.done_by;
+    }
+    return '';
+  };
+
   // Load orders when orders tab is selected or filter changes
   useEffect(() => {
     if (activeSidebarTab === 'orders') {
@@ -547,6 +597,14 @@ export default function POSScreen({ navigation }: any) {
       return () => clearInterval(refreshInterval);
     }
   }, [activeSidebarTab, ordersFilter]);
+
+  // Auto-load timeline when viewing an order (for creator name on receipts)
+  useEffect(() => {
+    if (selectedOrderForView?.id && showOrderDetailsModal) {
+      // Pre-fetch timeline in background for receipt printing (don't show modal)
+      fetchOrderTimeline(selectedOrderForView.id, false);
+    }
+  }, [selectedOrderForView?.id, showOrderDetailsModal]);
 
   // Load an order into the cart for editing
   const loadOrderForEditing = (order: any) => {
@@ -1129,7 +1187,10 @@ export default function POSScreen({ navigation }: any) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...payload,
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
+        }),
       });
       
       const editResult = await editResponse.json();
@@ -1153,6 +1214,7 @@ export default function POSScreen({ navigation }: any) {
             amount_received: paymentDetails.amount_received,
             change_given: paymentDetails.change_given,
             pos_session_id: posSession?.id,
+            cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
           }),
         });
       }
@@ -1243,6 +1305,7 @@ export default function POSScreen({ navigation }: any) {
             body: JSON.stringify({
               amount: refundAmount,
               reason: 'Order edited - customer refund',
+              cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
             }),
           });
           
@@ -1357,6 +1420,7 @@ export default function POSScreen({ navigation }: any) {
             order_item_id: orderItemId,
             variant_id: newVariantId,
           }],
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
         }),
       });
       
@@ -1480,6 +1544,7 @@ export default function POSScreen({ navigation }: any) {
           products_to_add: products_to_add.length > 0 ? products_to_add : undefined,
           products_to_remove: products_to_remove.length > 0 ? products_to_remove : undefined,
           products_to_modify: products_to_modify.length > 0 ? products_to_modify : undefined,
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
         }),
       });
 
@@ -1534,7 +1599,10 @@ export default function POSScreen({ navigation }: any) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ reason: 'Cancelled by cashier' }),
+        body: JSON.stringify({
+          reason: 'Cancelled by cashier',
+          cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
+        }),
       });
 
       const result = await response.json();
@@ -1567,6 +1635,7 @@ export default function POSScreen({ navigation }: any) {
   useEffect(() => {
     loadUser();
     loadBusinessSettings();
+    loadReceiptSettings(); // Load receipt print settings
     loadProducts();
     loadProductAvailability(); // Load stock availability for cart limits
     loadDeliveryPartners();
@@ -1574,10 +1643,11 @@ export default function POSScreen({ navigation }: any) {
     loadDrivers();
     checkPosSession(); // Check if there's an active POS session
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    
+
     // Refresh business settings when screen comes into focus (for updated VAT, currency, etc.)
     const unsubscribe = navigation.addListener('focus', () => {
       loadBusinessSettings();
+      loadReceiptSettings();
       loadDeliveryPartners();
       loadRestaurantTables();
       loadDrivers();
@@ -1963,6 +2033,366 @@ export default function POSScreen({ navigation }: any) {
       }
     } catch (error) {
       console.error('Error loading business settings:', error);
+    }
+  };
+
+  // Load receipt settings for printing
+  const loadReceiptSettings = async () => {
+    try {
+      const token = await AsyncStorage.getItem('token');
+      if (token && API_URL) {
+        const response = await fetch(`${API_URL}/business-settings/receipt`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const result = await response.json();
+        if (result.success && result.data) {
+          setReceiptSettings(result.data);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading receipt settings:', error);
+    }
+  };
+
+  // Print receipt using business settings
+  const printReceipt = (
+    orderNumber: string,
+    orderTotal: number,
+    orderItems: any[],
+    orderDate?: Date,
+    isPaid?: boolean,
+    creatorName?: string,
+    closerName?: string
+  ) => {
+    if (Platform.OS !== 'web') {
+      Alert.alert('Print', 'Printing is currently only supported on web browsers.');
+      return;
+    }
+
+    const settings = receiptSettings || {
+      receipt_logo_url: null,
+      print_languages: ['en'],
+      main_language: 'en',
+      receipt_header: '',
+      receipt_footer: '',
+      show_order_number: true,
+      show_subtotal: true,
+      show_closer_username: false,
+      show_creator_username: false,
+    };
+
+    const isBilingual = settings.print_languages.length > 1 && settings.print_languages.includes('ar');
+    const date = orderDate || new Date();
+    const formattedDate = date.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const formattedTime = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    // Extract display number from full order number (e.g., "ORD-20260102-0003-3RB" -> "3")
+    const displayNumber = orderNumber.includes('-')
+      ? parseInt(orderNumber.split('-')[2] || '0', 10).toString()
+      : orderNumber;
+
+    // Generate items HTML
+    let itemsHtml = '';
+    orderItems.forEach((item: any) => {
+      const itemName = item.product_name || item.name || 'Item';
+      const itemNameAr = item.product_name_ar || item.name_ar || '';
+      const qty = item.quantity || 1;
+      const price = parseFloat(item.total_price || item.totalPrice || item.unit_price * qty || 0);
+
+      itemsHtml += `
+        <div class="item-row">
+          <span class="item-qty">${qty}x</span>
+          <span class="item-name">${itemName}</span>
+          <span class="item-price">${price.toFixed(2)}</span>
+        </div>
+      `;
+
+      // Show Arabic name on second line if bilingual
+      if (isBilingual && itemNameAr) {
+        itemsHtml += `
+          <div class="item-row item-ar">
+            <span class="item-qty">${qty}x</span>
+            <span class="item-name">${itemNameAr}</span>
+            <span class="item-price"></span>
+          </div>
+        `;
+      }
+
+      // Show modifiers if any
+      if (item.addedModifiers && item.addedModifiers.length > 0) {
+        item.addedModifiers.forEach((mod: any) => {
+          itemsHtml += `
+            <div class="modifier-row">
+              <span>  + ${mod.name}${mod.quantity > 1 ? ` x${mod.quantity}` : ''}</span>
+              <span>${(mod.price * (mod.quantity || 1)).toFixed(2)}</span>
+            </div>
+          `;
+        });
+      }
+      if (item.removedModifiers && item.removedModifiers.length > 0) {
+        item.removedModifiers.forEach((mod: string) => {
+          itemsHtml += `<div class="modifier-row">  - No ${mod}</div>`;
+        });
+      }
+    });
+
+    // Calculate subtotal if VAT enabled and show_subtotal is true
+    let subtotalHtml = '';
+    if (settings.show_subtotal && vatEnabled && taxRate > 0) {
+      const subtotal = orderTotal / (1 + taxRate / 100);
+      const taxAmount = orderTotal - subtotal;
+      subtotalHtml = `
+        <div class="subtotal-section">
+          <div class="subtotal-row">
+            <span>Subtotal</span>
+            <span>${subtotal.toFixed(2)}</span>
+          </div>
+          <div class="subtotal-row">
+            <span>Tax (${taxRate}%)</span>
+            <span>${taxAmount.toFixed(2)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // Creator/Closer info
+    let staffHtml = '';
+    if (settings.show_creator_username && creatorName) {
+      staffHtml += `<div class="staff-row">Created by: ${creatorName}</div>`;
+    }
+    if (settings.show_closer_username && closerName) {
+      staffHtml += `<div class="staff-row">Closed by: ${closerName}</div>`;
+    }
+
+    // QR Code using QR Server API (Google Charts API is deprecated)
+    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(orderNumber)}`;
+
+    // Build the receipt HTML matching the preview style
+    const receiptHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>Receipt - ${orderNumber}</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body {
+            font-family: 'Courier New', 'Lucida Console', monospace;
+            font-size: 13px;
+            width: 80mm;
+            max-width: 300px;
+            padding: 15px;
+            margin: 0 auto;
+            background: #fff;
+            color: #333;
+          }
+          .receipt {
+            width: 100%;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 15px;
+          }
+          .logo {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+            margin-bottom: 10px;
+          }
+          .header-text {
+            font-size: 13px;
+            color: #4a9d8e;
+            margin-top: 8px;
+          }
+          .divider {
+            border: none;
+            border-top: 1px dashed #ccc;
+            margin: 12px 0;
+          }
+          .order-info {
+            text-align: center;
+            margin-bottom: 5px;
+          }
+          .order-number {
+            font-size: 15px;
+            font-weight: bold;
+            color: #333;
+          }
+          .order-date {
+            font-size: 12px;
+            color: #888;
+            margin-top: 3px;
+          }
+          .items {
+            margin: 15px 0;
+          }
+          .item-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 13px;
+          }
+          .item-row.item-ar {
+            color: #666;
+            font-size: 11px;
+            margin-top: -2px;
+            margin-bottom: 6px;
+          }
+          .item-qty {
+            width: 30px;
+            flex-shrink: 0;
+          }
+          .item-name {
+            flex: 1;
+          }
+          .item-price {
+            text-align: right;
+            min-width: 50px;
+          }
+          .modifier-row {
+            font-size: 11px;
+            color: #666;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+          }
+          .subtotal-section {
+            padding-top: 10px;
+            border-top: 1px dashed #ccc;
+          }
+          .subtotal-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 3px;
+          }
+          .total-section {
+            margin-top: 8px;
+          }
+          .total-row {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 16px;
+          }
+          .staff-section {
+            text-align: center;
+            margin: 15px 0;
+            padding-top: 10px;
+            border-top: 1px dashed #ccc;
+          }
+          .staff-row {
+            font-size: 12px;
+            color: #666;
+          }
+          .qr-section {
+            text-align: center;
+            margin: 15px 0;
+            padding: 10px 0;
+          }
+          .qr-code {
+            width: 120px;
+            height: 120px;
+          }
+          .qr-hint {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+          }
+          .footer {
+            text-align: center;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px dashed #ccc;
+            font-size: 13px;
+            color: #4a9d8e;
+          }
+          @media print {
+            body {
+              width: 80mm;
+              max-width: none;
+              padding: 5px;
+            }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="receipt">
+          <!-- Header with Logo -->
+          <div class="header">
+            ${settings.receipt_logo_url ? `<img src="${settings.receipt_logo_url}" class="logo" alt="Logo" />` : ''}
+            ${settings.receipt_header ? `<div class="header-text">${settings.receipt_header}</div>` : ''}
+          </div>
+
+          <hr class="divider" />
+
+          <!-- Order Info -->
+          ${settings.show_order_number ? `
+            <div class="order-info">
+              <div class="order-number">Order #${displayNumber}</div>
+              <div class="order-date">${formattedDate} - ${formattedTime}</div>
+            </div>
+          ` : ''}
+
+          <!-- Items -->
+          <div class="items">
+            ${itemsHtml}
+          </div>
+
+          <!-- Subtotal & Tax -->
+          ${subtotalHtml}
+
+          <!-- Total -->
+          <div class="total-section">
+            <div class="total-row">
+              <span>Total</span>
+              <span>${orderTotal.toFixed(2)}</span>
+            </div>
+          </div>
+
+          <!-- Staff Info -->
+          ${staffHtml ? `<div class="staff-section">${staffHtml}</div>` : ''}
+
+          <!-- QR Code -->
+          <div class="qr-section">
+            <img src="${qrCodeUrl}" class="qr-code" alt="QR Code" />
+          </div>
+
+          <!-- Footer -->
+          ${settings.receipt_footer ? `
+            <div class="footer">${settings.receipt_footer}</div>
+          ` : ''}
+        </div>
+
+        <script>
+          window.onload = function() {
+            // Wait for images to load before printing
+            setTimeout(function() {
+              window.print();
+              window.onafterprint = function() {
+                window.close();
+              };
+            }, 500);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    // Open print window
+    const printWindow = window.open('', '_blank', 'width=350,height=700');
+    if (printWindow) {
+      printWindow.document.write(receiptHtml);
+      printWindow.document.close();
+    } else {
+      if (Platform.OS === 'web') {
+        window.alert('Could not open print window. Please allow popups for this site.');
+      } else {
+        Alert.alert('Error', 'Could not open print window. Please allow popups for this site.');
+      }
     }
   };
 
@@ -2955,7 +3385,10 @@ export default function POSScreen({ navigation }: any) {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+              ...payload,
+              cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
+            }),
           });
 
           const editResult = await editResponse.json();
@@ -2979,6 +3412,8 @@ export default function POSScreen({ navigation }: any) {
             change_given: cashDetails?.change_given,
             pos_session_id: posSession?.id,
             is_extra_payment: true,
+            // Use selected employee ID, or fallback to session's cashier_id (for restored sessions)
+            cashier_id: selectedPosEmployee?.id || posSession?.cashier_id,
           }),
         });
         
@@ -3115,6 +3550,9 @@ export default function POSScreen({ navigation }: any) {
 
       // Order created successfully - payment already processed inline by backend
       setLastOrderNumber(result.data.order_number || result.data.display_number);
+      setLastOrderPayLater(method === 'pay_later'); // Track if this was a pay-later order
+      setLastOrderTotal(total); // Store order total for receipt
+      setLastOrderItems([...cart]); // Store order items for printing
       setShowPaymentModal(false);
       setShowReceiptModal(true);
 
@@ -3143,6 +3581,9 @@ export default function POSScreen({ navigation }: any) {
     // Reset order type completely - clear table and delivery selections
     setOrderType({ type: 'dine_in', tableId: undefined, tableNumber: undefined, deliveryMethod: undefined });
     setLastOrderNumber(null);
+    setLastOrderPayLater(false); // Reset pay-later flag
+    setLastOrderTotal(0); // Reset order total
+    setLastOrderItems([]); // Reset order items
     // Refresh product availability after order (stock has changed)
     setAvailabilityLoaded(false); // Mark as not loaded so it refreshes
     loadProductAvailability();
@@ -5384,10 +5825,10 @@ export default function POSScreen({ navigation }: any) {
         </TouchableOpacity>
       </Modal>
 
-      {/* Receipt Modal - only show when we have a valid amount to display */}
+      {/* Receipt Modal - only show when we have a valid order */}
       {/* Using animationType="none" to prevent ghost popup (0 KD flash) during close animation */}
       <Modal
-        visible={showReceiptModal && (lastPaymentAmount !== null || lastOrderTotal > 0)}
+        visible={showReceiptModal && lastOrderNumber !== null}
         transparent
         animationType="none"
         onRequestClose={completeOrder}
@@ -5402,11 +5843,18 @@ export default function POSScreen({ navigation }: any) {
               <View style={styles.receiptIcon}>
                 <CheckCircle size={40} color="#22c55e" />
               </View>
-              <Text style={styles.receiptTitle}>Payment Successful</Text>
+              <Text style={styles.receiptTitle}>
+                {lastOrderPayLater ? 'Order Created' : 'Payment Successful'}
+              </Text>
               <Text style={styles.receiptOrderNumber}>
                 Order #{lastOrderNumber}
               </Text>
-              <Text style={styles.receiptTotal}>{formatCurrency(total)}</Text>
+              <Text style={styles.receiptTotal}>{formatCurrency(lastOrderTotal || total)}</Text>
+              {lastOrderPayLater && (
+                <Text style={{ color: '#d97706', fontSize: 14, marginTop: 8 }}>
+                  Payment pending - customer will pay after dining
+                </Text>
+              )}
 
               {/* QR Code for order completion scanning */}
               {lastOrderNumber && QRCode && (
@@ -5424,7 +5872,23 @@ export default function POSScreen({ navigation }: any) {
               )}
 
               <View style={styles.receiptActions}>
-                <TouchableOpacity style={styles.printBtn}>
+                <TouchableOpacity
+                  style={styles.printBtn}
+                  onPress={() => {
+                    if (lastOrderNumber) {
+                      const currentUserName = getCurrentUserDisplayName();
+                      printReceipt(
+                        lastOrderNumber,
+                        lastOrderTotal || total,
+                        lastOrderItems.length > 0 ? lastOrderItems : cart,
+                        new Date(),
+                        !lastOrderPayLater,
+                        currentUserName, // Creator is current user for new orders
+                        currentUserName  // Closer is also current user for new orders
+                      );
+                    }
+                  }}
+                >
                   <Printer size={18} color={colors.foreground} />
                   <Text style={styles.printBtnText}>Print Receipt</Text>
                 </TouchableOpacity>
@@ -6513,14 +6977,62 @@ export default function POSScreen({ navigation }: any) {
                       </TouchableOpacity>
                     )}
                     
-                    {/* Close button */}
+                    {/* Action buttons when no changes */}
                     {!hasChanges && (
-                      <TouchableOpacity
-                        style={{ backgroundColor: colors.muted, padding: 14, borderRadius: 10, alignItems: 'center' }}
-                        onPress={() => setShowOrderDetailsModal(false)}
-                      >
-                        <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
-                      </TouchableOpacity>
+                      <View style={{ gap: 10 }}>
+                        {/* Charge button - for unpaid orders */}
+                        {selectedOrderForView.payment_status !== 'paid' &&
+                         selectedOrderForView.payment_status !== 'app_payment' && (
+                          <TouchableOpacity
+                            style={{ backgroundColor: '#059669', padding: 14, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                            onPress={() => {
+                              // Set up for payment - charge full order total for unpaid orders
+                              setPendingOrderEdit({
+                                orderId: selectedOrderForView.id,
+                                itemId: 0,
+                                extraCost: parseFloat(selectedOrderForView.total_amount || 0),
+                                modifications: {}
+                              });
+                              setShowOrderDetailsModal(false); // Close order details first
+                              setShowPaymentModal(true);
+                            }}
+                          >
+                            <CreditCard size={18} color="#fff" />
+                            <Text style={{ color: '#fff', fontWeight: '600' }}>Charge {formatCurrency(selectedOrderForView.total_amount)}</Text>
+                          </TouchableOpacity>
+                        )}
+
+                        {/* Print Receipt button - always visible */}
+                        <TouchableOpacity
+                          style={{ backgroundColor: colors.secondary, padding: 14, borderRadius: 10, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8, borderWidth: 1, borderColor: colors.border }}
+                          onPress={() => {
+                            // Print receipt using business settings
+                            // For existing orders: creator from timeline, closer is current user
+                            const creatorName = getCreatorNameFromTimeline();
+                            const closerName = getCurrentUserDisplayName();
+                            printReceipt(
+                              selectedOrderForView.order_number,
+                              parseFloat(selectedOrderForView.total_amount || 0),
+                              selectedOrderForView.order_items || [],
+                              new Date(selectedOrderForView.created_at),
+                              selectedOrderForView.payment_status === 'paid',
+                              creatorName,
+                              closerName
+                            );
+                          }}
+                        >
+                          <Printer size={18} color={colors.foreground} />
+                          <Text style={{ color: colors.foreground, fontWeight: '600' }}>Print Receipt</Text>
+                        </TouchableOpacity>
+
+                        {/* Close button */}
+                        <TouchableOpacity
+                          style={{ backgroundColor: colors.muted, padding: 14, borderRadius: 10, alignItems: 'center' }}
+                          onPress={() => setShowOrderDetailsModal(false)}
+                        >
+                          <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
+                        </TouchableOpacity>
+                      </View>
                     )}
                   </View>
                 </>
@@ -6696,20 +7208,20 @@ export default function POSScreen({ navigation }: any) {
         animationType="slide"
         onRequestClose={() => setShowTimelineModal(false)}
       >
-        <TouchableOpacity 
-          style={styles.modalOverlay} 
-          activeOpacity={1} 
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
           onPress={() => setShowTimelineModal(false)}
         >
-          <TouchableOpacity 
-            activeOpacity={1} 
+          <TouchableOpacity
+            activeOpacity={1}
             style={[styles.modalContent, { width: isTablet ? 450 : width - 32, maxHeight: '80%' }]}
           >
             {/* Header */}
-            <View style={[styles.modalHeader, { borderBottomWidth: 1, borderBottomColor: colors.border }]}>
+            <View style={[styles.modalHeader, { borderBottomWidth: 0 }]}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Clock size={20} color={colors.foreground} />
-                <Text style={styles.modalTitle}>Order Timeline</Text>
+                <Text style={styles.modalTitle}>{t('Order Timeline', 'الجدول الزمني للطلب')}</Text>
               </View>
               <TouchableOpacity
                 style={styles.closeBtn}
@@ -6719,17 +7231,65 @@ export default function POSScreen({ navigation }: any) {
               </TouchableOpacity>
             </View>
 
+            {/* Timeline Tabs */}
+            <View style={{ flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  backgroundColor: activeTimelineTab === 'order_status' ? colors.primary : colors.muted,
+                }}
+                onPress={() => setActiveTimelineTab('order_status')}
+              >
+                <Text style={{
+                  color: activeTimelineTab === 'order_status' ? '#fff' : colors.foreground,
+                  fontWeight: '600',
+                  fontSize: 13,
+                }}>
+                  {t('Order Status', 'حالة الطلب')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  backgroundColor: activeTimelineTab === 'payment_status' ? colors.primary : colors.muted,
+                }}
+                onPress={() => setActiveTimelineTab('payment_status')}
+              >
+                <Text style={{
+                  color: activeTimelineTab === 'payment_status' ? '#fff' : colors.foreground,
+                  fontWeight: '600',
+                  fontSize: 13,
+                }}>
+                  {t('Payment Status', 'حالة الدفع')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {/* Timeline Content */}
             <ScrollView style={{ flex: 1, padding: 16 }} showsVerticalScrollIndicator={false}>
-              {orderTimeline.length === 0 ? (
-                <Text style={{ color: colors.mutedForeground, textAlign: 'center', padding: 20 }}>
-                  No timeline events
-                </Text>
-              ) : (
-                orderTimeline.map((event: any, index: number) => {
-                  const eventColor = getTimelineEventColor(event.event_type);
-                  const isLast = index === orderTimeline.length - 1;
-                  
+              {(() => {
+                const timelineEvents = activeTimelineTab === 'order_status'
+                  ? categorizedTimeline.order_status
+                  : categorizedTimeline.payment_status;
+
+                if (timelineEvents.length === 0) {
+                  return (
+                    <Text style={{ color: colors.mutedForeground, textAlign: 'center', padding: 20 }}>
+                      {t('No events', 'لا توجد أحداث')}
+                    </Text>
+                  );
+                }
+
+                return timelineEvents.map((event: any, index: number) => {
+                  const eventColor = getTimelineEventColor(event.display_type);
+                  const isLast = index === timelineEvents.length - 1;
+
                   return (
                     <View key={event.id || index} style={{ flexDirection: 'row', marginBottom: isLast ? 0 : 16 }}>
                       {/* Timeline line and dot */}
@@ -6749,30 +7309,30 @@ export default function POSScreen({ navigation }: any) {
                           }} />
                         )}
                       </View>
-                      
+
                       {/* Event content */}
                       <View style={{ flex: 1, paddingBottom: isLast ? 0 : 8 }}>
-                        <Text style={{ 
-                          color: colors.foreground, 
+                        <Text style={{
+                          color: colors.foreground,
                           fontWeight: '600',
                           fontSize: 14,
                           marginBottom: 2,
                         }}>
-                          {formatTimelineEvent(event)}
+                          {event.description}
                         </Text>
                         <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
                           {new Date(event.created_at).toLocaleString()}
                         </Text>
-                        {formatTimelineUser(event) && (
+                        {event.done_by && (
                           <Text style={{ color: colors.mutedForeground, fontSize: 11, marginTop: 2 }}>
-                            by {formatTimelineUser(event)}
+                            {t('done by', 'بواسطة')}: {event.done_by}
                           </Text>
                         )}
                       </View>
                     </View>
                   );
-                })
-              )}
+                });
+              })()}
             </ScrollView>
 
             {/* Close Button */}
@@ -6786,7 +7346,7 @@ export default function POSScreen({ navigation }: any) {
                 }}
                 onPress={() => setShowTimelineModal(false)}
               >
-                <Text style={{ color: colors.foreground, fontWeight: '600' }}>Close</Text>
+                <Text style={{ color: colors.foreground, fontWeight: '600' }}>{t('Close', 'إغلاق')}</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>

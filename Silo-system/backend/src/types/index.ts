@@ -575,6 +575,181 @@ export interface Shift extends BaseEntity {
   status: 'scheduled' | 'started' | 'completed' | 'absent';
 }
 
+// =====================================================
+// ATTENDANCE & GEOFENCING TYPES
+// =====================================================
+
+// GPS Location data from device
+export interface GPSLocation {
+  latitude: number;
+  longitude: number;
+  accuracy: number;  // GPS accuracy in meters
+}
+
+// Branch geofence configuration
+export interface BranchGeofence {
+  branch_id: number;
+  branch_name: string;
+  latitude: number | null;
+  longitude: number | null;
+  geofence_radius_meters: number;
+  geofence_enabled: boolean;
+}
+
+// Geofence settings from operational_settings
+export interface GeofenceSettings {
+  require_gps_checkin: boolean;
+  checkin_buffer_minutes_before: number;
+  checkin_buffer_minutes_after: number;
+  gps_accuracy_threshold_meters: number;
+  default_geofence_radius_meters: number;
+  working_days: string[];  // e.g., ["sunday", "monday", "tuesday", ...]
+  opening_time: string;    // HH:MM format
+  closing_time: string;    // HH:MM format
+}
+
+// Attendance status types
+export type AttendanceStatusType = 'on_time' | 'late' | 'absent' | 'checked_in' | 'checked_out' | 'rest_day';
+
+// Attendance record from database
+export interface AttendanceRecord {
+  id: number;
+  business_id: number;
+  branch_id: number | null;
+  employee_id: number;
+  date: string;  // YYYY-MM-DD
+
+  // Check-in data
+  checkin_time: string | null;
+  checkin_latitude: number | null;
+  checkin_longitude: number | null;
+  checkin_accuracy_meters: number | null;
+  checkin_distance_meters: number | null;
+  checkin_device_info: Record<string, unknown> | null;
+
+  // Check-out data
+  checkout_time: string | null;
+  checkout_latitude: number | null;
+  checkout_longitude: number | null;
+  checkout_accuracy_meters: number | null;
+  checkout_distance_meters: number | null;
+  checkout_device_info: Record<string, unknown> | null;
+
+  // Calculated fields
+  total_hours: number | null;
+  status: AttendanceStatusType;
+  late_minutes: number;
+
+  // Audit fields
+  notes: string | null;
+  adjusted_by: number | null;
+  adjustment_reason: string | null;
+
+  created_at: string;
+  updated_at: string;
+}
+
+// Check-in validation result
+export interface CheckInValidationResult {
+  valid: boolean;
+  error_code?: 'OUTSIDE_GEOFENCE' | 'OUTSIDE_WORKING_HOURS' | 'NOT_WORKING_DAY' |
+               'ALREADY_CHECKED_IN' | 'GPS_ACCURACY_LOW' | 'GEOFENCE_NOT_CONFIGURED' |
+               'PERMISSION_DENIED' | 'NOT_CHECKED_IN';
+  error_message?: string;
+  distance_meters?: number;
+  within_geofence?: boolean;
+  within_working_hours?: boolean;
+  is_working_day?: boolean;
+}
+
+// Check-in request from frontend
+export interface CheckInRequest {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  device_info?: {
+    platform: string;
+    os_version: string;
+    app_version: string;
+  };
+}
+
+// Check-in response
+export interface CheckInResponse {
+  success: boolean;
+  data?: {
+    attendance_id: number;
+    checkin_time: string;
+    distance_meters: number;
+    within_geofence: boolean;
+    branch_name: string;
+    status: AttendanceStatusType;
+    late_minutes: number;
+  };
+  error?: string;
+  error_code?: CheckInValidationResult['error_code'];
+}
+
+// Attendance history item (for employee view)
+export interface AttendanceHistoryItem {
+  date: string;           // YYYY-MM-DD
+  day_name: string;       // e.g., "Thursday"
+  checkin_time: string | null;   // HH:MM format
+  checkout_time: string | null;  // HH:MM format
+  total_hours: number | null;
+  status: AttendanceStatusType;
+  late_minutes: number;
+}
+
+// Attendance summary
+export interface AttendanceSummary {
+  total_days: number;
+  on_time: number;
+  late: number;
+  absent: number;
+  rest_days: number;
+}
+
+// Attendance history response
+export interface AttendanceHistoryResponse {
+  records: AttendanceHistoryItem[];
+  summary: AttendanceSummary;
+}
+
+// Employee schedule override (Special Attendance)
+export interface EmployeeScheduleOverride {
+  id: number;
+  business_id: number;
+  employee_id: number;
+
+  // Override values (null = use business default)
+  working_days: string[] | null;
+  opening_time: string | null;    // HH:MM format
+  closing_time: string | null;    // HH:MM format
+  checkin_buffer_minutes_before: number | null;
+  checkin_buffer_minutes_after: number | null;
+
+  notes: string | null;
+  is_active: boolean;
+
+  created_at: string;
+  updated_at: string;
+
+  // Populated when fetching with employee info
+  employee_name?: string;
+  employee_role?: string;
+}
+
+// Effective schedule (combined business default + employee override)
+export interface EffectiveSchedule {
+  working_days: string[];
+  opening_time: string;
+  closing_time: string;
+  checkin_buffer_minutes_before: number;
+  checkin_buffer_minutes_after: number;
+  has_override: boolean;
+}
+
 // Operations
 export interface Task extends BaseEntity {
   business_id: string;

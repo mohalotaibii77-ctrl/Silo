@@ -158,8 +158,8 @@ async function testStoreProducts(ctx: TestContext, categoryId: number | null): P
   track(assertStatus(missingPrice, 400, 'POST /store-products - Validation (missing price)'));
   
   // GET /api/store-products/:id - Not found
-  const notFound = await apiRequest(ctx, 'GET', '/store-products/999999');
-  track(assertStatus(notFound, 404, 'GET /store-products/999999 - Not found'));
+  const notFound = await apiRequest(ctx, 'GET', '/store-products/-1');
+  track(assertStatus(notFound, 404, 'GET /store-products/-1 - Not found'));
   
   return { productId, productId2 };
 }
@@ -260,8 +260,8 @@ async function testBundles(ctx: TestContext, productId: number | null, productId
   }
   
   // GET /api/bundles/:id - Not found
-  const notFound = await apiRequest(ctx, 'GET', '/bundles/999999');
-  track(assertStatus(notFound, 404, 'GET /bundles/999999 - Not found'));
+  const notFound = await apiRequest(ctx, 'GET', '/bundles/-1');
+  track(assertStatus(notFound, 404, 'GET /bundles/-1 - Not found'));
   
   return { bundleId };
 }

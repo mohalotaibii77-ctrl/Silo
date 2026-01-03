@@ -294,7 +294,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
         ]}>
           <Truck 
             size={24} 
-            color={partner.status === 'active' ? colors.success : colors.textSecondary} 
+            color={partner.status === 'active' ? colors.success : colors.mutedForeground} 
           />
         </View>
         <View style={[styles.partnerInfo, isRTL && { alignItems: 'flex-end' }]}>
@@ -310,13 +310,13 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
           </View>
           {partner.contact_person && (
             <View style={[styles.contactRow, isRTL && styles.contactRowRTL]}>
-              <User size={12} color={colors.textSecondary} />
+              <User size={12} color={colors.mutedForeground} />
               <Text style={styles.contactText}>{partner.contact_person}</Text>
             </View>
           )}
           {partner.phone && (
             <View style={[styles.contactRow, isRTL && styles.contactRowRTL]}>
-              <Phone size={12} color={colors.textSecondary} />
+              <Phone size={12} color={colors.mutedForeground} />
               <Text style={styles.contactText}>{partner.phone}</Text>
             </View>
           )}
@@ -327,9 +327,9 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
       <View style={[styles.detailsRow, isRTL && styles.detailsRowRTL]}>
         <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
           {partner.commission_type === 'percentage' ? (
-            <Percent size={14} color={colors.textSecondary} />
+            <Percent size={14} color={colors.mutedForeground} />
           ) : (
-            <Coins size={14} color={colors.textSecondary} />
+            <Coins size={14} color={colors.mutedForeground} />
           )}
           <Text style={styles.detailText}>
             {partner.commission_type === 'percentage' 
@@ -341,14 +341,14 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
         
         {partner.estimated_time && (
           <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
-            <Clock size={14} color={colors.textSecondary} />
+            <Clock size={14} color={colors.mutedForeground} />
             <Text style={styles.detailText}>{partner.estimated_time} {t('min', 'min')}</Text>
           </View>
         )}
         
         {partner.delivery_fee !== null && partner.delivery_fee !== undefined && (
           <View style={[styles.detailItem, isRTL && styles.detailItemRTL]}>
-            <Coins size={14} color={colors.textSecondary} />
+            <Coins size={14} color={colors.mutedForeground} />
             <Text style={styles.detailText}>{formatCurrency(partner.delivery_fee)}</Text>
           </View>
         )}
@@ -370,13 +370,13 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
           style={styles.actionButton}
           onPress={() => handleOpenModal(partner)}
         >
-          <Edit2 size={16} color={colors.textSecondary} />
+          <Edit2 size={16} color={colors.mutedForeground} />
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.actionButton}
           onPress={() => handleDelete(partner)}
         >
-          <Trash2 size={16} color={colors.error} />
+          <Trash2 size={16} color={colors.destructive} />
         </TouchableOpacity>
       </View>
     </View>
@@ -394,40 +394,40 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
           showsVerticalScrollIndicator={false}
         >
           {/* Header - scrolls with content */}
-          <View style={[styles.header, isRTL && styles.headerRTL]}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => safeGoBack(navigation)}
-            >
-              <BackIcon size={24} color={colors.text} />
-            </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>{t('deliveryPartners', 'Delivery Partners')}</Text>
-              <Text style={styles.headerSubtitle}>{t('manageDeliveryProviders', 'Manage delivery service providers')}</Text>
+          <View style={styles.header}>
+            <View style={[styles.headerTop, isRTL && styles.headerTopRTL]}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => safeGoBack(navigation)}
+              >
+                <BackIcon size={24} color={colors.foreground} />
+              </TouchableOpacity>
+              <View style={styles.headerCenter}>
+                <Text style={[styles.headerTitle, isRTL && styles.textRTL]}>{t('deliveryPartners', 'Delivery Partners')}</Text>
+                <Text style={[styles.headerSubtitle, isRTL && styles.textRTL]}>{t('manageDeliveryProviders', 'Manage delivery service providers')}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => handleOpenModal()}
+              >
+                <Plus size={20} color={colors.background} />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity 
-              style={styles.addButton}
-              onPress={() => handleOpenModal()}
-            >
-              <Plus size={20} color={colors.background} />
-            </TouchableOpacity>
-          </View>
 
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <View style={[styles.searchInputWrapper, isRTL && styles.searchInputWrapperRTL]}>
-              <Search size={18} color={colors.textSecondary} />
+            {/* Search */}
+            <View style={[styles.searchContainer, isRTL && styles.searchContainerRTL]}>
+              <Search size={18} color={colors.mutedForeground} />
               <TextInput
                 style={[styles.searchInput, isRTL && styles.textRTL]}
                 placeholder={t('searchPartners', 'Search partners...')}
-                placeholderTextColor={colors.textSecondary}
+                placeholderTextColor={colors.mutedForeground}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 textAlign={isRTL ? 'right' : 'left'}
               />
               {searchQuery ? (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <X size={18} color={colors.textSecondary} />
+                  <X size={18} color={colors.mutedForeground} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -488,7 +488,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                 {editingPartner ? t('editPartner', 'Edit Partner') : t('addPartner', 'Add Partner')}
               </Text>
               <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.textSecondary} />
+                <X size={20} color={colors.mutedForeground} />
               </TouchableOpacity>
             </View>
 
@@ -510,7 +510,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={name}
                     onChangeText={setName}
                     placeholder={t('egTalabat', 'e.g., Talabat, Deliveroo')}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     textAlign={isRTL ? 'right' : 'left'}
                   />
                 </View>
@@ -523,7 +523,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={nameAr}
                     onChangeText={setNameAr}
                     placeholder="طلبات"
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                   />
                 </View>
               </View>
@@ -538,7 +538,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={contactPerson}
                     onChangeText={setContactPerson}
                     placeholder={t('contactName', 'Contact name')}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     textAlign={isRTL ? 'right' : 'left'}
                   />
                 </View>
@@ -551,7 +551,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={phone}
                     onChangeText={setPhone}
                     placeholder="+965 XXXX XXXX"
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="phone-pad"
                   />
                 </View>
@@ -566,7 +566,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                   value={email}
                   onChangeText={setEmail}
                   placeholder="partner@example.com"
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   keyboardType="email-address"
                   autoCapitalize="none"
                 />
@@ -581,7 +581,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     style={[styles.commissionButton, commissionType === 'percentage' && styles.commissionButtonActive]}
                     onPress={() => setCommissionType('percentage')}
                   >
-                    <Percent size={16} color={commissionType === 'percentage' ? colors.background : colors.textSecondary} />
+                    <Percent size={16} color={commissionType === 'percentage' ? colors.background : colors.mutedForeground} />
                     <Text style={[styles.commissionButtonText, commissionType === 'percentage' && styles.commissionButtonTextActive]}>
                       {t('percentage', 'Percentage')}
                     </Text>
@@ -590,7 +590,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     style={[styles.commissionButton, commissionType === 'fixed' && styles.commissionButtonActive]}
                     onPress={() => setCommissionType('fixed')}
                   >
-                    <Coins size={16} color={commissionType === 'fixed' ? colors.background : colors.textSecondary} />
+                    <Coins size={16} color={commissionType === 'fixed' ? colors.background : colors.mutedForeground} />
                     <Text style={[styles.commissionButtonText, commissionType === 'fixed' && styles.commissionButtonTextActive]}>
                       {t('fixedAmount', 'Fixed Amount')}
                     </Text>
@@ -608,7 +608,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={commissionValue}
                     onChangeText={setCommissionValue}
                     placeholder={commissionType === 'percentage' ? '15' : '2.000'}
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="decimal-pad"
                   />
                 </View>
@@ -621,7 +621,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                     value={deliveryFee}
                     onChangeText={setDeliveryFee}
                     placeholder="1.000"
-                    placeholderTextColor={colors.textSecondary}
+                    placeholderTextColor={colors.mutedForeground}
                     keyboardType="decimal-pad"
                   />
                 </View>
@@ -636,7 +636,7 @@ export default function DeliveryPartnersScreen({ navigation }: any) {
                   value={estimatedTime}
                   onChangeText={setEstimatedTime}
                   placeholder="30"
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   keyboardType="numeric"
                 />
               </View>
@@ -674,16 +674,19 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
-    backgroundColor: colors.background,
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerRTL: {
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTopRTL: {
     flexDirection: 'row-reverse',
   },
   backButton: {
@@ -701,26 +704,22 @@ const createStyles = (colors: any) => StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   addButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     justifyContent: 'center',
     alignItems: 'center',
   },
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.secondary,
@@ -729,13 +728,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     height: 44,
     gap: 10,
   },
+  searchContainerRTL: {
+    flexDirection: 'row-reverse',
+  },
   searchInputWrapperRTL: {
     flexDirection: 'row-reverse',
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
   },
   filterContainer: {
     flexDirection: 'row',
@@ -756,7 +758,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.foreground,
   },
   filterTabText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: colors.mutedForeground,
   },
@@ -770,7 +772,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -781,7 +782,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -791,19 +792,19 @@ const createStyles = (colors: any) => StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 8,
     textAlign: 'center',
   },
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
@@ -817,6 +818,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   partnerGrid: {
     gap: 12,
+    paddingHorizontal: 16,
   },
   partnerCard: {
     backgroundColor: colors.surface,
@@ -865,17 +867,17 @@ const createStyles = (colors: any) => StyleSheet.create({
   partnerName: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   inactiveBadge: {
-    backgroundColor: colors.textSecondary + '30',
+    backgroundColor: colors.mutedForeground + '30',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
   },
   inactiveBadgeText: {
     fontSize: 10,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   contactRow: {
     flexDirection: 'row',
@@ -888,7 +890,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   contactText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   detailsRow: {
     flexDirection: 'row',
@@ -914,7 +916,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   detailText: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     fontWeight: '500',
   },
   partnerActions: {
@@ -971,7 +973,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   modalCloseButton: {
     width: 36,
@@ -985,16 +987,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     padding: 20,
   },
   errorBanner: {
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.destructive + '20',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: colors.error + '40',
+    borderColor: colors.destructive + '40',
   },
   errorText: {
     fontSize: 13,
-    color: colors.error,
+    color: colors.destructive,
   },
   formRow: {
     flexDirection: 'row',
@@ -1010,7 +1012,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   formLabel: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.text,
+    color: colors.foreground,
     marginBottom: 8,
   },
   formInput: {
@@ -1019,7 +1021,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -1043,12 +1045,12 @@ const createStyles = (colors: any) => StyleSheet.create({
     gap: 8,
   },
   commissionButtonActive: {
-    backgroundColor: colors.text,
-    borderColor: colors.text,
+    backgroundColor: colors.foreground,
+    borderColor: colors.foreground,
   },
   commissionButtonText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     fontWeight: '500',
   },
   commissionButtonTextActive: {
@@ -1077,10 +1079,10 @@ const createStyles = (colors: any) => StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   submitButton: {
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,

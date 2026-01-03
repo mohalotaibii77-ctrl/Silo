@@ -1,7 +1,10 @@
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+
+const SECURE_TOKEN_KEY = 'auth_token';
 
 /**
  * Backend API URL Configuration
@@ -20,27 +23,8 @@ import { Platform } from 'react-native';
  * - Mac/Linux: ifconfig or ip addr
  */
 const getApiBase = () => {
-  // First check environment variable
-  if (process.env.EXPO_PUBLIC_API_URL) {
-    return process.env.EXPO_PUBLIC_API_URL;
-  }
-  // On web, default to the same host as the current page (avoids LAN IP issues)
-  if (Platform.OS === 'web' && typeof window !== 'undefined') {
-    const host = window.location.hostname;
-    const protocol = window.location.protocol || 'http:';
-    // Expo web dev runs on localhost; backend is on the same machine
-    if (host === 'localhost' || host === '127.0.0.1') {
-      return 'http://localhost:9000';
-    }
-    // If user opened the web app via LAN IP, use that same LAN host for the backend
-    return `${protocol}//${host}:9000`;
-  }
-  // Then check app.json config
-  if (Constants.expoConfig?.extra?.apiUrl) {
-    return Constants.expoConfig.extra.apiUrl;
-  }
-  // Default fallback
-  return 'http://localhost:9000';
+  // Hardcoded LAN IP for development
+  return 'http://192.168.0.244:9000';
 };
 
 const API_BASE = getApiBase();
@@ -56,9 +40,40 @@ export const api = axios.create({
   timeout: 15000, // 15 seconds timeout for mobile networks
 });
 
+// Helper function to get token with migration from AsyncStorage to SecureStore
+const getAuthToken = async (): Promise<string | null> => {
+  try {
+    // First try SecureStore (preferred)
+    let token = await SecureStore.getItemAsync(SECURE_TOKEN_KEY);
+    if (token) {
+      return token;
+    }
+
+    // Fall back to AsyncStorage for backward compatibility
+    token = await AsyncStorage.getItem('token');
+    if (token) {
+      // Migrate token to SecureStore
+      try {
+        await SecureStore.setItemAsync(SECURE_TOKEN_KEY, token);
+        // Don't remove from AsyncStorage yet - other code may still use it
+        console.log('[Auth] Token migrated to SecureStore');
+      } catch (migrateError) {
+        console.warn('[Auth] Could not migrate token to SecureStore:', migrateError);
+      }
+      return token;
+    }
+
+    return null;
+  } catch (error) {
+    console.warn('[Auth] Error getting token:', error);
+    // Fall back to AsyncStorage if SecureStore fails
+    return AsyncStorage.getItem('token');
+  }
+};
+
 // Add auth token and business/branch headers to requests
 api.interceptors.request.use(async (config) => {
-  const token = await AsyncStorage.getItem('token');
+  const token = await getAuthToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
@@ -91,6 +106,33 @@ api.interceptors.request.use(async (config) => {
   
   return config;
 });
+
+// Store token securely (use this instead of AsyncStorage.setItem('token', ...))
+export const storeAuthToken = async (token: string): Promise<void> => {
+  try {
+    await SecureStore.setItemAsync(SECURE_TOKEN_KEY, token);
+    // Also store in AsyncStorage for backward compatibility
+    await AsyncStorage.setItem('token', token);
+  } catch (error) {
+    console.error('[Auth] Error storing token:', error);
+    // Fall back to AsyncStorage only
+    await AsyncStorage.setItem('token', token);
+  }
+};
+
+// Clear token from both storages
+export const clearAuthToken = async (): Promise<void> => {
+  try {
+    await SecureStore.deleteItemAsync(SECURE_TOKEN_KEY);
+    await AsyncStorage.removeItem('token');
+  } catch (error) {
+    console.error('[Auth] Error clearing token:', error);
+    await AsyncStorage.removeItem('token');
+  }
+};
+
+// Export the getAuthToken function for use elsewhere
+export { getAuthToken };
 
 export default api;
 

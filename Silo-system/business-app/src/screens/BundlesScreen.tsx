@@ -280,35 +280,35 @@ export default function BundlesScreen({ navigation }: any) {
   return (
     <View style={styles.container}>
       {/* Header */}
-      <View style={[styles.header, isRTL && styles.headerRTL]}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => safeGoBack(navigation)}
-        >
-          <BackIcon size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>{t('bundles', 'Bundles')}</Text>
-          <Text style={styles.headerSubtitle}>{t('productBundlesSoldTogether', 'Product bundles sold together')}</Text>
+      <View style={styles.header}>
+        <View style={[styles.headerTop, isRTL && styles.headerTopRTL]}>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => safeGoBack(navigation)}
+          >
+            <BackIcon size={24} color={colors.foreground} />
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={[styles.headerTitle, isRTL && styles.textRTL]}>{t('bundles', 'Bundles')}</Text>
+            <Text style={[styles.headerSubtitle, isRTL && styles.textRTL]}>{t('productBundlesSoldTogether', 'Product bundles sold together')}</Text>
+          </View>
+          <View style={styles.headerActions} />
         </View>
-        <View style={styles.headerActions} />
-      </View>
 
-      {/* Search */}
-      <View style={styles.searchContainer}>
-        <View style={[styles.searchInputWrapper, isRTL && styles.searchInputWrapperRTL]}>
-          <Search size={18} color={colors.textSecondary} />
+        {/* Search */}
+        <View style={[styles.searchContainer, isRTL && styles.searchContainerRTL]}>
+          <Search size={18} color={colors.mutedForeground} />
           <TextInput
             style={[styles.searchInput, isRTL && styles.textRTL]}
             placeholder={t('searchBundles', 'Search bundles...')}
-            placeholderTextColor={colors.textSecondary}
+            placeholderTextColor={colors.mutedForeground}
             value={searchQuery}
             onChangeText={setSearchQuery}
             textAlign={isRTL ? 'right' : 'left'}
           />
           {searchQuery ? (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <X size={18} color={colors.textSecondary} />
+              <X size={18} color={colors.mutedForeground} />
             </TouchableOpacity>
           ) : null}
         </View>
@@ -367,7 +367,7 @@ export default function BundlesScreen({ navigation }: any) {
                   style={[styles.modalCloseButton, isRTL ? { left: 16 } : { right: 16 }]}
                   onPress={() => setSelectedBundle(null)}
                 >
-                  <X size={20} color={colors.textSecondary} />
+                  <X size={20} color={colors.mutedForeground} />
                 </TouchableOpacity>
               </View>
 
@@ -430,7 +430,7 @@ export default function BundlesScreen({ navigation }: any) {
                 {/* Products in Bundle */}
                 <View style={styles.productsSection}>
                   <View style={[styles.productsSectionHeader, isRTL && styles.productsSectionHeaderRTL]}>
-                    <Package size={16} color={colors.textSecondary} />
+                    <Package size={16} color={colors.mutedForeground} />
                     <Text style={styles.productsSectionTitle}>{t('productsInBundle', 'Products in Bundle')}</Text>
                   </View>
 
@@ -475,7 +475,7 @@ export default function BundlesScreen({ navigation }: any) {
                   style={styles.deleteButton}
                   onPress={() => handleDelete(selectedBundle)}
                 >
-                  <Trash2 size={18} color={colors.error} />
+                  <Trash2 size={18} color={colors.destructive} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -492,16 +492,19 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
-    backgroundColor: colors.background,
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerRTL: {
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTopRTL: {
     flexDirection: 'row-reverse',
   },
   backButton: {
@@ -519,21 +522,17 @@ const createStyles = (colors: any) => StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   headerActions: {
     width: 40,
   },
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.secondary,
@@ -542,13 +541,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     height: 44,
     gap: 10,
   },
+  searchContainerRTL: {
+    flexDirection: 'row-reverse',
+  },
   searchInputWrapperRTL: {
     flexDirection: 'row-reverse',
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
   },
   content: {
     flex: 1,
@@ -557,7 +559,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -568,7 +569,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -578,12 +579,12 @@ const createStyles = (colors: any) => StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 8,
     textAlign: 'center',
   },
@@ -591,6 +592,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
+    paddingHorizontal: 16,
   },
   bundleCard: {
     width: '48%',
@@ -637,7 +639,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     bottom: 8,
     left: 8,
     right: 8,
-    backgroundColor: colors.textSecondary + 'E0',
+    backgroundColor: colors.mutedForeground + 'E0',
     paddingVertical: 4,
     borderRadius: 6,
     alignItems: 'center',
@@ -653,11 +655,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   bundleName: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
   },
   bundleItems: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   bundlePricing: {
@@ -672,11 +674,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   bundlePrice: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   bundleOriginalPrice: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     textDecorationLine: 'line-through',
   },
   bundleStats: {
@@ -698,12 +700,12 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   statLabel: {
     fontSize: 11,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   statValue: {
     fontSize: 11,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
   },
   marginGood: {
     color: colors.success,
@@ -712,7 +714,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     color: colors.warning,
   },
   marginLow: {
-    color: colors.error,
+    color: colors.destructive,
   },
   textRTL: {
     textAlign: 'right',
@@ -778,11 +780,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   modalSubtitle: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 4,
   },
   modalPriceContainer: {
@@ -791,11 +793,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   modalPrice: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   modalOriginalPrice: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     textDecorationLine: 'line-through',
     marginTop: 2,
   },
@@ -819,11 +821,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   statsValue: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   statsLabel: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 4,
   },
   productsSection: {
@@ -841,7 +843,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   productsSectionTitle: {
     fontSize: 14,
     fontWeight: '500',
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   productsList: {
     gap: 8,
@@ -888,21 +890,21 @@ const createStyles = (colors: any) => StyleSheet.create({
   productItemName: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.text,
+    color: colors.foreground,
   },
   productItemPrice: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   productItemTotal: {
     fontSize: 13,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
   },
   noProductsText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     textAlign: 'center',
     padding: 16,
     backgroundColor: colors.surface,
@@ -924,7 +926,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.destructive + '20',
     justifyContent: 'center',
     alignItems: 'center',
   },

@@ -14,3 +14,4 @@ COMMENT ON COLUMN operational_settings.pos_session_allowed_user_ids IS 'Array of
 
 
 
+

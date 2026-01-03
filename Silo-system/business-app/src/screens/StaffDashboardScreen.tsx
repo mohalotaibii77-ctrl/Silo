@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import { dataPreloader } from '../services/DataPreloader';
 import { useLocalization } from '../localization/LocalizationContext';
-import { 
+import { attendanceService, AttendanceErrorCode } from '../services/AttendanceService';
+import { locationService } from '../services/LocationService';
+import {
   Clock,
   LogIn,
   LogOut,
@@ -27,7 +29,9 @@ import {
   Bell,
   FolderTree,
   Boxes,
-  Command
+  Command,
+  Moon,
+  Sun
 } from 'lucide-react-native';
 
 interface Task {
@@ -59,13 +63,17 @@ interface UserData {
 }
 
 export default function StaffDashboardScreen({ navigation }: any) {
+  const { colors, isDark, toggleTheme } = useTheme();
   const { t, isRTL } = useLocalization();
   const [userName, setUserName] = useState('');
   const [userRole, setUserRole] = useState<string>('employee');
   const [permissions, setPermissions] = useState<UserPermissions>({});
   const [isClockedIn, setIsClockedIn] = useState(false);
   const [clockInTime, setClockInTime] = useState<string | null>(null);
-  
+  const [isLoading, setIsLoading] = useState(false);
+  const [attendanceStatus, setAttendanceStatus] = useState<string | null>(null);
+  const [lateMinutes, setLateMinutes] = useState<number>(0);
+
   // Sample tasks - in production these would come from the API
   const [tasks] = useState<Task[]>([
     { id: 1, title: 'Complete opening checklist', priority: 'high', completed: false, dueTime: '9:00 AM' },
@@ -73,9 +81,15 @@ export default function StaffDashboardScreen({ navigation }: any) {
     { id: 3, title: 'Clean prep area', priority: 'low', completed: true },
   ]);
 
+  const styles = createStyles(colors);
+
   useEffect(() => {
     loadUserData();
-    
+    loadAttendanceStatus();
+
+    // Request location permissions early for faster check-in
+    locationService.requestPermissions().catch(() => {});
+
     // Prefetch management screens data in background for instant navigation
     dataPreloader.prefetch([
       'Orders', 'Items', 'Products', 'Inventory',
@@ -83,12 +97,36 @@ export default function StaffDashboardScreen({ navigation }: any) {
     ]).catch(() => {});
   }, []);
 
+  const loadAttendanceStatus = async () => {
+    try {
+      const result = await attendanceService.getStatus();
+      if (result.success && result.data) {
+        const status = result.data.status;
+        if (status === 'checked_in') {
+          setIsClockedIn(true);
+          if (result.data.checkin_time) {
+            const time = new Date(result.data.checkin_time);
+            setClockInTime(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+          }
+          setLateMinutes(result.data.late_minutes || 0);
+          setAttendanceStatus(result.data.late_minutes > 0 ? 'late' : 'on_time');
+        } else if (status === 'on_time' || status === 'late' || status === 'checked_out') {
+          // Already checked out today
+          setIsClockedIn(false);
+          setAttendanceStatus(status);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading attendance status:', error);
+    }
+  };
+
   const loadUserData = async () => {
     try {
       const userData = await AsyncStorage.getItem('user');
       if (userData) {
         const user: UserData = JSON.parse(userData);
-        const displayName = user.first_name 
+        const displayName = user.first_name
           ? `${user.first_name}${user.last_name ? ' ' + user.last_name : ''}`
           : user.name || user.username || 'Staff';
         setUserName(displayName);
@@ -105,17 +143,67 @@ export default function StaffDashboardScreen({ navigation }: any) {
     navigation.replace('Login');
   };
 
-  const handlePunchIn = () => {
-    const now = new Date();
-    setClockInTime(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-    setIsClockedIn(true);
-    // TODO: API call to record punch-in
+  const handlePunchIn = async () => {
+    setIsLoading(true);
+    try {
+      const result = await attendanceService.checkIn();
+
+      if (result.success && result.data) {
+        const time = new Date(result.data.checkin_time);
+        setClockInTime(time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        setIsClockedIn(true);
+        setLateMinutes(result.data.late_minutes);
+        setAttendanceStatus(result.data.status);
+
+        // Show success message
+        const statusMessage = result.data.status === 'late'
+          ? `Checked in (${result.data.late_minutes} min late)`
+          : 'Checked in on time!';
+        const distanceMessage = result.data.distance_meters > 0
+          ? ` (${result.data.distance_meters}m from ${result.data.branch_name})`
+          : '';
+
+        Alert.alert('Success', statusMessage + distanceMessage);
+      } else {
+        // Show error message
+        const errorMessage = attendanceService.getErrorMessage(
+          result.errorCode,
+          result.error || 'Check-in failed'
+        );
+        Alert.alert('Check-in Failed', errorMessage);
+      }
+    } catch (error) {
+      console.error('Punch in error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handlePunchOut = () => {
-    setIsClockedIn(false);
-    setClockInTime(null);
-    // TODO: API call to record punch-out
+  const handlePunchOut = async () => {
+    setIsLoading(true);
+    try {
+      const result = await attendanceService.checkOut();
+
+      if (result.success && result.data) {
+        setIsClockedIn(false);
+        setClockInTime(null);
+        setAttendanceStatus(result.data.status);
+
+        Alert.alert('Success', 'Checked out successfully!');
+      } else {
+        const errorMessage = attendanceService.getErrorMessage(
+          result.errorCode,
+          result.error || 'Check-out failed'
+        );
+        Alert.alert('Check-out Failed', errorMessage);
+      }
+    } catch (error) {
+      console.error('Punch out error:', error);
+      Alert.alert('Error', 'An unexpected error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const getPriorityColor = (priority: string) => {
@@ -128,9 +216,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
   };
 
   const MenuItem = ({ icon: Icon, title, subtitle, onPress, isLast }: any) => (
-    <TouchableOpacity 
-      style={[styles.menuItem, isLast && styles.menuItemLast, isRTL && styles.rtlRow]} 
-      onPress={onPress} 
+    <TouchableOpacity
+      style={[styles.menuItem, isLast && styles.menuItemLast, isRTL && styles.rtlRow]}
+      onPress={onPress}
       activeOpacity={0.7}
     >
       {isRTL ? (
@@ -163,13 +251,13 @@ export default function StaffDashboardScreen({ navigation }: any) {
   const isManager = userRole === 'manager' || userRole === 'operations_manager';
 
   // Check if user has any operation management permissions
-  const hasAnyOperationPermission = 
-    permissions.orders || 
-    permissions.menu_edit || 
-    permissions.inventory || 
-    permissions.delivery || 
-    permissions.tables || 
-    permissions.drivers || 
+  const hasAnyOperationPermission =
+    permissions.orders ||
+    permissions.menu_edit ||
+    permissions.inventory ||
+    permissions.delivery ||
+    permissions.tables ||
+    permissions.drivers ||
     permissions.discounts;
 
   const workspaceLabel = isManager ? t('managerWorkspace') : t('staffWorkspace');
@@ -188,19 +276,26 @@ export default function StaffDashboardScreen({ navigation }: any) {
               </View>
               <Text style={[styles.brandName, isRTL && { marginLeft: 0, marginRight: 10 }]}>Sylo</Text>
             </View>
-            
+
             {/* Actions on trailing side */}
             <View style={styles.headerActions}>
               <TouchableOpacity style={styles.iconButton}>
                 <Bell size={20} color={colors.foreground} />
                 <View style={styles.badge} />
               </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton} onPress={toggleTheme}>
+                {isDark ? (
+                  <Sun size={20} color={colors.foreground} />
+                ) : (
+                  <Moon size={20} color={colors.foreground} />
+                )}
+              </TouchableOpacity>
               <TouchableOpacity style={[styles.iconButton, styles.logoutButton]} onPress={handleLogout}>
                 <LogOut size={20} color={colors.destructive} />
               </TouchableOpacity>
             </View>
           </View>
-          
+
           {/* Workspace info row */}
           <View style={[styles.workspaceSwitcher, isRTL && styles.rtlRow]}>
             <View style={[styles.workspaceInfo, isRTL && { alignItems: 'flex-end' }]}>
@@ -219,31 +314,51 @@ export default function StaffDashboardScreen({ navigation }: any) {
             <Clock size={20} color={colors.foreground} />
             <Text style={[styles.clockTitle, isRTL && { marginLeft: 0, marginRight: 10 }]}>{t('timeClock')}</Text>
           </View>
-          
+
           {isClockedIn ? (
             <View style={[styles.clockedInContainer, isRTL && styles.rtlRow]}>
               <View style={[styles.clockedInInfo, isRTL && { alignItems: 'flex-end' }]}>
                 <View style={[styles.statusBadge, isRTL && styles.rtlRow]}>
-                  <View style={[styles.statusDot, isRTL && { marginRight: 0, marginLeft: 8 }]} />
-                  <Text style={styles.statusText}>{t('clockedIn')}</Text>
+                  <View style={[
+                    styles.statusDot,
+                    isRTL && { marginRight: 0, marginLeft: 8 },
+                    lateMinutes > 0 && { backgroundColor: '#f59e0b' } // Orange for late
+                  ]} />
+                  <Text style={styles.statusText}>
+                    {lateMinutes > 0 ? `${t('clockedIn')} (${lateMinutes}m late)` : t('clockedIn')}
+                  </Text>
                 </View>
                 <Text style={[styles.clockedInTime, isRTL && styles.rtlText]}>{t('since')} {clockInTime}</Text>
               </View>
-              <TouchableOpacity 
-                style={[styles.punchButton, styles.punchOutButton]} 
+              <TouchableOpacity
+                style={[styles.punchButton, styles.punchOutButton, isLoading && styles.buttonDisabled]}
                 onPress={handlePunchOut}
+                disabled={isLoading}
               >
-                <LogOut size={18} color={colors.background} />
-                <Text style={styles.punchButtonText}>{t('punchOut')}</Text>
+                {isLoading ? (
+                  <ActivityIndicator size="small" color={colors.background} />
+                ) : (
+                  <>
+                    <LogOut size={18} color={colors.background} />
+                    <Text style={styles.punchButtonText}>{t('punchOut')}</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           ) : (
-            <TouchableOpacity 
-              style={[styles.punchButton, styles.punchInButton]} 
+            <TouchableOpacity
+              style={[styles.punchButton, styles.punchInButton, isLoading && styles.buttonDisabled]}
               onPress={handlePunchIn}
+              disabled={isLoading}
             >
-              <LogIn size={18} color={colors.background} />
-              <Text style={styles.punchButtonText}>{t('punchIn')}</Text>
+              {isLoading ? (
+                <ActivityIndicator size="small" color={colors.background} />
+              ) : (
+                <>
+                  <LogIn size={18} color={colors.background} />
+                  <Text style={styles.punchButtonText}>{t('punchIn')}</Text>
+                </>
+              )}
             </TouchableOpacity>
           )}
         </View>
@@ -300,9 +415,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
             <View style={styles.card}>
               {permissions.orders && (
                 <>
-                  <MenuItem 
-                    icon={ShoppingBag} 
-                    title={t('orders')} 
+                  <MenuItem
+                    icon={ShoppingBag}
+                    title={t('orders')}
                     subtitle={t('manageOrders')}
                     onPress={() => navigation.navigate('Orders')}
                   />
@@ -311,30 +426,30 @@ export default function StaffDashboardScreen({ navigation }: any) {
               )}
               {permissions.menu_edit && (
                 <>
-                  <MenuItem 
-                    icon={Package} 
-                    title={t('items')} 
+                  <MenuItem
+                    icon={Package}
+                    title={t('items')}
                     subtitle={t('rawAndCompositeItems')}
                     onPress={() => navigation.navigate('Items')}
                   />
                   <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-                  <MenuItem 
-                    icon={ShoppingBag} 
-                    title={t('products')} 
+                  <MenuItem
+                    icon={ShoppingBag}
+                    title={t('products')}
                     subtitle={t('menuProducts')}
                     onPress={() => navigation.navigate('Products')}
                   />
                   <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-                  <MenuItem 
-                    icon={Boxes} 
-                    title={t('bundles')} 
+                  <MenuItem
+                    icon={Boxes}
+                    title={t('bundles')}
                     subtitle={t('productBundlesSoldTogether')}
                     onPress={() => navigation.navigate('Bundles')}
                   />
                   <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-                  <MenuItem 
-                    icon={FolderTree} 
-                    title={t('categories')} 
+                  <MenuItem
+                    icon={FolderTree}
+                    title={t('categories')}
                     subtitle={t('organizeMenuStructure')}
                     onPress={() => navigation.navigate('Categories')}
                   />
@@ -343,9 +458,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
               )}
               {permissions.inventory && (
                 <>
-                  <MenuItem 
-                    icon={ClipboardList} 
-                    title={t('inventory')} 
+                  <MenuItem
+                    icon={ClipboardList}
+                    title={t('inventory')}
                     subtitle={t('manageInventory')}
                     onPress={() => navigation.navigate('Inventory')}
                   />
@@ -354,9 +469,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
               )}
               {permissions.delivery && (
                 <>
-                  <MenuItem 
-                    icon={Truck} 
-                    title={t('delivery')} 
+                  <MenuItem
+                    icon={Truck}
+                    title={t('delivery')}
                     subtitle={t('deliveryManagement')}
                     onPress={() => navigation.navigate('DeliveryPartners')}
                   />
@@ -365,9 +480,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
               )}
               {permissions.tables && (
                 <>
-                  <MenuItem 
-                    icon={Armchair} 
-                    title={t('tables')} 
+                  <MenuItem
+                    icon={Armchair}
+                    title={t('tables')}
                     subtitle={t('tableManagement')}
                     onPress={() => navigation.navigate('Tables')}
                   />
@@ -376,9 +491,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
               )}
               {permissions.drivers && (
                 <>
-                  <MenuItem 
-                    icon={Car} 
-                    title={t('drivers')} 
+                  <MenuItem
+                    icon={Car}
+                    title={t('drivers')}
                     subtitle={t('driverManagement')}
                     onPress={() => navigation.navigate('Drivers')}
                   />
@@ -386,9 +501,9 @@ export default function StaffDashboardScreen({ navigation }: any) {
                 </>
               )}
               {permissions.discounts && (
-                <MenuItem 
-                  icon={Percent} 
-                  title={t('discounts')} 
+                <MenuItem
+                  icon={Percent}
+                  title={t('discounts')}
                   subtitle={t('discountManagement')}
                   onPress={() => navigation.navigate('Discounts')}
                   isLast
@@ -402,22 +517,32 @@ export default function StaffDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('hr')}</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={BookOpen} 
-              title={t('sop')} 
+            <MenuItem
+              icon={BookOpen}
+              title={t('sop')}
               subtitle={t('standardOperatingProcedures')}
+              onPress={() => navigation.navigate('HR')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={CalendarDays} 
-              title={t('leaves')} 
+            <MenuItem
+              icon={CalendarDays}
+              title={t('leaves')}
               subtitle={t('requestViewLeaves')}
+              onPress={() => navigation.navigate('HR')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={Receipt} 
-              title={t('payslip')} 
+            <MenuItem
+              icon={Receipt}
+              title={t('payslip')}
               subtitle={t('viewPayslips')}
+              onPress={() => navigation.navigate('HR')}
+            />
+            <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
+            <MenuItem
+              icon={Clock}
+              title={t('attendance') || 'Attendance'}
+              subtitle={t('viewAttendanceHistory') || 'View attendance history'}
+              onPress={() => navigation.navigate('HR')}
               isLast
             />
           </View>
@@ -427,15 +552,15 @@ export default function StaffDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('training')}</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={GraduationCap} 
-              title={t('trainingModules')} 
+            <MenuItem
+              icon={GraduationCap}
+              title={t('trainingModules')}
               subtitle={t('completeYourTraining')}
             />
             <View style={[styles.divider, isRTL && { marginLeft: 0, marginRight: 70 }]} />
-            <MenuItem 
-              icon={FileText} 
-              title={t('certifications')} 
+            <MenuItem
+              icon={FileText}
+              title={t('certifications')}
               subtitle={t('viewCertificates')}
               isLast
             />
@@ -450,7 +575,7 @@ export default function StaffDashboardScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -614,6 +739,9 @@ const styles = StyleSheet.create({
   punchOutButton: {
     backgroundColor: colors.mutedForeground,
   },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
   punchButtonText: {
     fontSize: 15,
     fontWeight: '600',
@@ -750,4 +878,3 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
 });
-

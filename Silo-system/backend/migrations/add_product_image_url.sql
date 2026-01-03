@@ -16,3 +16,4 @@ COMMENT ON COLUMN products.image_url IS 'URL to the product image stored in Supa
 
 
 
+

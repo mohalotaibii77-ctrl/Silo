@@ -8,21 +8,21 @@ import {
   ViewStyle,
   ImageSourcePropType,
 } from 'react-native';
-import { colors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 
 /**
  * ProgressiveImage Component
- * 
+ *
  * Loads a low-quality thumbnail first, then transitions smoothly to the full-quality image.
  * Provides a much better perceived loading experience.
- * 
+ *
  * Features:
  * - Loads thumbnail immediately while full image loads
  * - Smooth opacity transition (not instant swap)
  * - BlurView placeholder effect while loading
  * - Error state fallback
  * - Memory-efficient with cleanup
- * 
+ *
  * @example
  * <ProgressiveImage
  *   source={{ uri: product.image_url }}
@@ -63,7 +63,7 @@ interface ProgressiveImageProps {
  */
 function generateThumbnailUrl(fullUrl: string): string {
   if (!fullUrl) return '';
-  
+
   // If it's a Supabase URL, use transform API
   if (fullUrl.includes('supabase.co/storage')) {
     const transformUrl = fullUrl.replace(
@@ -72,7 +72,7 @@ function generateThumbnailUrl(fullUrl: string): string {
     );
     return `${transformUrl}?width=150&height=150&quality=60&resize=cover`;
   }
-  
+
   // For other URLs, return as-is (thumbnail should be provided separately)
   return fullUrl;
 }
@@ -84,12 +84,16 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
   containerStyle,
   transitionDuration = 300,
   resizeMode = 'cover',
-  placeholderColor = colors.muted,
+  placeholderColor,
   onLoad,
   onError,
   blurThumbnail = true,
   accessibilityLabel,
 }) => {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const effectivePlaceholderColor = placeholderColor ?? colors.muted;
+
   const [thumbnailLoaded, setThumbnailLoaded] = useState(false);
   const [fullImageLoaded, setFullImageLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -100,12 +104,12 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
   // Get thumbnail URL - use provided or generate from full URL
   const getThumbnailSource = (): ImageSourcePropType | null => {
     if (thumbnailSource) return thumbnailSource;
-    
+
     if (typeof source === 'object' && 'uri' in source && source.uri) {
       const thumbnailUrl = generateThumbnailUrl(source.uri);
       return thumbnailUrl ? { uri: thumbnailUrl } : null;
     }
-    
+
     return null;
   };
 
@@ -124,7 +128,7 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
   // Handle full image load
   const handleFullImageLoad = () => {
     setFullImageLoaded(true);
-    
+
     // Fade in full image while fading out thumbnail
     Animated.parallel([
       Animated.timing(fullImageOpacity, {
@@ -169,7 +173,7 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
           width,
           height,
           borderRadius: borderRadius || 0,
-          backgroundColor: placeholderColor,
+          backgroundColor: effectivePlaceholderColor,
         },
         containerStyle,
       ]}
@@ -189,7 +193,7 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
         <Animated.View
           style={[
             styles.imageContainer,
-            { 
+            {
               opacity: thumbnailOpacity,
               borderRadius: borderRadius || 0,
             },
@@ -214,7 +218,7 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
         <Animated.View
           style={[
             styles.imageContainer,
-            { 
+            {
               opacity: fullImageOpacity,
               borderRadius: borderRadius || 0,
             },
@@ -237,10 +241,11 @@ const ProgressiveImage: React.FC<ProgressiveImageProps> = memo(({
 
       {/* Loading shimmer (shows before thumbnail loads) */}
       {!thumbnailLoaded && !hasError && (
-        <ShimmerPlaceholder 
-          width={width as number} 
+        <ShimmerPlaceholder
+          width={width as number}
           height={height as number}
           borderRadius={borderRadius as number}
+          colors={colors}
         />
       )}
     </View>
@@ -254,7 +259,8 @@ const ShimmerPlaceholder: React.FC<{
   width?: number;
   height?: number;
   borderRadius?: number;
-}> = ({ width, height, borderRadius = 0 }) => {
+  colors: ThemeColors;
+}> = ({ width, height, borderRadius = 0, colors }) => {
   const shimmerAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -285,8 +291,9 @@ const ShimmerPlaceholder: React.FC<{
   return (
     <Animated.View
       style={[
-        styles.shimmer,
         {
+          ...StyleSheet.absoluteFillObject,
+          backgroundColor: colors.muted,
           width,
           height,
           borderRadius,
@@ -297,7 +304,7 @@ const ShimmerPlaceholder: React.FC<{
   );
 };
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     overflow: 'hidden',
     justifyContent: 'center',
@@ -309,10 +316,6 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     height: '100%',
-  },
-  shimmer: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.muted,
   },
   fallback: {
     ...StyleSheet.absoluteFillObject,
@@ -344,4 +347,3 @@ export default ProgressiveImage;
 
 // Re-export utility function for use elsewhere
 export { generateThumbnailUrl };
-

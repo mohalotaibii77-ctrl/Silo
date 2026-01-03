@@ -37,3 +37,4 @@ COMMENT ON COLUMN businesses.currency IS 'Currency code (ISO 4217) - REQUIRED, n
 
 
 
+

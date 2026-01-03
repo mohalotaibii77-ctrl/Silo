@@ -496,7 +496,7 @@ async function testCancelledOrderInventory(ctx: TestContext): Promise<void> {
   
   // Test invalid decision type
   const processWasteInvalid = await apiRequest(ctx, 'POST', '/pos/kitchen/process-waste', {
-    decisions: [{ cancelled_item_id: 999999, decision: 'invalid' }],
+    decisions: [{ cancelled_item_id: -1, decision: 'invalid' }],
   });
   track(assertStatus(processWasteInvalid, 400, 'POST /pos/kitchen/process-waste - Validation (invalid decision)'));
 }

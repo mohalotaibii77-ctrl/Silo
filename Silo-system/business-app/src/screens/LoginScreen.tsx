@@ -1,20 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Animated, Easing, Dimensions, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../api/client';
+import api, { storeAuthToken } from '../api/client';
 import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization';
 import { Command, Mail, Lock, Sun, Moon, ArrowRight } from 'lucide-react-native';
 import { dataPreloader } from '../services/DataPreloader';
+import { useBiometricAuth } from '../hooks/useBiometricAuth';
+import { BiometricButton } from '../components/BiometricButton';
+import { BiometricEnrollmentModal } from '../components/BiometricEnrollmentModal';
 
 const { width } = Dimensions.get('window');
 
 export default function LoginScreen({ navigation }: any) {
-  const { colors, isDark } = useTheme();
-  const { applyLanguageFromSettings, refreshCurrency } = useLocalization();
+  const { colors, isDark, toggleTheme } = useTheme();
+  const { applyLanguageFromSettings, refreshCurrency, t, language } = useLocalization();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Biometric authentication state
+  const biometric = useBiometricAuth();
+  const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
+  const [pendingLoginData, setPendingLoginData] = useState<any>(null);
+  const [biometricLoading, setBiometricLoading] = useState(false);
 
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -53,17 +62,194 @@ export default function LoginScreen({ navigation }: any) {
     }
   }, [loading, spinValue]);
 
+  // Auto-prompt biometric login if available and enabled
+  useEffect(() => {
+    const checkBiometricLogin = async () => {
+      // Wait for biometric state to load
+      if (biometric.isLoading) return;
+
+      // Only auto-prompt if biometrics are available, enabled, and we have stored credentials
+      if (biometric.isAvailable && biometric.isEnabled && biometric.hasStoredCredentials) {
+        // Small delay for better UX
+        setTimeout(() => {
+          handleBiometricLogin();
+        }, 500);
+      }
+    };
+
+    checkBiometricLogin();
+  }, [biometric.isLoading, biometric.isAvailable, biometric.isEnabled, biometric.hasStoredCredentials]);
+
   const spin = spinValue.interpolate({
     inputRange: [0, 1],
     outputRange: ['0deg', '360deg'],
   });
 
+  // Handle biometric login
+  const handleBiometricLogin = async () => {
+    if (biometricLoading || loading) return;
+
+    setBiometricLoading(true);
+    try {
+      const result = await biometric.promptAndLogin(
+        t('Sign in to Silo', 'تسجيل الدخول إلى Silo')
+      );
+
+      if (result.success && result.userData) {
+        // Process successful login
+        await processLoginSuccess(result.userData);
+      } else if (result.error) {
+        // Only show error if user didn't cancel
+        if (!result.error.includes('cancel') && !result.error.includes('Cancel')) {
+          if (Platform.OS === 'web') {
+            window.alert(t('Biometric login failed. Please use email and password.', 'فشل تسجيل الدخول البيومتري. يرجى استخدام البريد الإلكتروني وكلمة المرور.'));
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[Login] Biometric login error:', error);
+    } finally {
+      setBiometricLoading(false);
+    }
+  };
+
+  // Process successful login (shared between password and biometric login)
+  const processLoginSuccess = async (data: any, credentialsForEnrollment?: { email: string; password: string }) => {
+    // Store token securely
+    await storeAuthToken(data.token);
+    await AsyncStorage.setItem('token', data.token); // Keep for backward compatibility
+    await AsyncStorage.setItem('user', JSON.stringify(data.user));
+
+    // Save business data including currency settings
+    if (data.business) {
+      await AsyncStorage.setItem('business', JSON.stringify(data.business));
+      refreshCurrency();
+    }
+
+    // Save all businesses for workspace switching (owners only)
+    if (data.businesses && data.businesses.length > 0) {
+      await AsyncStorage.setItem('businesses', JSON.stringify(data.businesses));
+    }
+
+    // Save user settings (persisted from database)
+    if (data.userSettings) {
+      await AsyncStorage.setItem('userSettings', JSON.stringify(data.userSettings));
+
+      // Apply language immediately from user settings
+      const preferredLang = data.userSettings.preferred_language;
+      if (preferredLang) {
+        applyLanguageFromSettings(preferredLang);
+      }
+    } else if (data.business?.language) {
+      // Fallback to business language if no user settings
+      applyLanguageFromSettings(data.business.language);
+    }
+
+    const role = data.user.role;
+    const userId = data.user.id?.toString();
+
+    // Check if user needs to change their default password (first-time login)
+    if (data.requiresPasswordChange) {
+      console.log('[Login] First-time login - redirecting to set password');
+      navigation.replace('SetPassword', {
+        token: data.token,
+        userData: data.user,
+        businessData: data.business,
+        businessesData: data.businesses,
+        userSettings: data.userSettings,
+      });
+      return;
+    }
+
+    // Check if we should prompt for biometric enrollment
+    if (credentialsForEnrollment && biometric.isAvailable && !biometric.isEnabled && userId) {
+      const hasBeenPrompted = await biometric.hasBeenPrompted(userId);
+      if (!hasBeenPrompted) {
+        // Store login data and show enrollment modal
+        setPendingLoginData({ data, role, credentialsForEnrollment });
+        setShowEnrollmentModal(true);
+        return;
+      }
+    }
+
+    // Navigate to dashboard
+    navigateToDashboard(role);
+  };
+
+  // Navigate to appropriate dashboard based on role
+  const navigateToDashboard = (role: string) => {
+    // Start background preloading immediately (don't wait)
+    dataPreloader.preloadAll().catch(console.error);
+
+    if (role === 'owner') {
+      navigation.replace('OwnerDashboard');
+    } else if (role === 'manager' || role === 'operations_manager') {
+      navigation.replace('StaffDashboard');
+    } else if (role === 'pos' || role === 'cashier') {
+      navigation.replace('POSTerminal');
+    } else if (role === 'kitchen_display') {
+      navigation.replace('KitchenDisplay');
+    } else if (role === 'employee') {
+      navigation.replace('StaffDashboard');
+    } else {
+      navigation.replace('StaffDashboard');
+    }
+  };
+
+  // Handle biometric enrollment
+  const handleEnableBiometric = async () => {
+    if (!pendingLoginData) return;
+
+    const { credentialsForEnrollment } = pendingLoginData;
+    const userId = pendingLoginData.data.user.id?.toString();
+
+    try {
+      const success = await biometric.enableBiometric(
+        userId,
+        credentialsForEnrollment.email,
+        credentialsForEnrollment.password
+      );
+
+      if (success) {
+        console.log('[Login] Biometric enabled successfully');
+      }
+    } catch (error) {
+      console.error('[Login] Error enabling biometric:', error);
+    }
+
+    // Close modal and navigate
+    setShowEnrollmentModal(false);
+    navigateToDashboard(pendingLoginData.role);
+    setPendingLoginData(null);
+  };
+
+  const handleSkipEnrollment = () => {
+    if (!pendingLoginData) return;
+
+    setShowEnrollmentModal(false);
+    navigateToDashboard(pendingLoginData.role);
+    setPendingLoginData(null);
+  };
+
+  const handleDontAskAgain = async () => {
+    if (!pendingLoginData) return;
+
+    const userId = pendingLoginData.data.user.id?.toString();
+    if (userId) {
+      await biometric.markAsPrompted(userId);
+    }
+
+    setShowEnrollmentModal(false);
+    navigateToDashboard(pendingLoginData.role);
+    setPendingLoginData(null);
+  };
+
   const handleLogin = async () => {
     if (!email || !password) {
       if (Platform.OS === 'web') {
-        window.alert('Please enter email and password');
+        window.alert(t('Please enter email and password', 'يرجى إدخال البريد الإلكتروني وكلمة المرور'));
       } else {
-        Alert.alert('Error', 'Please enter email and password');
+        Alert.alert(t('Error', 'خطأ'), t('Please enter email and password', 'يرجى إدخال البريد الإلكتروني وكلمة المرور'));
       }
       return;
     }
@@ -74,75 +260,17 @@ export default function LoginScreen({ navigation }: any) {
       console.log('[Login] API baseURL:', api.defaults.baseURL);
       const response = await api.post('/business-auth/login', { email, password });
       console.log('[Login] Response:', response.data);
-      await AsyncStorage.setItem('token', response.data.token);
-      await AsyncStorage.setItem('user', JSON.stringify(response.data.user));
-      
-      // Save business data including currency settings
-      if (response.data.business) {
-        await AsyncStorage.setItem('business', JSON.stringify(response.data.business));
-        // Refresh currency in the localization context
-        refreshCurrency();
-      }
-      
-      // Save all businesses for workspace switching (owners only)
-      if (response.data.businesses && response.data.businesses.length > 0) {
-        await AsyncStorage.setItem('businesses', JSON.stringify(response.data.businesses));
-      }
-      
-      // Save user settings (persisted from database)
-      if (response.data.userSettings) {
-        await AsyncStorage.setItem('userSettings', JSON.stringify(response.data.userSettings));
-        
-        // Apply language immediately from user settings
-        const preferredLang = response.data.userSettings.preferred_language;
-        if (preferredLang) {
-          applyLanguageFromSettings(preferredLang);
-        }
-      } else if (response.data.business?.language) {
-        // Fallback to business language if no user settings
-        applyLanguageFromSettings(response.data.business.language);
-      }
-      
-      const role = response.data.user.role;
-      console.log('[Login] User role:', role);
-      
-      // Check if user needs to change their default password (first-time login)
-      if (response.data.requiresPasswordChange) {
-        console.log('[Login] First-time login - redirecting to set password');
-        navigation.replace('SetPassword', {
-          token: response.data.token,
-          userData: response.data.user,
-          businessData: response.data.business,
-          businessesData: response.data.businesses,
-          userSettings: response.data.userSettings,
-        });
-        return;
-      }
-      
-      // Start background preloading immediately (don't wait)
-      dataPreloader.preloadAll().catch(console.error);
-      
-      if (role === 'owner') {
-        navigation.replace('OwnerDashboard');
-      } else if (role === 'manager' || role === 'operations_manager') {
-        navigation.replace('StaffDashboard');
-      } else if (role === 'pos' || role === 'cashier') {
-        navigation.replace('POSTerminal');
-      } else if (role === 'kitchen_display') {
-        navigation.replace('KitchenDisplay');
-      } else if (role === 'employee') {
-        navigation.replace('StaffDashboard');
-      } else {
-        navigation.replace('StaffDashboard');
-      }
+
+      // Process login success with credentials for enrollment check
+      await processLoginSuccess(response.data, { email, password });
     } catch (error: any) {
       console.error('[Login] Error:', error);
       console.error('[Login] Error response:', error.response?.data);
-      const errorMessage = error.response?.data?.error || error.message || 'Invalid credentials';
+      const errorMessage = error.response?.data?.error || error.message || t('Invalid credentials', 'بيانات الاعتماد غير صالحة');
       if (Platform.OS === 'web') {
-        window.alert('Login Failed: ' + errorMessage);
+        window.alert(t('Login Failed', 'فشل تسجيل الدخول') + ': ' + errorMessage);
       } else {
-        Alert.alert('Login Failed', errorMessage);
+        Alert.alert(t('Login Failed', 'فشل تسجيل الدخول'), errorMessage);
       }
     } finally {
       setLoading(false);
@@ -292,7 +420,25 @@ export default function LoginScreen({ navigation }: any) {
 
   return (
     <View style={styles.container}>
-      {/* Theme switching disabled (single theme) */}
+      {/* Theme toggle button */}
+      <TouchableOpacity
+        onPress={toggleTheme}
+        style={{
+          position: 'absolute',
+          top: 50,
+          right: 20,
+          padding: 10,
+          backgroundColor: colors.card,
+          borderRadius: 20,
+          zIndex: 10,
+        }}
+      >
+        {isDark ? (
+          <Sun size={24} color={colors.foreground} />
+        ) : (
+          <Moon size={24} color={colors.foreground} />
+        )}
+      </TouchableOpacity>
 
       <Animated.View 
         style={[
@@ -348,31 +494,60 @@ export default function LoginScreen({ navigation }: any) {
             </View>
           </View>
           
-          <TouchableOpacity 
-            style={[styles.button, loading && styles.buttonDisabled]}
+          <TouchableOpacity
+            style={[styles.button, (loading || biometricLoading) && styles.buttonDisabled]}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || biometricLoading}
           >
             {loading ? (
               <>
                 <Animated.View style={{ transform: [{ rotate: spin }] }}>
                   <Command size={20} color={colors.primaryForeground} />
                 </Animated.View>
-                <Text style={styles.buttonText}>Signing in...</Text>
+                <Text style={styles.buttonText}>{t('Signing in...', 'جاري تسجيل الدخول...')}</Text>
               </>
             ) : (
               <>
-                <Text style={styles.buttonText}>Sign in</Text>
+                <Text style={styles.buttonText}>{t('Sign in', 'تسجيل الدخول')}</Text>
                 <ArrowRight size={20} color={colors.primaryForeground} />
               </>
             )}
           </TouchableOpacity>
 
+          {/* Biometric login button - shown when available and has stored credentials */}
+          {biometric.isAvailable && biometric.hasStoredCredentials && !biometric.isLoading && (
+            <View style={{ marginTop: 16 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+                <Text style={{ marginHorizontal: 12, color: colors.mutedForeground, fontSize: 12 }}>
+                  {t('or', 'أو')}
+                </Text>
+                <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+              </View>
+              <BiometricButton
+                onPress={handleBiometricLogin}
+                disabled={loading || biometricLoading}
+                loading={biometricLoading}
+                variant="outline"
+                biometricType={biometric.biometricType}
+              />
+            </View>
+          )}
+
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Powered by Silo System</Text>
+            <Text style={styles.footerText}>{t('Powered by Silo System', 'مدعوم من نظام Silo')}</Text>
           </View>
         </View>
       </Animated.View>
+
+      {/* Biometric Enrollment Modal */}
+      <BiometricEnrollmentModal
+        visible={showEnrollmentModal}
+        onEnable={handleEnableBiometric}
+        onSkip={handleSkipEnrollment}
+        onDontAskAgain={handleDontAskAgain}
+        biometricType={biometric.biometricType}
+      />
     </View>
   );
 }

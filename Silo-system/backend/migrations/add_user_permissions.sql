@@ -40,3 +40,4 @@ WHERE role = 'employee' AND (permissions IS NULL OR permissions = '{}'::jsonb);
 
 
 
+

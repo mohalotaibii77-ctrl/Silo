@@ -12,3 +12,4 @@ COMMENT ON COLUMN order_items.product_id IS 'Product ID - nullable when is_combo
 
 
 
+

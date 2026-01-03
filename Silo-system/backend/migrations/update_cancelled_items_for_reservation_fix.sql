@@ -39,3 +39,4 @@ COMMENT ON COLUMN cancelled_order_items.pos_session_id IS 'POS session during wh
 
 
 
+

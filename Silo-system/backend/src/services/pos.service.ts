@@ -2907,6 +2907,13 @@ export class POSService {
   }
 
   /**
+   * Get categorized order timeline for tabbed UI display
+   */
+  async getCategorizedOrderTimeline(orderId: number): Promise<{ order_status: any[]; payment_status: any[] }> {
+    return orderTimelineService.getCategorizedTimeline(orderId);
+  }
+
+  /**
    * Auto-expire cancelled items
    * Triggered by:
    * 1. Items older than 24 hours (scheduled job)

@@ -312,8 +312,8 @@ async function testOwnerManagement(ctx: SuperAdminContext): Promise<{ ownerId: n
   track(assertStatus(getInvalid, 400, 'GET /owners/invalid - Validation (invalid ID)'));
 
   // Not found
-  const notFound = await saRequest(ctx, 'GET', '/owners/999999');
-  track(assertStatus(notFound, 404, 'GET /owners/999999 - Not found'));
+  const notFound = await saRequest(ctx, 'GET', '/owners/-1');
+  track(assertStatus(notFound, 404, 'GET /owners/-1 - Not found'));
 
   return { ownerId: testOwnerId };
 }

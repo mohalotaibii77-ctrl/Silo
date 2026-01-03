@@ -28,6 +28,7 @@ import customersRoutes from './customers.routes';
 import configRoutes from './config.routes';
 import imagesRoutes from './images.routes';
 import posSessionRoutes from './pos-session.routes';
+import hrRoutes from './hr.routes';
 
 const router = Router();
 
@@ -65,9 +66,9 @@ router.use('/customers', customersRoutes);  // Customer management
 router.use('/config', configRoutes);  // System configuration (categories, units, currencies, etc.)
 router.use('/images', imagesRoutes);  // Image processing and thumbnails
 router.use('/pos-sessions', posSessionRoutes);  // POS shift management (cash drawer, reconciliation)
+router.use('/hr', hrRoutes);  // HR: Attendance check-in/out, schedule overrides
 
 // TODO: Add more routes as services are implemented
-// router.use('/hr', hrRoutes);
 // router.use('/operations', operationsRoutes);
 
 export default router;

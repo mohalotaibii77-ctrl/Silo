@@ -25,7 +25,7 @@ export {
 } from './useQuery';
 
 // Paginated list hook
-export { 
+export {
   usePaginatedList,
   // Pre-built paginated hooks
   usePaginatedItems,
@@ -35,6 +35,10 @@ export {
   usePaginatedPurchaseOrders,
   usePaginatedVendors,
 } from './usePaginatedList';
+
+// Biometric authentication hook
+export { useBiometricAuth } from './useBiometricAuth';
+
 
 
 

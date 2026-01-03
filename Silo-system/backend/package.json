@@ -19,7 +19,11 @@
     "test:integration:delivery": "npx ts-node tests/integration/delivery.test.ts",
     "test:integration:config": "npx ts-node tests/integration/config.test.ts",
     "test:integration:superadmin": "npx ts-node tests/integration/superadmin.test.ts",
-    "test:integration:all": "npm run test:integration:inventory && npm run test:integration:products && npm run test:integration:pos && npm run test:integration:users && npm run test:integration:business && npm run test:integration:delivery && npm run test:integration:config && npm run test:integration:superadmin",
+    "test:integration:hr": "npx ts-node tests/integration/hr.test.ts",
+    "test:integration:bundles": "npx ts-node tests/integration/bundles.test.ts",
+    "test:integration:discounts": "npx ts-node tests/integration/discounts.test.ts",
+    "test:integration:categories": "npx ts-node tests/integration/categories.test.ts",
+    "test:integration:all": "npm run test:integration:inventory && npm run test:integration:products && npm run test:integration:pos && npm run test:integration:users && npm run test:integration:business && npm run test:integration:delivery && npm run test:integration:config && npm run test:integration:superadmin && npm run test:integration:hr && npm run test:integration:bundles && npm run test:integration:discounts && npm run test:integration:categories",
     "test:inventory": "npm run test:integration:inventory",
     "test:products": "npm run test:integration:products",
     "test:pos": "npm run test:integration:pos",
@@ -28,6 +32,10 @@
     "test:delivery": "npm run test:integration:delivery",
     "test:config": "npm run test:integration:config",
     "test:superadmin": "npm run test:integration:superadmin",
+    "test:hr": "npm run test:integration:hr",
+    "test:bundles": "npm run test:integration:bundles",
+    "test:discounts": "npm run test:integration:discounts",
+    "test:categories": "npm run test:integration:categories",
     "test:all": "npm run test:unit && npm run test:integration:all"
   },
   "dependencies": {

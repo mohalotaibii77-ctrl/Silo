@@ -54,9 +54,9 @@ async function testDeliveryPartners(ctx: TestContext): Promise<{ partnerId: numb
   });
   track(assertStatus(missingFields, 400, 'POST /delivery/partners - Validation (missing commission)'));
   
-  // GET /api/delivery/partners/:id - Not found
-  const notFound = await apiRequest(ctx, 'GET', '/delivery/partners/999999');
-  track(assertStatus(notFound, 404, 'GET /delivery/partners/999999 - Not found'));
+  // GET /api/delivery/partners/:id - Not found (use -1 to guarantee not found)
+  const notFound = await apiRequest(ctx, 'GET', '/delivery/partners/-1');
+  track(assertStatus(notFound, 404, 'GET /delivery/partners/-1 - Not found'));
   
   return { partnerId };
 }
@@ -133,8 +133,8 @@ async function testDrivers(ctx: TestContext): Promise<{ driverId: number | null 
   }
   
   // Not found
-  const notFound = await apiRequest(ctx, 'GET', '/drivers/999999');
-  track(assertStatus(notFound, 404, 'GET /drivers/999999 - Not found'));
+  const notFound = await apiRequest(ctx, 'GET', '/drivers/-1');
+  track(assertStatus(notFound, 404, 'GET /drivers/-1 - Not found'));
   
   return { driverId };
 }
@@ -200,8 +200,8 @@ async function testCustomers(ctx: TestContext): Promise<{ customerId: number | n
   track(assertStatus(searchNoQuery, 400, 'GET /customers/search - Validation (missing query)'));
   
   // Not found
-  const notFound = await apiRequest(ctx, 'GET', '/customers/999999');
-  track(assertStatus(notFound, 404, 'GET /customers/999999 - Not found'));
+  const notFound = await apiRequest(ctx, 'GET', '/customers/-1');
+  track(assertStatus(notFound, 404, 'GET /customers/-1 - Not found'));
   
   return { customerId };
 }
@@ -272,8 +272,8 @@ async function testTables(ctx: TestContext): Promise<{ tableId: number | null }>
   track(assertStatus(invalidSeats, 400, 'POST /tables - Validation (invalid seats)'));
   
   // Not found
-  const notFound = await apiRequest(ctx, 'GET', '/tables/999999');
-  track(assertStatus(notFound, 404, 'GET /tables/999999 - Not found'));
+  const notFound = await apiRequest(ctx, 'GET', '/tables/-1');
+  track(assertStatus(notFound, 404, 'GET /tables/-1 - Not found'));
   
   return { tableId };
 }

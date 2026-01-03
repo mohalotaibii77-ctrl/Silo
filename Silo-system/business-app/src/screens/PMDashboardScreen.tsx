@@ -1,22 +1,26 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { colors } from '../theme/colors';
+import { useTheme } from '../theme/ThemeContext';
 import { useLocalization } from '../localization/LocalizationContext';
-import { 
-  LayoutDashboard, 
-  Package, 
-  ShoppingBag, 
-  ClipboardList, 
-  Users, 
-  BarChart3, 
+import {
+  LayoutDashboard,
+  Package,
+  ShoppingBag,
+  ClipboardList,
+  Users,
+  BarChart3,
   LogOut,
-  ChevronRight
+  ChevronRight,
+  Moon,
+  Sun
 } from 'lucide-react-native';
 
 export default function PMDashboardScreen({ navigation }: any) {
+  const { colors, isDark, toggleTheme } = useTheme();
   const { t, isRTL } = useLocalization();
-  
+  const styles = createStyles(colors);
+
   const handleLogout = async () => {
     await AsyncStorage.clear();
     navigation.replace('Login');
@@ -57,24 +61,33 @@ export default function PMDashboardScreen({ navigation }: any) {
           <Text style={styles.headerTitle}>Silo Business</Text>
           <Text style={styles.headerSubtitle}>Operations Dashboard</Text>
         </View>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <LogOut size={20} color={colors.foreground} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.iconButton} onPress={toggleTheme}>
+            {isDark ? (
+              <Sun size={20} color={colors.foreground} />
+            ) : (
+              <Moon size={20} color={colors.foreground} />
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.iconButton, styles.logoutButton]} onPress={handleLogout}>
+            <LogOut size={20} color={colors.destructive} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Daily Operations</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={LayoutDashboard} 
-              title="Operations Overview" 
+            <MenuItem
+              icon={LayoutDashboard}
+              title="Operations Overview"
               subtitle="Manage daily activities"
             />
             <View style={styles.divider} />
-            <MenuItem 
-              icon={BarChart3} 
-              title="Daily Reports" 
+            <MenuItem
+              icon={BarChart3}
+              title="Daily Reports"
               subtitle="View performance metrics"
             />
           </View>
@@ -83,9 +96,9 @@ export default function PMDashboardScreen({ navigation }: any) {
         <View style={styles.section}>
           <Text style={[styles.sectionTitle, isRTL && styles.sectionTitleRTL]}>{t('management')}</Text>
           <View style={styles.card}>
-            <MenuItem 
-              icon={Package} 
-              title={t('itemsAndProducts')} 
+            <MenuItem
+              icon={Package}
+              title={t('itemsAndProducts')}
               subtitle={t('manageItemsProducts')}
               onPress={() => navigation.navigate('ItemsProducts')}
             />
@@ -107,7 +120,7 @@ export default function PMDashboardScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -134,10 +147,20 @@ const styles = StyleSheet.create({
     color: colors.mutedForeground,
     marginTop: 2,
   },
-  logoutButton: {
-    padding: 8,
+  headerActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     backgroundColor: colors.secondary,
-    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoutButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
   },
   content: {
     flex: 1,

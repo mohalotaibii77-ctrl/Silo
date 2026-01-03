@@ -22,7 +22,7 @@ interface OriginalSettings {
 export default function TaxSettingsPage() {
   const router = useRouter();
   const { isRTL, t, formatCurrency } = useLanguage();
-  
+
   const [settings, setSettings] = useState<TaxSettings>({
     vat_enabled: false,
     tax_rate: 0,
@@ -36,14 +36,48 @@ export default function TaxSettingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<{ type: string; text: string }>({ type: '', text: '' });
 
+  // Branch context
+  const [currentBranchId, setCurrentBranchId] = useState<number | null>(null);
+  const [currentBranchName, setCurrentBranchName] = useState<string | null>(null);
+
+  // Track if initial load is done to avoid duplicate API calls
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+
   useEffect(() => {
-    loadSettings();
+    // Load current branch from localStorage
+    // IMPORTANT: Pass branchId synchronously to loadSettings to avoid race condition
+    let branchId: number | null = null;
+    const storedBranch = localStorage.getItem('setup_branch');
+    if (storedBranch) {
+      try {
+        const branch = JSON.parse(storedBranch);
+        branchId = branch.id;
+        setCurrentBranchId(branch.id);
+        setCurrentBranchName(branch.name);
+      } catch {}
+    }
+
+    // Load settings with branch ID directly
+    loadSettings(branchId);
   }, []);
 
-  const loadSettings = async () => {
+  // Load settings when branch changes (not on initial mount - that's handled above)
+  useEffect(() => {
+    if (initialLoadDone) {
+      loadSettings(currentBranchId);
+    } else {
+      setInitialLoadDone(true);
+    }
+  }, [currentBranchId]);
+
+  const loadSettings = async (branchId: number | null) => {
     try {
       setIsLoading(true);
-      const response = await api.get('/business-settings');
+      const url = branchId
+        ? `/business-settings?branch_id=${branchId}`
+        : '/business-settings';
+
+      const response = await api.get(url);
       if (response.data.success && response.data.data) {
         const data = response.data.data;
         setSettings({
@@ -68,41 +102,36 @@ export default function TaxSettingsPage() {
       setIsSaving(true);
       setMessage({ type: '', text: '' });
 
-      // Check if there are any changes
-      const vatEnabledChanged = settings.vat_enabled !== originalSettings.vat_enabled;
-      const vatRateChanged = settings.tax_rate !== originalSettings.tax_rate;
-      const hasChanges = vatEnabledChanged || vatRateChanged;
-      
-      if (!hasChanges) {
-        setMessage({ type: 'info', text: t('No changes detected', 'لم يتم اكتشاف تغييرات') });
-        setIsSaving(false);
-        return;
-      }
-
-      // Always include both values so the request shows complete tax settings
-      const changeData = {
-        request_type: 'tax',
-        new_vat_enabled: settings.vat_enabled,
-        new_vat_rate: settings.vat_enabled ? settings.tax_rate : 0,
+      // Tax settings are now branch-specific - save directly
+      const taxData: Record<string, any> = {
+        vat_enabled: settings.vat_enabled,
+        tax_rate: settings.vat_enabled ? settings.tax_rate : 0,
+        tax_number: settings.tax_number,
       };
 
-      await api.post('/business-settings/change-requests', changeData);
-      setMessage({ 
-        type: 'success', 
-        text: t('Change request submitted! Waiting for admin approval.', 'تم إرسال طلب التغيير! في انتظار موافقة المسؤول.') 
+      // Include branch_id if in branch context
+      if (currentBranchId) {
+        taxData.branch_id = currentBranchId;
+      }
+
+      await api.put('/business-settings', taxData);
+
+      // Update original settings
+      setOriginalSettings({
+        vat_enabled: settings.vat_enabled,
+        tax_rate: settings.tax_rate,
+      });
+
+      const branchText = currentBranchName ? ` for ${currentBranchName}` : '';
+      setMessage({
+        type: 'success',
+        text: t(`Tax settings saved successfully${branchText}!`, `تم حفظ إعدادات الضريبة بنجاح${branchText}!`)
       });
     } catch (err: any) {
-      if (err.response?.data?.error?.includes('pending request')) {
-        setMessage({ 
-          type: 'warning', 
-          text: t('You already have a pending tax change request.', 'لديك بالفعل طلب تغيير الضريبة قيد الانتظار.') 
-        });
-      } else {
-        setMessage({ 
-          type: 'error', 
-          text: err.response?.data?.error || t('Failed to submit request', 'فشل في إرسال الطلب') 
-        });
-      }
+      setMessage({
+        type: 'error',
+        text: err.response?.data?.error || t('Failed to save settings', 'فشل في حفظ الإعدادات')
+      });
     } finally {
       setIsSaving(false);
     }
@@ -153,13 +182,15 @@ export default function TaxSettingsPage() {
           </div>
         </div>
 
-        {/* Approval Notice */}
-        <div className="p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-amber-700 dark:text-amber-300">
-            {t('Tax/VAT changes require admin approval. Submit your changes and we\'ll review them shortly.', 'تتطلب تغييرات الضريبة موافقة المسؤول. أرسل تغييراتك وسنراجعها قريبًا.')}
-          </p>
-        </div>
+        {/* Info Notice */}
+        {currentBranchName && (
+          <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-blue-700 dark:text-blue-300">
+              {t(`Configuring tax settings for ${currentBranchName}. Each branch can have its own tax configuration.`, `إعداد الضريبة لفرع ${currentBranchName}. يمكن لكل فرع أن يكون له إعدادات ضريبة خاصة به.`)}
+            </p>
+          </div>
+        )}
 
         {/* Status Messages */}
         {message.text && (
@@ -303,7 +334,7 @@ export default function TaxSettingsPage() {
           )}
         </div>
 
-        {/* Submit Button */}
+        {/* Save Button */}
         <div className="flex justify-end">
           <button
             onClick={handleSave}
@@ -311,7 +342,7 @@ export default function TaxSettingsPage() {
             className="flex items-center gap-2 px-6 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 font-medium hover:bg-zinc-800 dark:hover:bg-zinc-100 disabled:opacity-50 transition-colors"
           >
             <Send className="w-5 h-5" />
-            {isSaving ? t('Submitting...', 'جاري الإرسال...') : t('Submit Change Request', 'إرسال طلب التغيير')}
+            {isSaving ? t('Saving...', 'جاري الحفظ...') : t('Save Settings', 'حفظ الإعدادات')}
           </button>
         </div>
       </motion.div>

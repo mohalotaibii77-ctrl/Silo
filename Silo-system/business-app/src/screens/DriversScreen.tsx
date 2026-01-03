@@ -288,8 +288,8 @@ export default function DriversScreen({ navigation }: any) {
     switch (status) {
       case 'available': return colors.success;
       case 'busy': return colors.warning;
-      case 'offline': return colors.textSecondary;
-      default: return colors.textSecondary;
+      case 'offline': return colors.mutedForeground;
+      default: return colors.mutedForeground;
     }
   };
 
@@ -333,13 +333,13 @@ export default function DriversScreen({ navigation }: any) {
       <View style={styles.contactInfo}>
         {driver.phone && (
           <View style={[styles.contactItem, isRTL && styles.contactItemRTL]}>
-            <Phone size={14} color={colors.textSecondary} />
+            <Phone size={14} color={colors.mutedForeground} />
             <Text style={styles.contactText}>{driver.phone}</Text>
           </View>
         )}
         {driver.email && (
           <View style={[styles.contactItem, isRTL && styles.contactItemRTL]}>
-            <Mail size={14} color={colors.textSecondary} />
+            <Mail size={14} color={colors.mutedForeground} />
             <Text style={styles.contactText} numberOfLines={1}>{driver.email}</Text>
           </View>
         )}
@@ -360,7 +360,7 @@ export default function DriversScreen({ navigation }: any) {
             >
               <CircleDot 
                 size={16} 
-                color={driver.status === status ? getStatusColor(status) : colors.textSecondary} 
+                color={driver.status === status ? getStatusColor(status) : colors.mutedForeground} 
               />
             </TouchableOpacity>
           ))}
@@ -383,13 +383,13 @@ export default function DriversScreen({ navigation }: any) {
           style={styles.actionButton}
           onPress={() => handleOpenModal(driver)}
         >
-          <Edit2 size={16} color={colors.textSecondary} />
+          <Edit2 size={16} color={colors.mutedForeground} />
         </TouchableOpacity>
         <TouchableOpacity 
           style={styles.actionButton}
           onPress={() => handleDelete(driver)}
         >
-          <Trash2 size={16} color={colors.error} />
+          <Trash2 size={16} color={colors.destructive} />
         </TouchableOpacity>
       </View>
     </View>
@@ -407,40 +407,40 @@ export default function DriversScreen({ navigation }: any) {
           showsVerticalScrollIndicator={false}
         >
           {/* Header - scrolls with content */}
-          <View style={[styles.header, isRTL && styles.headerRTL]}>
-            <TouchableOpacity 
-              style={styles.backButton}
-              onPress={() => safeGoBack(navigation)}
-            >
-              <BackIcon size={24} color={colors.text} />
-            </TouchableOpacity>
-            <View style={styles.headerCenter}>
-              <Text style={styles.headerTitle}>{t('drivers', 'Drivers')}</Text>
-              <Text style={styles.headerSubtitle}>{t('manageInHouseDrivers', 'Manage in-house delivery drivers')}</Text>
+          <View style={styles.header}>
+            <View style={[styles.headerTop, isRTL && styles.headerTopRTL]}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => safeGoBack(navigation)}
+              >
+                <BackIcon size={24} color={colors.foreground} />
+              </TouchableOpacity>
+              <View style={styles.headerCenter}>
+                <Text style={[styles.headerTitle, isRTL && styles.textRTL]}>{t('drivers', 'Drivers')}</Text>
+                <Text style={[styles.headerSubtitle, isRTL && styles.textRTL]}>{t('manageInHouseDrivers', 'Manage in-house delivery drivers')}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.addButton}
+                onPress={() => handleOpenModal()}
+              >
+                <Plus size={20} color={colors.background} />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity 
-              style={styles.addButton}
-              onPress={() => handleOpenModal()}
-            >
-              <Plus size={20} color={colors.background} />
-            </TouchableOpacity>
-          </View>
 
-          {/* Search */}
-          <View style={styles.searchContainer}>
-            <View style={[styles.searchInputWrapper, isRTL && styles.searchInputWrapperRTL]}>
-              <Search size={18} color={colors.textSecondary} />
+            {/* Search */}
+            <View style={[styles.searchContainer, isRTL && styles.searchContainerRTL]}>
+              <Search size={18} color={colors.mutedForeground} />
               <TextInput
                 style={[styles.searchInput, isRTL && styles.textRTL]}
                 placeholder={t('searchDrivers', 'Search drivers...')}
-                placeholderTextColor={colors.textSecondary}
+                placeholderTextColor={colors.mutedForeground}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 textAlign={isRTL ? 'right' : 'left'}
               />
               {searchQuery ? (
                 <TouchableOpacity onPress={() => setSearchQuery('')}>
-                  <X size={18} color={colors.textSecondary} />
+                  <X size={18} color={colors.mutedForeground} />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -522,7 +522,7 @@ export default function DriversScreen({ navigation }: any) {
                 {editingDriver ? t('editDriver', 'Edit Driver') : t('addDriver', 'Add Driver')}
               </Text>
               <TouchableOpacity onPress={handleCloseModal} style={styles.modalCloseButton}>
-                <X size={20} color={colors.textSecondary} />
+                <X size={20} color={colors.mutedForeground} />
               </TouchableOpacity>
             </View>
 
@@ -543,7 +543,7 @@ export default function DriversScreen({ navigation }: any) {
                   value={name}
                   onChangeText={setName}
                   placeholder={t('driverName', 'Driver name')}
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   textAlign={isRTL ? 'right' : 'left'}
                 />
               </View>
@@ -557,7 +557,7 @@ export default function DriversScreen({ navigation }: any) {
                   value={nameAr}
                   onChangeText={setNameAr}
                   placeholder={t('arabicName', 'Arabic name')}
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                 />
               </View>
 
@@ -570,7 +570,7 @@ export default function DriversScreen({ navigation }: any) {
                   value={phone}
                   onChangeText={setPhone}
                   placeholder="+965 XXXX XXXX"
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   keyboardType="phone-pad"
                 />
               </View>
@@ -584,7 +584,7 @@ export default function DriversScreen({ navigation }: any) {
                   value={email}
                   onChangeText={setEmail}
                   placeholder="driver@example.com"
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   keyboardType="email-address"
                   autoCapitalize="none"
                 />
@@ -618,7 +618,7 @@ export default function DriversScreen({ navigation }: any) {
                   value={vehicleNumber}
                   onChangeText={setVehicleNumber}
                   placeholder={t('licensePlate', 'License plate')}
-                  placeholderTextColor={colors.textSecondary}
+                  placeholderTextColor={colors.mutedForeground}
                   textAlign={isRTL ? 'right' : 'left'}
                 />
               </View>
@@ -656,16 +656,19 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: Platform.OS === 'ios' ? 60 : 20,
     paddingBottom: 16,
-    backgroundColor: colors.background,
+    backgroundColor: colors.card,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  headerRTL: {
+  headerTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  headerTopRTL: {
     flexDirection: 'row-reverse',
   },
   backButton: {
@@ -683,26 +686,22 @@ const createStyles = (colors: any) => StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   headerSubtitle: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   addButton: {
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     justifyContent: 'center',
     alignItems: 'center',
   },
   searchContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  searchInputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.secondary,
@@ -711,13 +710,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     height: 44,
     gap: 10,
   },
+  searchContainerRTL: {
+    flexDirection: 'row-reverse',
+  },
   searchInputWrapperRTL: {
     flexDirection: 'row-reverse',
   },
   searchInput: {
     flex: 1,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
   },
   filterScrollView: {
     maxHeight: 50,
@@ -741,7 +743,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     backgroundColor: colors.foreground,
   },
   filterTabText: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
     color: colors.mutedForeground,
   },
@@ -761,7 +763,6 @@ const createStyles = (colors: any) => StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
     paddingBottom: 24,
   },
   loadingContainer: {
@@ -772,7 +773,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   emptyContainer: {
     alignItems: 'center',
@@ -782,19 +783,19 @@ const createStyles = (colors: any) => StyleSheet.create({
   emptyTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: colors.text,
+    color: colors.foreground,
     marginTop: 16,
   },
   emptySubtitle: {
     fontSize: 14,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 8,
     textAlign: 'center',
   },
   emptyButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 12,
@@ -808,6 +809,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   driverGrid: {
     gap: 12,
+    paddingHorizontal: 16,
   },
   driverCard: {
     backgroundColor: colors.surface,
@@ -840,11 +842,11 @@ const createStyles = (colors: any) => StyleSheet.create({
   driverName: {
     fontSize: 16,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   driverVehicle: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
     marginTop: 2,
   },
   statusBadge: {
@@ -870,7 +872,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   contactText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   quickStatus: {
     flexDirection: 'row',
@@ -886,7 +888,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   },
   quickStatusLabel: {
     fontSize: 12,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   quickStatusButton: {
     width: 28,
@@ -949,7 +951,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: colors.text,
+    color: colors.foreground,
   },
   modalCloseButton: {
     width: 36,
@@ -963,16 +965,16 @@ const createStyles = (colors: any) => StyleSheet.create({
     padding: 20,
   },
   errorBanner: {
-    backgroundColor: colors.error + '20',
+    backgroundColor: colors.destructive + '20',
     borderRadius: 10,
     padding: 12,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: colors.error + '40',
+    borderColor: colors.destructive + '40',
   },
   errorText: {
     fontSize: 13,
-    color: colors.error,
+    color: colors.destructive,
   },
   formGroup: {
     marginBottom: 16,
@@ -980,7 +982,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   formLabel: {
     fontSize: 13,
     fontWeight: '500',
-    color: colors.text,
+    color: colors.foreground,
     marginBottom: 8,
   },
   formInput: {
@@ -989,7 +991,7 @@ const createStyles = (colors: any) => StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 14,
-    color: colors.text,
+    color: colors.foreground,
     borderWidth: 1,
     borderColor: colors.border,
   },
@@ -1010,12 +1012,12 @@ const createStyles = (colors: any) => StyleSheet.create({
     borderColor: colors.border,
   },
   vehicleButtonActive: {
-    backgroundColor: colors.text,
-    borderColor: colors.text,
+    backgroundColor: colors.foreground,
+    borderColor: colors.foreground,
   },
   vehicleButtonText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   vehicleButtonTextActive: {
     color: colors.background,
@@ -1043,10 +1045,10 @@ const createStyles = (colors: any) => StyleSheet.create({
   cancelButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.textSecondary,
+    color: colors.mutedForeground,
   },
   submitButton: {
-    backgroundColor: colors.text,
+    backgroundColor: colors.foreground,
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 12,

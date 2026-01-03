@@ -14,7 +14,7 @@ import {
   ActivityIndicator
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { colors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
@@ -61,6 +61,9 @@ interface Order {
   total_amount: number;
   payment_method?: string;
   payment_status: string;
+  is_edited?: boolean;
+  is_pay_later?: boolean;
+  remaining_amount?: number;
   created_at: string;
   items?: OrderItem[];
 }
@@ -76,7 +79,7 @@ interface OrderItem {
 }
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -97,24 +100,28 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
   );
 };
 
-const OrderSkeleton = ({ styles }: { styles: any }) => (
+const OrderSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.orderCard}>
     <View style={styles.orderCardHeader}>
-      <Skeleton width={80} height={20} borderRadius={6} />
-      <Skeleton width={70} height={24} borderRadius={12} />
+      <Skeleton width={80} height={20} borderRadius={6} colors={colors} />
+      <Skeleton width={70} height={24} borderRadius={12} colors={colors} />
     </View>
     <View style={styles.orderCardBody}>
-      <Skeleton width="50%" height={16} style={{ marginBottom: 6 }} />
-      <Skeleton width="30%" height={14} />
+      <Skeleton width="50%" height={16} style={{ marginBottom: 6 }} colors={colors} />
+      <Skeleton width="30%" height={14} colors={colors} />
     </View>
     <View style={styles.orderCardFooter}>
-      <Skeleton width={80} height={16} />
-      <Skeleton width={32} height={32} borderRadius={8} />
+      <Skeleton width={80} height={16} colors={colors} />
+      <Skeleton width={32} height={32} borderRadius={8} colors={colors} />
     </View>
   </View>
 );
 
 export default function OrdersScreen({ navigation }: any) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const modalStyles = createModalStyles(colors);
+  const paymentModalStyles = createPaymentModalStyles(colors);
   const { t, isRTL, language, formatCurrency } = useLocalization();
   
   const [orders, setOrders] = useState<Order[]>([]);
@@ -141,6 +148,17 @@ export default function OrdersScreen({ navigation }: any) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [processing, setProcessing] = useState(false);
+
+  // Payment modal state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [customerPaidAmount, setCustomerPaidAmount] = useState('');
+  const [transactionNumber, setTransactionNumber] = useState('');
+
+  // Timeline state
+  const [categorizedTimeline, setCategorizedTimeline] = useState<{ order_status: any[]; payment_status: any[] }>({ order_status: [], payment_status: [] });
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [activeTimelineTab, setActiveTimelineTab] = useState<'order_status' | 'payment_status'>('order_status');
 
   const orderStatuses = [
     { id: 'pending', label: t('pending'), labelAr: 'قيد الانتظار' },
@@ -262,6 +280,72 @@ export default function OrdersScreen({ navigation }: any) {
     }
   };
 
+  // Process payment for unpaid orders (dine-in pay later, COD delivery)
+  const processPayment = async (method: 'cash' | 'card') => {
+    if (!selectedOrder || isProcessingPayment) return;
+
+    // Validate cash payment
+    if (method === 'cash') {
+      const paidAmount = parseFloat(customerPaidAmount);
+      if (isNaN(paidAmount) || paidAmount < selectedOrder.total_amount) {
+        Alert.alert(
+          language === 'ar' ? 'خطأ' : 'Error',
+          language === 'ar' ? 'المبلغ المدفوع غير كافي' : 'Paid amount is insufficient'
+        );
+        return;
+      }
+    }
+
+    // Validate card payment
+    if (method === 'card' && !transactionNumber.trim()) {
+      Alert.alert(
+        language === 'ar' ? 'خطأ' : 'Error',
+        language === 'ar' ? 'رقم المعاملة مطلوب' : 'Transaction number is required'
+      );
+      return;
+    }
+
+    setIsProcessingPayment(true);
+
+    try {
+      const paidAmount = parseFloat(customerPaidAmount) || selectedOrder.total_amount;
+      const changeGiven = method === 'cash' ? Math.max(0, paidAmount - selectedOrder.total_amount) : 0;
+
+      const response = await api.post(`/pos/orders/${selectedOrder.id}/payment`, {
+        payment_method: method,
+        amount: selectedOrder.total_amount,
+        reference: method === 'card' ? transactionNumber : undefined,
+        amount_received: method === 'cash' ? paidAmount : undefined,
+        change_given: method === 'cash' ? changeGiven : undefined,
+      });
+
+      if (response.data.success) {
+        Alert.alert(
+          language === 'ar' ? 'نجاح' : 'Success',
+          language === 'ar' ? 'تم معالجة الدفع بنجاح' : 'Payment processed successfully'
+        );
+        setShowPaymentModal(false);
+        setShowDetailModal(false);
+        setCustomerPaidAmount('');
+        setTransactionNumber('');
+        loadOrders(true); // Refresh orders list
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || (language === 'ar' ? 'فشل في معالجة الدفع' : 'Failed to process payment');
+      Alert.alert(
+        language === 'ar' ? 'خطأ' : 'Error',
+        errorMsg
+      );
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
+
+  // Check if order needs payment (pay later orders that haven't been edited)
+  const orderNeedsPayment = (order: Order): boolean => {
+    return order.payment_status === 'pending' && !order.is_edited;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'pending': return { bg: '#fef3c7', text: '#d97706' };
@@ -331,6 +415,38 @@ export default function OrdersScreen({ navigation }: any) {
     return label ? (language === 'ar' ? label.ar : label.en) : status;
   };
 
+  // Timeline event color based on simplified display_type
+  const getTimelineEventColor = (displayType: string) => {
+    const eventColors: Record<string, string> = {
+      created: '#3b82f6',           // Blue
+      edited: '#f59e0b',            // Amber
+      canceled: '#ef4444',          // Red
+      completed: '#22c55e',         // Green
+      picked_up: '#10b981',         // Teal
+      paid: '#22c55e',              // Green
+      additional_payment: '#3b82f6', // Blue
+      partial_refund: '#f97316',    // Orange
+      full_refund: '#ef4444',       // Red
+    };
+    return eventColors[displayType] || '#6b7280';
+  };
+
+  // Fetch order timeline (categorized for tabbed display)
+  const fetchOrderTimeline = async (orderId: number) => {
+    try {
+      setLoadingTimeline(true);
+      const response = await api.get(`/pos/orders/${orderId}/timeline/categorized`);
+      if (response.data.success) {
+        setCategorizedTimeline(response.data.data || { order_status: [], payment_status: [] });
+        setActiveTimelineTab('order_status');
+      }
+    } catch (error) {
+      console.error('Error fetching timeline:', error);
+    } finally {
+      setLoadingTimeline(false);
+    }
+  };
+
   const formatDateTime = (date: string, time?: string) => {
     const d = new Date(date);
     const dateStr = d.toLocaleDateString(language === 'ar' ? 'ar-KW' : 'en-US', {
@@ -363,12 +479,13 @@ export default function OrdersScreen({ navigation }: any) {
     const statusColors = getStatusColor(order.order_status);
     
     return (
-      <TouchableOpacity 
-        key={order.id} 
+      <TouchableOpacity
+        key={order.id}
         style={styles.orderCard}
         onPress={() => {
           setSelectedOrder(order);
           setShowDetailModal(true);
+          fetchOrderTimeline(order.id);
         }}
         activeOpacity={0.7}
       >
@@ -559,9 +676,9 @@ export default function OrdersScreen({ navigation }: any) {
         <View style={styles.ordersList}>
           {loading ? (
             <>
-              <OrderSkeleton styles={styles} />
-              <OrderSkeleton styles={styles} />
-              <OrderSkeleton styles={styles} />
+              <OrderSkeleton styles={styles} colors={colors} />
+              <OrderSkeleton styles={styles} colors={colors} />
+              <OrderSkeleton styles={styles} colors={colors} />
             </>
           ) : (filteredOrders || []).length === 0 ? (
             <View style={styles.emptyState}>
@@ -727,13 +844,149 @@ export default function OrdersScreen({ navigation }: any) {
                   </View>
                   <Text style={[
                     modalStyles.paymentStatusText,
-                    { color: selectedOrder.payment_status === 'paid' ? '#059669' 
-                      : selectedOrder.payment_status === 'app_payment' ? '#2563eb' 
+                    { color: selectedOrder.payment_status === 'paid' ? '#059669'
+                      : selectedOrder.payment_status === 'app_payment' ? '#2563eb'
                       : '#d97706' }
                   ]}>
                     {getPaymentStatusLabel(selectedOrder.payment_status)}
                   </Text>
                 </View>
+
+                {/* Order Timeline Section */}
+                <View style={{ marginTop: 20, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 16 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <Clock size={18} color={colors.foreground} />
+                    <Text style={{ color: colors.foreground, fontWeight: '600', fontSize: 16, marginLeft: 8 }}>
+                      {language === 'ar' ? 'الجدول الزمني للطلب' : 'Order Timeline'}
+                    </Text>
+                  </View>
+
+                  {/* Timeline Tabs */}
+                  <View style={{ flexDirection: 'row', marginBottom: 12, gap: 8 }}>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        alignItems: 'center',
+                        backgroundColor: activeTimelineTab === 'order_status' ? colors.primary : colors.muted,
+                      }}
+                      onPress={() => setActiveTimelineTab('order_status')}
+                    >
+                      <Text style={{
+                        color: activeTimelineTab === 'order_status' ? '#fff' : colors.foreground,
+                        fontWeight: '600',
+                        fontSize: 13,
+                      }}>
+                        {language === 'ar' ? 'حالة الطلب' : 'Order Status'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 8,
+                        alignItems: 'center',
+                        backgroundColor: activeTimelineTab === 'payment_status' ? colors.primary : colors.muted,
+                      }}
+                      onPress={() => setActiveTimelineTab('payment_status')}
+                    >
+                      <Text style={{
+                        color: activeTimelineTab === 'payment_status' ? '#fff' : colors.foreground,
+                        fontWeight: '600',
+                        fontSize: 13,
+                      }}>
+                        {language === 'ar' ? 'حالة الدفع' : 'Payment Status'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Timeline Content */}
+                  {loadingTimeline ? (
+                    <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 20 }} />
+                  ) : (
+                    <View>
+                      {(() => {
+                        const timelineEvents = activeTimelineTab === 'order_status'
+                          ? categorizedTimeline.order_status
+                          : categorizedTimeline.payment_status;
+
+                        if (timelineEvents.length === 0) {
+                          return (
+                            <Text style={{ color: colors.mutedForeground, textAlign: 'center', padding: 16 }}>
+                              {language === 'ar' ? 'لا توجد أحداث' : 'No events'}
+                            </Text>
+                          );
+                        }
+
+                        return timelineEvents.map((event: any, index: number) => {
+                          const eventColor = getTimelineEventColor(event.display_type);
+                          const isLast = index === timelineEvents.length - 1;
+
+                          return (
+                            <View key={event.id || index} style={{ flexDirection: 'row', marginBottom: isLast ? 0 : 12 }}>
+                              {/* Timeline line and dot */}
+                              <View style={{ alignItems: 'center', marginRight: 12 }}>
+                                <View style={{
+                                  width: 10,
+                                  height: 10,
+                                  borderRadius: 5,
+                                  backgroundColor: eventColor,
+                                }} />
+                                {!isLast && (
+                                  <View style={{
+                                    width: 2,
+                                    flex: 1,
+                                    backgroundColor: colors.border,
+                                    marginTop: 4,
+                                  }} />
+                                )}
+                              </View>
+
+                              {/* Event content */}
+                              <View style={{ flex: 1, paddingBottom: isLast ? 0 : 4 }}>
+                                <Text style={{
+                                  color: colors.foreground,
+                                  fontWeight: '600',
+                                  fontSize: 13,
+                                  marginBottom: 2,
+                                }}>
+                                  {event.description}
+                                </Text>
+                                <Text style={{ color: colors.mutedForeground, fontSize: 11 }}>
+                                  {new Date(event.created_at).toLocaleString(language === 'ar' ? 'ar-KW' : 'en-US')}
+                                </Text>
+                                {event.done_by && (
+                                  <Text style={{ color: colors.mutedForeground, fontSize: 10, marginTop: 1 }}>
+                                    {language === 'ar' ? 'بواسطة' : 'done by'}: {event.done_by}
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+                          );
+                        });
+                      })()}
+                    </View>
+                  )}
+                </View>
+
+                {/* Make Payment Button - for unpaid orders that haven't been edited */}
+                {orderNeedsPayment(selectedOrder) && (
+                  <TouchableOpacity
+                    style={{
+                      backgroundColor: colors.primary,
+                      paddingVertical: 14,
+                      borderRadius: 10,
+                      alignItems: 'center',
+                      marginTop: 16,
+                    }}
+                    onPress={() => setShowPaymentModal(true)}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                      {language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </ScrollView>
             )}
           </View>
@@ -794,10 +1047,113 @@ export default function OrdersScreen({ navigation }: any) {
           <View style={styles.scannerFooter}>
             <View style={styles.scannerFrame} />
             <Text style={styles.scannerInstructions}>
-              {language === 'ar' 
-                ? 'ضع رمز QR داخل الإطار' 
+              {language === 'ar'
+                ? 'ضع رمز QR داخل الإطار'
                 : 'Position the QR code within the frame'}
             </Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal visible={showPaymentModal} transparent animationType="slide">
+        <View style={paymentModalStyles.overlay}>
+          <View style={paymentModalStyles.container}>
+            <View style={paymentModalStyles.header}>
+              <Text style={paymentModalStyles.title}>
+                {language === 'ar' ? 'إجراء الدفع' : 'Make Payment'}
+              </Text>
+              <TouchableOpacity onPress={() => {
+                setShowPaymentModal(false);
+                setCustomerPaidAmount('');
+                setTransactionNumber('');
+              }}>
+                <X size={24} color={colors.foreground} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedOrder && (
+              <ScrollView style={paymentModalStyles.content}>
+                {/* Order Total */}
+                <View style={paymentModalStyles.totalSection}>
+                  <Text style={paymentModalStyles.totalLabel}>
+                    {language === 'ar' ? 'الإجمالي المستحق' : 'Total Due'}
+                  </Text>
+                  <Text style={paymentModalStyles.totalAmount}>
+                    {formatCurrency(selectedOrder.total_amount)}
+                  </Text>
+                </View>
+
+                {/* Cash Payment Section */}
+                <View style={paymentModalStyles.paymentSection}>
+                  <Text style={paymentModalStyles.sectionTitle}>
+                    {language === 'ar' ? 'الدفع نقداً' : 'Cash Payment'}
+                  </Text>
+                  <TextInput
+                    style={paymentModalStyles.input}
+                    placeholder={language === 'ar' ? 'المبلغ المدفوع' : 'Amount Received'}
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="decimal-pad"
+                    value={customerPaidAmount}
+                    onChangeText={setCustomerPaidAmount}
+                  />
+                  {customerPaidAmount && parseFloat(customerPaidAmount) >= selectedOrder.total_amount && (
+                    <Text style={paymentModalStyles.changeText}>
+                      {language === 'ar' ? 'الباقي: ' : 'Change: '}
+                      {formatCurrency(parseFloat(customerPaidAmount) - selectedOrder.total_amount)}
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    style={[
+                      paymentModalStyles.payButton,
+                      { backgroundColor: '#059669' },
+                      isProcessingPayment && { opacity: 0.5 }
+                    ]}
+                    onPress={() => processPayment('cash')}
+                    disabled={isProcessingPayment}
+                  >
+                    {isProcessingPayment ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={paymentModalStyles.payButtonText}>
+                        {language === 'ar' ? 'دفع نقداً' : 'Pay with Cash'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+
+                {/* Card Payment Section */}
+                <View style={paymentModalStyles.paymentSection}>
+                  <Text style={paymentModalStyles.sectionTitle}>
+                    {language === 'ar' ? 'الدفع بالبطاقة' : 'Card Payment'}
+                  </Text>
+                  <TextInput
+                    style={paymentModalStyles.input}
+                    placeholder={language === 'ar' ? 'رقم المعاملة' : 'Transaction Number'}
+                    placeholderTextColor={colors.mutedForeground}
+                    value={transactionNumber}
+                    onChangeText={setTransactionNumber}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      paymentModalStyles.payButton,
+                      { backgroundColor: '#2563eb' },
+                      isProcessingPayment && { opacity: 0.5 }
+                    ]}
+                    onPress={() => processPayment('card')}
+                    disabled={isProcessingPayment}
+                  >
+                    {isProcessingPayment ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={paymentModalStyles.payButtonText}>
+                        {language === 'ar' ? 'دفع بالبطاقة' : 'Pay with Card'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -805,7 +1161,7 @@ export default function OrdersScreen({ navigation }: any) {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemeColors) => StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -949,12 +1305,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+    gap: 8,
   },
   orderNumber: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
     color: colors.foreground,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    flex: 1,
+    flexShrink: 1,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -963,6 +1322,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
     gap: 4,
+    flexShrink: 0,
   },
   statusText: {
     fontSize: 11,
@@ -973,10 +1333,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+    gap: 8,
   },
   orderTypeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    flexShrink: 1,
   },
   orderTypeText: {
     fontSize: 13,
@@ -987,6 +1350,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.foreground,
     fontWeight: '500',
+    flexShrink: 0,
   },
   orderCardFooter: {
     flexDirection: 'row',
@@ -1122,7 +1486,7 @@ const styles = StyleSheet.create({
   },
 });
 
-const modalStyles = StyleSheet.create({
+const createModalStyles = (colors: ThemeColors) => StyleSheet.create({
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -1233,6 +1597,91 @@ const modalStyles = StyleSheet.create({
   },
   paymentStatusText: {
     fontSize: 14,
+    fontWeight: '600',
+  },
+});
+
+const createPaymentModalStyles = (colors: ThemeColors) => StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 40,
+  },
+  container: {
+    backgroundColor: colors.card,
+    borderRadius: 24,
+    maxHeight: '80%',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  content: {
+    padding: 20,
+  },
+  totalSection: {
+    alignItems: 'center',
+    marginBottom: 24,
+    paddingVertical: 16,
+    backgroundColor: colors.secondary,
+    borderRadius: 12,
+  },
+  totalLabel: {
+    fontSize: 14,
+    color: colors.mutedForeground,
+    marginBottom: 4,
+  },
+  totalAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: colors.foreground,
+  },
+  paymentSection: {
+    marginBottom: 20,
+    paddingBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.foreground,
+    marginBottom: 12,
+  },
+  input: {
+    backgroundColor: colors.secondary,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: colors.foreground,
+    marginBottom: 12,
+  },
+  changeText: {
+    fontSize: 14,
+    color: '#059669',
+    marginBottom: 12,
+    fontWeight: '600',
+  },
+  payButton: {
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  payButtonText: {
+    color: '#fff',
+    fontSize: 15,
     fontWeight: '600',
   },
 });

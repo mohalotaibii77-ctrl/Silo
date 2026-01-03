@@ -13,8 +13,7 @@ import {
   Animated,
   Dimensions
 } from 'react-native';
-import { useTheme } from '../theme/ThemeContext';
-import { colors as staticColors } from '../theme/colors';
+import { useTheme, ThemeColors } from '../theme/ThemeContext';
 import api from '../api/client';
 import { cacheManager, CACHE_TTL, CacheKeys } from '../services/CacheManager';
 import { useLocalization } from '../localization/LocalizationContext';
@@ -90,7 +89,7 @@ interface Production {
 type TabType = 'raw' | 'composite' | 'production';
 
 // Skeleton component
-const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number | string; height: number; borderRadius?: number; style?: any }) => {
+const Skeleton = ({ width: w, height, borderRadius = 8, style, colors }: { width: number | string; height: number; borderRadius?: number; style?: any; colors: ThemeColors }) => {
   const pulseAnim = useRef(new Animated.Value(0.3)).current;
 
   useEffect(() => {
@@ -106,20 +105,20 @@ const Skeleton = ({ width: w, height, borderRadius = 8, style }: { width: number
 
   return (
     <Animated.View
-      style={[{ width: w, height, borderRadius, backgroundColor: staticColors.border, opacity: pulseAnim }, style]}
+      style={[{ width: w, height, borderRadius, backgroundColor: colors.border, opacity: pulseAnim }, style]}
     />
   );
 };
 
-const ItemSkeleton = ({ styles }: { styles: any }) => (
+const ItemSkeleton = ({ styles, colors }: { styles: any; colors: ThemeColors }) => (
   <View style={styles.itemCard}>
     <View style={styles.itemCardContent}>
-      <Skeleton width={44} height={44} borderRadius={12} />
+      <Skeleton width={44} height={44} borderRadius={12} colors={colors} />
       <View style={{ flex: 1, marginLeft: 12 }}>
-        <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} />
-        <Skeleton width="40%" height={12} />
+        <Skeleton width="70%" height={16} style={{ marginBottom: 6 }} colors={colors} />
+        <Skeleton width="40%" height={12} colors={colors} />
       </View>
-      <Skeleton width={60} height={20} borderRadius={6} />
+      <Skeleton width={60} height={20} borderRadius={6} colors={colors} />
     </View>
   </View>
 );
@@ -531,7 +530,7 @@ export default function ItemsScreen({ navigation }: any) {
                 </View>
               </View>
               <Text style={[styles.itemCategory, isRTL && styles.rtlText]} numberOfLines={1}>
-                {getCategoryLabel(item.category)}
+                {getCategoryLabel(item.category, language)}
               </Text>
             </View>
           </View>
@@ -615,8 +614,8 @@ export default function ItemsScreen({ navigation }: any) {
       
       {compositeLoading || productionLoading ? (
         <>
-          <ItemSkeleton styles={styles} />
-          <ItemSkeleton styles={styles} />
+          <ItemSkeleton styles={styles} colors={colors} />
+          <ItemSkeleton styles={styles} colors={colors} />
         </>
       ) : filteredCompositeItems.length === 0 ? (
         <View style={styles.emptyState}>
@@ -646,12 +645,12 @@ export default function ItemsScreen({ navigation }: any) {
                   {t('batch')}: {item.batch_quantity || 1} {item.batch_unit || item.unit}
                 </Text>
               </View>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.produceButton, producingTemplateId === item.id && styles.produceButtonDisabled]}
                 onPress={() => handleProduce(item)}
                 disabled={producingTemplateId === item.id}
               >
-                <Play size={16} color="#fff" />
+                <Play size={16} color={colors.primaryForeground} />
                 <Text style={styles.produceButtonText}>{t('produce')}</Text>
               </TouchableOpacity>
             </View>
@@ -709,9 +708,9 @@ export default function ItemsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {itemsLoading ? (
               <>
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
               </>
             ) : filteredItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -728,9 +727,9 @@ export default function ItemsScreen({ navigation }: any) {
           <View style={styles.tabContent}>
             {compositeLoading ? (
               <>
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
-                <ItemSkeleton styles={styles} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
+                <ItemSkeleton styles={styles} colors={colors} />
               </>
             ) : filteredCompositeItems.length === 0 ? (
               <View style={styles.emptyState}>
@@ -917,7 +916,7 @@ export default function ItemsScreen({ navigation }: any) {
         editingItem={editingItem}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         currency={currency}
         config={config}
       />
@@ -938,7 +937,7 @@ export default function ItemsScreen({ navigation }: any) {
         allItems={items}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
         config={config}
       />
 
@@ -961,9 +960,9 @@ export default function ItemsScreen({ navigation }: any) {
         }}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string, params?: Record<string, string | number>) => string}
         formatCurrency={formatCurrency}
-        getCategoryLabel={getCategoryLabel}
+        getCategoryLabel={(cat: string) => getCategoryLabel(cat, language)}
       />
 
       {/* Barcode Modal */}
@@ -976,7 +975,7 @@ export default function ItemsScreen({ navigation }: any) {
         }}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
       />
 
       {/* Add Template Modal */}
@@ -995,7 +994,7 @@ export default function ItemsScreen({ navigation }: any) {
         compositeItems={compositeItems}
         isRTL={isRTL}
         language={language}
-        t={t}
+        t={t as (key: string) => string}
       />
     </View>
   );
@@ -1014,6 +1013,7 @@ function AddItemModal({ visible, onClose, onSave, editingItem, isRTL, language, 
   config: any;
 }) {
   const { colors } = useTheme();
+  const styles = createStyles(colors);
   const modalStyles = createModalStyles(colors);
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -1317,6 +1317,7 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
   config: any;
 }) {
   const { colors } = useTheme();
+  const styles = createStyles(colors);
   const modalStyles = createModalStyles(colors);
   // Get config values with fallbacks
   const itemCategories = config?.itemCategories || [];
@@ -1422,7 +1423,7 @@ function AddCompositeModal({ visible, onClose, onSave, editingItem, allItems, is
   const addComponent = (item: Item) => {
     if (components.some(c => c.item_id === item.id)) return;
     // Store name with component so it displays correctly
-    setComponents([...components, { item_id: item.id, quantity: 1, name: item.name, name_ar: item.name_ar }]);
+    setComponents([...components, { item_id: item.id, quantity: 1, name: item.name, name_ar: item.name_ar ?? undefined }]);
     setShowItemPicker(false);
   };
 
@@ -1652,10 +1653,14 @@ function ViewItemModal({
   onEdit: () => void;
   isRTL: boolean;
   language: string;
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, string | number>) => string;
   formatCurrency: (value: number) => string;
   getCategoryLabel: (cat: string) => string;
 }) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const viewModalStyles = createViewModalStyles(colors);
+
   if (!visible || !item) return null;
 
   const hasCustomPrice = item.business_price !== null && item.business_price !== undefined;
@@ -1783,7 +1788,7 @@ function ViewItemModal({
               <Text style={viewModalStyles.closeBtnText}>{t('close')}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={viewModalStyles.editBtn} onPress={onEdit}>
-              <Edit2 size={18} color="#fff" />
+              <Edit2 size={18} color={colors.primaryForeground} />
               <Text style={viewModalStyles.editBtnText}>{t('edit')}</Text>
             </TouchableOpacity>
           </View>
@@ -2224,6 +2229,10 @@ function AddTemplateModal({
   language: string;
   t: (key: string) => string;
 }) {
+  const { colors } = useTheme();
+  const styles = createStyles(colors);
+  const templateModalStyles = createTemplateModalStyles(colors);
+
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   const [name, setName] = useState('');
   const [nameAr, setNameAr] = useState('');
@@ -2689,7 +2698,7 @@ const createTemplateModalStyles = (colors: any) => StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
 });
 
@@ -2929,7 +2938,7 @@ const createViewModalStyles = (colors: any) => StyleSheet.create({
   editBtnText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
 });
 
@@ -3156,7 +3165,7 @@ const createStyles = (colors: any) => StyleSheet.create({
   produceButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
   productionItem: {
     backgroundColor: colors.card,
@@ -3618,7 +3627,7 @@ const createModalStyles = (colors: any) => StyleSheet.create({
   saveButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#fff',
+    color: colors.primaryForeground,
   },
 });
 
